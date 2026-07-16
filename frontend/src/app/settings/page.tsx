@@ -10,7 +10,7 @@ import ScrollReveal from "@/components/ScrollReveal";
 export default function SettingsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"general" | "account">("general");
-  
+
   // Loading & Error States
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -32,6 +32,30 @@ export default function SettingsPage() {
   const [notifySuccess, setNotifySuccess] = useState(true);
   const [notifyFailed, setNotifyFailed] = useState(true);
   const [appearance, setAppearance] = useState<"light" | "system">("light");
+
+  // ==========================================
+  // EFFECT 1: Menerapkan Tema ke DOM (HTML) secara otomatis
+  // ==========================================
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const root = window.document.documentElement;
+
+      // Bersihkan kelas tema lama
+      root.classList.remove("light", "dark");
+
+      if (appearance === "system") {
+        // Cek preferensi sistem operasi OS pengguna
+        const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (systemPrefersDark) {
+          root.classList.add("dark");
+        } else {
+          root.classList.add("light");
+        }
+      } else {
+        root.classList.add("light");
+      }
+    }
+  }, [appearance]); // Berjalan setiap kali state 'appearance' berubah
 
   // Fetch initial profile & settings on mount
   const loadData = async () => {
@@ -66,7 +90,12 @@ export default function SettingsPage() {
         setUiLanguage(langVal);
         setNotifySuccess(settings.include_charts ?? true);
         setNotifyFailed(settings.include_exec_summary ?? true);
-        setAppearance(settings.appearance === "system" ? "system" : "light");
+
+        const appearanceVal = settings.appearance === "system" ? "system" : "light";
+        setAppearance(appearanceVal);
+
+        // Simpan ke localStorage untuk akses cepat halaman lain
+        localStorage.setItem("appearance", appearanceVal);
       }
     } catch (err: any) {
       console.error(err);
@@ -92,6 +121,7 @@ export default function SettingsPage() {
       setNotifySuccess(true);
       setNotifyFailed(true);
       setAppearance("light");
+      localStorage.setItem("appearance", "light");
       setSuccessMsg("Preferensi berhasil diatur ulang ke default.");
       setTimeout(() => setSuccessMsg(""), 3000);
     } catch (e) {
@@ -176,6 +206,9 @@ export default function SettingsPage() {
 
       setUiLanguage(language);
 
+      // Simpan preferensi tema ke localStorage saat sukses disimpan
+      localStorage.setItem("appearance", appearance);
+
       // Reset password fields after successful save
       setCurrentPassword("");
       setNewPassword("");
@@ -219,7 +252,7 @@ export default function SettingsPage() {
                 {t("Manage your settings and preferences.")}
               </p>
             </div>
-            
+
             <button
               onClick={handleResetToDefault}
               className="inline-flex items-center gap-2 px-4 py-2 border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 font-bold text-xs rounded-xl shadow-sm hover:shadow transition-all duration-200 group"
@@ -256,11 +289,10 @@ export default function SettingsPage() {
                 setErrorMsg("");
                 setSuccessMsg("");
               }}
-              className={`pb-1.5 font-extrabold text-xs transition-all duration-200 relative ${
-                activeTab === "general"
+              className={`pb-1.5 font-extrabold text-xs transition-all duration-200 relative ${activeTab === "general"
                   ? "text-stone-900 font-black"
                   : "text-stone-400 hover:text-stone-700"
-              }`}
+                }`}
             >
               {t("General")}
               <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-petro-yellow rounded-full transition-all duration-300 ${activeTab === "general" ? "opacity-100 scale-x-100" : "opacity-0 scale-x-0"}`} />
@@ -271,11 +303,10 @@ export default function SettingsPage() {
                 setErrorMsg("");
                 setSuccessMsg("");
               }}
-              className={`pb-1.5 font-extrabold text-xs transition-all duration-200 relative ${
-                activeTab === "account"
+              className={`pb-1.5 font-extrabold text-xs transition-all duration-200 relative ${activeTab === "account"
                   ? "text-stone-900 font-black"
                   : "text-stone-400 hover:text-stone-700"
-              }`}
+                }`}
             >
               {t("Account")}
               <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-petro-yellow rounded-full transition-all duration-300 ${activeTab === "account" ? "opacity-100 scale-x-100" : "opacity-0 scale-x-0"}`} />
@@ -285,7 +316,7 @@ export default function SettingsPage() {
           {/* TAB CONTENTS */}
           {loading ? (
             <div className="space-y-4 animate-fadeIn">
-              {[1,2,3].map(i => (
+              {[1, 2, 3].map(i => (
                 <div key={i} className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm space-y-4">
                   <div className="skeleton h-4 w-32 rounded" />
                   <div className="skeleton h-3 w-64 rounded" />
@@ -295,7 +326,7 @@ export default function SettingsPage() {
             </div>
           ) : (
             <div className="space-y-6">
-              
+
               {/* GENERAL TAB CONTENT */}
               {activeTab === "general" && (
                 <ScrollReveal animation="fadeInUp" delay={100}>
@@ -304,7 +335,7 @@ export default function SettingsPage() {
                     <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm text-left premium-card-hover">
                       <h3 className="font-extrabold text-stone-900 text-sm">{t("Language Preferences")}</h3>
                       <p className="text-[10px] text-stone-450 mt-1 font-semibold">{t("Choose your preferred language for the application")}</p>
-                      
+
                       <div className="relative mt-4 max-w-xl">
                         <select
                           value={language}
@@ -324,112 +355,110 @@ export default function SettingsPage() {
 
                     {/* Notification Preferences Card */}
                     <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm text-left space-y-4 premium-card-hover">
-                    <div>
-                      <h3 className="font-extrabold text-stone-900 text-sm">{t("Notification Preferences")}</h3>
-                      <p className="text-[10px] text-stone-450 mt-1 font-semibold">{t("Choose what notifications you want to receive")}</p>
-                    </div>
-
-                    <div className="space-y-3 mt-4">
-                      {/* Row 1: Report Generation Completed */}
-                      <div className="bg-white border border-stone-200/80 rounded-xl p-4 flex justify-between items-center shadow-sm">
-                        <div className="flex gap-4 items-center">
-                          <span className="w-10 h-10 rounded-xl bg-[#e6f0ea] border border-[#004D25]/10 flex items-center justify-center text-emerald-600 shrink-0">
-                            <span className="w-5 h-5 rounded-full border-2 border-emerald-600 flex items-center justify-center bg-white">
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3.5 text-emerald-650">
-                                <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                              </svg>
-                            </span>
-                          </span>
-                          <div className="text-left">
-                            <h4 className="font-bold text-stone-850 text-xs">{t("Report Generation Completed")}</h4>
-                            <p className="text-[10px] text-stone-500 font-semibold mt-0.5">{t("Receive a notification when your report has been generated successfully")}</p>
-                          </div>
-                        </div>
-                        {/* Toggle switch success - smooth CSS toggle */}
-                        <label className="flex items-center cursor-pointer gap-2.5 select-none">
-                          <div className="toggle-switch">
-                            <input
-                              type="checkbox"
-                              checked={notifySuccess}
-                              onChange={() => setNotifySuccess(!notifySuccess)}
-                            />
-                            <div className="toggle-track" />
-                          </div>
-                          <span className="text-[11px] font-bold text-stone-700 min-w-[20px]">{notifySuccess ? t("On") : t("Off")}</span>
-                        </label>
+                      <div>
+                        <h3 className="font-extrabold text-stone-900 text-sm">{t("Notification Preferences")}</h3>
+                        <p className="text-[10px] text-stone-450 mt-1 font-semibold">{t("Choose what notifications you want to receive")}</p>
                       </div>
 
-                      {/* Row 2: Report Generation Failed */}
-                      <div className="bg-white border border-stone-200/80 rounded-xl p-4 flex justify-between items-center shadow-sm">
-                        <div className="flex gap-4 items-center">
-                          <span className="w-10 h-10 rounded-xl bg-red-50 border border-red-200/40 flex items-center justify-center text-red-500 shrink-0">
-                            <span className="w-5 h-5 rounded-full border-2 border-red-500 flex items-center justify-center bg-white">
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-red-500">
-                                <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0-1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
-                              </svg>
+                      <div className="space-y-3 mt-4">
+                        {/* Row 1: Report Generation Completed */}
+                        <div className="bg-white border border-stone-200/80 rounded-xl p-4 flex justify-between items-center shadow-sm">
+                          <div className="flex gap-4 items-center">
+                            <span className="w-10 h-10 rounded-xl bg-[#e6f0ea] border border-[#004D25]/10 flex items-center justify-center text-emerald-600 shrink-0">
+                              <span className="w-5 h-5 rounded-full border-2 border-emerald-600 flex items-center justify-center bg-white">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5.h-3.5 text-emerald-650">
+                                  <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+                                </svg>
+                              </span>
                             </span>
-                          </span>
-                          <div className="text-left">
-                            <h4 className="font-bold text-stone-850 text-xs">{t("Report Generation Failed")}</h4>
-                            <p className="text-[10px] text-stone-500 font-semibold mt-0.5">{t("Receive a notification when your report generation fails")}</p>
+                            <div className="text-left">
+                              <h4 className="font-bold text-stone-850 text-xs">{t("Report Generation Completed")}</h4>
+                              <p className="text-[10px] text-stone-500 font-semibold mt-0.5">{t("Receive a notification when your report has been generated successfully")}</p>
+                            </div>
                           </div>
+                          {/* Toggle switch success */}
+                          <label className="flex items-center cursor-pointer gap-2.5 select-none">
+                            <div className="toggle-switch">
+                              <input
+                                type="checkbox"
+                                checked={notifySuccess}
+                                onChange={() => setNotifySuccess(!notifySuccess)}
+                              />
+                              <div className="toggle-track" />
+                            </div>
+                            <span className="text-[11px] font-bold text-stone-700 min-w-[20px]">{notifySuccess ? t("On") : t("Off")}</span>
+                          </label>
                         </div>
-                        {/* Toggle switch failure - smooth CSS toggle */}
-                        <label className="flex items-center cursor-pointer gap-2.5 select-none">
-                          <div className="toggle-switch">
-                            <input
-                              type="checkbox"
-                              checked={notifyFailed}
-                              onChange={() => setNotifyFailed(!notifyFailed)}
-                            />
-                            <div className="toggle-track" />
+
+                        {/* Row 2: Report Generation Failed */}
+                        <div className="bg-white border border-stone-200/80 rounded-xl p-4 flex justify-between items-center shadow-sm">
+                          <div className="flex gap-4 items-center">
+                            <span className="w-10 h-10 rounded-xl bg-red-50 border border-red-200/40 flex items-center justify-center text-red-500 shrink-0">
+                              <span className="w-5 h-5 rounded-full border-2 border-red-500 flex items-center justify-center bg-white">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-red-500">
+                                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0-1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                                </svg>
+                              </span>
+                            </span>
+                            <div className="text-left">
+                              <h4 className="font-bold text-stone-850 text-xs">{t("Report Generation Failed")}</h4>
+                              <p className="text-[10px] text-stone-500 font-semibold mt-0.5">{t("Receive a notification when your report generation fails")}</p>
+                            </div>
                           </div>
-                          <span className="text-[11px] font-bold text-stone-700 min-w-[20px]">{notifyFailed ? t("On") : t("Off")}</span>
-                        </label>
+                          {/* Toggle switch failure */}
+                          <label className="flex items-center cursor-pointer gap-2.5 select-none">
+                            <div className="toggle-switch">
+                              <input
+                                type="checkbox"
+                                checked={notifyFailed}
+                                onChange={() => setNotifyFailed(!notifyFailed)}
+                              />
+                              <div className="toggle-track" />
+                            </div>
+                            <span className="text-[11px] font-bold text-stone-700 min-w-[20px]">{notifyFailed ? t("On") : t("Off")}</span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Appearance Preference Card */}
+                    <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm text-left premium-card-hover">
+                      <h3 className="font-extrabold text-stone-900 text-sm">{t("Appearance")}</h3>
+                      <p className="text-[10px] text-stone-450 mt-1 font-semibold">{t("Customize how the application looks")}</p>
+
+                      <div className="grid grid-cols-2 gap-4 mt-4 max-w-xl">
+                        {/* Light Card choice */}
+                        <button
+                          onClick={() => setAppearance("light")}
+                          className={`flex items-center gap-3 p-4 rounded-xl border transition-all text-left ${appearance === "light"
+                              ? "border-petro-green bg-white shadow-sm font-bold text-stone-850"
+                              : "border-stone-200 hover:bg-stone-50/50 text-stone-500 font-semibold"
+                            }`}
+                        >
+                          <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${appearance === "light" ? "border-petro-green" : "border-stone-300"}`}>
+                            {appearance === "light" && <span className="w-2.5 h-2.5 rounded-full bg-petro-green"></span>}
+                          </span>
+                          <span className="text-xs font-bold text-stone-700">{t("Light")}</span>
+                        </button>
+
+                        {/* System Card choice */}
+                        <button
+                          onClick={() => setAppearance("system")}
+                          className={`flex items-center gap-3 p-4 rounded-xl border transition-all text-left ${appearance === "system"
+                              ? "border-petro-green bg-white shadow-sm font-bold text-stone-850"
+                              : "border-stone-200 hover:bg-stone-50/50 text-stone-500 font-semibold"
+                            }`}
+                        >
+                          <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${appearance === "system" ? "border-petro-green" : "border-stone-300"}`}>
+                            {appearance === "system" && <span className="w-2.5 h-2.5 rounded-full bg-petro-green"></span>}
+                          </span>
+                          <span className="text-xs font-bold text-stone-700">{t("System")}</span>
+                        </button>
                       </div>
                     </div>
                   </div>
-
-                  {/* Appearance Preference Card */}
-                  <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm text-left premium-card-hover">
-                    <h3 className="font-extrabold text-stone-900 text-sm">{t("Appearance")}</h3>
-                    <p className="text-[10px] text-stone-450 mt-1 font-semibold">{t("Customize how the application looks")}</p>
-                    
-                    <div className="grid grid-cols-2 gap-4 mt-4 max-w-xl">
-                      {/* Light Card choice */}
-                      <button
-                        onClick={() => setAppearance("light")}
-                        className={`flex items-center gap-3 p-4 rounded-xl border transition-all text-left ${
-                          appearance === "light"
-                            ? "border-petro-green bg-white shadow-sm font-bold text-stone-850"
-                            : "border-stone-200 hover:bg-stone-50/50 text-stone-500 font-semibold"
-                        }`}
-                      >
-                        <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${appearance === "light" ? "border-petro-green" : "border-stone-300"}`}>
-                          {appearance === "light" && <span className="w-2.5 h-2.5 rounded-full bg-petro-green"></span>}
-                        </span>
-                        <span className="text-xs font-bold text-stone-700">{t("Light")}</span>
-                      </button>
-
-                      {/* System Card choice */}
-                      <button
-                        onClick={() => setAppearance("system")}
-                        className={`flex items-center gap-3 p-4 rounded-xl border transition-all text-left ${
-                          appearance === "system"
-                            ? "border-petro-green bg-white shadow-sm font-bold text-stone-850"
-                            : "border-stone-200 hover:bg-stone-50/50 text-stone-500 font-semibold"
-                        }`}
-                      >
-                        <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${appearance === "system" ? "border-petro-green" : "border-stone-300"}`}>
-                          {appearance === "system" && <span className="w-2.5 h-2.5 rounded-full bg-petro-green"></span>}
-                        </span>
-                        <span className="text-xs font-bold text-stone-700">{t("System")}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </ScrollReveal>
-            )}
+                </ScrollReveal>
+              )}
 
               {/* ACCOUNT TAB CONTENT */}
               {activeTab === "account" && (
@@ -439,135 +468,135 @@ export default function SettingsPage() {
                     <p className="text-[10px] text-stone-450 mt-1 font-semibold">{t("Manage your personal information")}</p>
 
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-8 mt-8 items-start">
-                    
-                    {/* Left Column Profile photo */}
-                    <div className="md:col-span-4 flex flex-col items-center py-4">
-                      <span className="text-xs font-bold text-stone-500 mb-3">{t("Profile Picture")}</span>
-                      <div className="w-28 h-28 rounded-full bg-stone-100 border border-stone-200 flex items-center justify-center text-petro-green font-black text-4xl mb-4 shadow-sm select-none">
-                        {getAvatarInitial()}
-                      </div>
-                      <button className="px-4 py-2 border border-petro-green text-petro-green hover:bg-petro-green/5 font-extrabold text-[10px] uppercase tracking-wide rounded-xl shadow-sm transition-colors cursor-pointer">
-                        {t("Change Photo")}
-                      </button>
-                    </div>
 
-                    {/* Right Column Form Inputs */}
-                    <div className="md:col-span-8 space-y-4">
-                      {/* Full Name */}
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-bold text-stone-700 mb-1.5">{t("Full Name")}</label>
-                        <input
-                          type="text"
-                          value={fullName}
-                          onChange={(e) => setFullName(e.target.value)}
-                          placeholder="Rafika Az Zahra Kusumastuti"
-                          className="w-full px-3 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
-                        />
-                      </div>
-
-                      {/* Email Address */}
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-bold text-stone-700 mb-1.5">{t("Email Address")}</label>
-                        <input
-                          type="email"
-                          value={emailAddress}
-                          onChange={(e) => setEmailAddress(e.target.value)}
-                          placeholder="rafikaazzahrak@gmail.com"
-                          className="w-full px-3 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
-                        />
-                      </div>
-
-                      <hr className="border-stone-100 my-2" />
-
-                      {/* Current Password */}
-                      <div className="flex flex-col gap-1 relative">
-                        <label className="text-xs font-bold text-stone-700 mb-1.5">{t("Current Password")}</label>
-                        <input
-                          type={showCurrentPw ? "text" : "password"}
-                          value={currentPassword}
-                          onChange={(e) => setCurrentPassword(e.target.value)}
-                          placeholder="••••••••••••"
-                          className="w-full pl-3 pr-10 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowCurrentPw(!showCurrentPw)}
-                          className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors"
-                        >
-                          {showCurrentPw ? (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                            </svg>
-                          ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.43 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                          )}
+                      {/* Left Column Profile photo */}
+                      <div className="md:col-span-4 flex flex-col items-center py-4">
+                        <span className="text-xs font-bold text-stone-500 mb-3">{t("Profile Picture")}</span>
+                        <div className="w-28 h-28 rounded-full bg-stone-100 border border-stone-200 flex items-center justify-center text-petro-green font-black text-4xl mb-4 shadow-sm select-none">
+                          {getAvatarInitial()}
+                        </div>
+                        <button className="px-4 py-2 border border-petro-green text-petro-green hover:bg-petro-green/5 font-extrabold text-[10px] uppercase tracking-wide rounded-xl shadow-sm transition-colors cursor-pointer">
+                          {t("Change Photo")}
                         </button>
                       </div>
 
-                      {/* New Password */}
-                      <div className="flex flex-col gap-1 relative">
-                        <label className="text-xs font-bold text-stone-700 mb-1.5">{t("New Password")}</label>
-                        <input
-                          type={showNewPw ? "text" : "password"}
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                          placeholder="••••••••••••"
-                          className="w-full pl-3 pr-10 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowNewPw(!showNewPw)}
-                          className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors"
-                        >
-                          {showNewPw ? (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                            </svg>
-                          ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.43 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                          )}
-                        </button>
-                      </div>
+                      {/* Right Column Form Inputs */}
+                      <div className="md:col-span-8 space-y-4">
+                        {/* Full Name */}
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-bold text-stone-700 mb-1.5">{t("Full Name")}</label>
+                          <input
+                            type="text"
+                            value={fullName}
+                            onChange={(e) => setFullName(e.target.value)}
+                            placeholder="Rafika Az Zahra Kusumastuti"
+                            className="w-full px-3 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
+                          />
+                        </div>
 
-                      {/* Confirm New Password */}
-                      <div className="flex flex-col gap-1 relative">
-                        <label className="text-xs font-bold text-stone-700 mb-1.5">{t("Confirm New Password")}</label>
-                        <input
-                          type={showConfirmPw ? "text" : "password"}
-                          value={confirmNewPassword}
-                          onChange={(e) => setConfirmNewPassword(e.target.value)}
-                          placeholder="••••••••••••"
-                          className="w-full pl-3 pr-10 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowConfirmPw(!showConfirmPw)}
-                          className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors"
-                        >
-                          {showConfirmPw ? (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                            </svg>
-                          ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.43 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                          )}
-                        </button>
+                        {/* Email Address */}
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-bold text-stone-700 mb-1.5">{t("Email Address")}</label>
+                          <input
+                            type="email"
+                            value={emailAddress}
+                            onChange={(e) => setEmailAddress(e.target.value)}
+                            placeholder="rafikaazzahrak@gmail.com"
+                            className="w-full px-3 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
+                          />
+                        </div>
+
+                        <hr className="border-stone-100 my-2" />
+
+                        {/* Current Password */}
+                        <div className="flex flex-col gap-1 relative">
+                          <label className="text-xs font-bold text-stone-700 mb-1.5">{t("Current Password")}</label>
+                          <input
+                            type={showCurrentPw ? "text" : "password"}
+                            value={currentPassword}
+                            onChange={(e) => setCurrentPassword(e.target.value)}
+                            placeholder="••••••••••••"
+                            className="w-full pl-3 pr-10 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowCurrentPw(!showCurrentPw)}
+                            className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors"
+                          >
+                            {showCurrentPw ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                              </svg>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.43 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+
+                        {/* New Password */}
+                        <div className="flex flex-col gap-1 relative">
+                          <label className="text-xs font-bold text-stone-700 mb-1.5">{t("New Password")}</label>
+                          <input
+                            type={showNewPw ? "text" : "password"}
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            placeholder="••••••••••••"
+                            className="w-full pl-3 pr-10 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowNewPw(!showNewPw)}
+                            className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors"
+                          >
+                            {showNewPw ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                              </svg>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.43 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Confirm New Password */}
+                        <div className="flex flex-col gap-1 relative">
+                          <label className="text-xs font-bold text-stone-700 mb-1.5">{t("Confirm New Password")}</label>
+                          <input
+                            type={showConfirmPw ? "text" : "password"}
+                            value={confirmNewPassword}
+                            onChange={(e) => setConfirmNewPassword(e.target.value)}
+                            placeholder="••••••••••••"
+                            className="w-full pl-3 pr-10 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPw(!showConfirmPw)}
+                            className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors"
+                          >
+                            {showConfirmPw ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                              </svg>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.43 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                        <span className="text-[10px] text-stone-400 font-semibold mt-1">{t("Minimum 8 characters with letters, numbers, and symbols")}</span>
                       </div>
-                      <span className="text-[10px] text-stone-400 font-semibold mt-1">{t("Minimum 8 characters with letters, numbers, and symbols")}</span>
                     </div>
                   </div>
-                </div>
-              </ScrollReveal>
-            )}
+                </ScrollReveal>
+              )}
 
               {/* SAVE CHANGE BUTTON BAR */}
               <div className="pt-5 border-t border-stone-200/60 mt-6 flex justify-end">
