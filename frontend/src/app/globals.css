@@ -1,0 +1,181 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-petro-green: #004D25;
+  --color-petro-green-hover: #00361a;
+  --color-petro-green-light: #e6f0ea;
+  --color-petro-yellow: #d9a700;
+  --color-petro-yellow-hover: #b88d00;
+  --color-petro-yellow-light: #fbf6e5;
+  --color-petro-bg-warm: #f7f6f0;
+  --color-petro-bg-card: #ffffff;
+  --color-petro-text-dark: #1a1a1a;
+  --color-petro-text-light: #595959;
+}
+
+:root {
+  --background: #f7f6f0;
+  --foreground: #1a1a1a;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Custom Scrollbar ─────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 77, 37, 0.22);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 77, 37, 0.45); }
+
+::selection {
+  background: rgba(0, 77, 37, 0.12);
+  color: #004D25;
+}
+
+/* ── KEYFRAME ANIMATIONS ──────────────────────────────── */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -500px 0; }
+  100% { background-position: 500px 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-6px); }
+}
+
+/* ── ANIMATION UTILITY CLASSES ───────────────────────── */
+
+.animate-fadeInUp     { animation: fadeInUp     0.5s ease-out both; }
+.animate-fadeIn       { animation: fadeIn       0.4s ease-out both; }
+.animate-slideInLeft  { animation: slideInLeft  0.45s ease-out both; }
+.animate-slideInRight { animation: slideInRight 0.45s ease-out both; }
+.animate-scaleIn      { animation: scaleIn      0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-slideDown    { animation: slideDown    0.25s ease-out both; }
+.animate-float        { animation: float        3.5s ease-in-out infinite; }
+
+/* Staggered delays */
+.delay-50  { animation-delay: 50ms; }
+.delay-75  { animation-delay: 75ms; }
+.delay-100 { animation-delay: 100ms; }
+.delay-150 { animation-delay: 150ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-250 { animation-delay: 250ms; }
+.delay-300 { animation-delay: 300ms; }
+.delay-400 { animation-delay: 400ms; }
+.delay-500 { animation-delay: 500ms; }
+.delay-600 { animation-delay: 600ms; }
+.delay-700 { animation-delay: 700ms; }
+
+/* ── SKELETON SHIMMER ─────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    #eeebe4 25%,
+    #e4e1da 50%,
+    #eeebe4 75%
+  );
+  background-size: 500px 100%;
+  animation: shimmer 1.6s infinite linear;
+  border-radius: 8px;
+}
+
+/* ── SMOOTH CSS TOGGLE SWITCH ────────────────────────── */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background-color: #d1d5db;
+  border-radius: 9999px;
+  transition: background-color 0.3s ease;
+  cursor: pointer;
+}
+
+.toggle-switch input:checked + .toggle-track {
+  background-color: #004D25;
+}
+
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 9999px;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+}
+
+.toggle-switch input:checked + .toggle-track::after {
+  transform: translateX(20px);
+}
+
+/* ── PREMIUM CARD HOVER ───────────────────────────────── */
+.premium-card-hover {
+  transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), border-color 0.4s ease;
+  position: relative;
+}
+
+.premium-card-hover:hover {
+  transform: translateY(-4px) scale(1.008);
+  box-shadow: 0 12px 30px rgba(0, 77, 37, 0.07);
+  border-color: rgba(217, 167, 0, 0.4) !important;
+}
+

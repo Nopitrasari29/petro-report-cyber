@@ -1,0 +1,32 @@
+[
+  {
+    "bulan": "Januari",
+    "phishing_detected": 15,
+    "spam_detected": 140
+  },
+  {
+    "bulan": "Februari",
+    "phishing_detected": 22,
+    "spam_detected": 185
+  },
+  {
+    "bulan": "Maret",
+    "phishing_detected": 12,
+    "spam_detected": 160
+  },
+  {
+    "bulan": "April",
+    "phishing_detected": 35,
+    "spam_detected": 210
+  },
+  {
+    "bulan": "Mei",
+    "phishing_detected": 28,
+    "spam_detected": 195
+  },
+  {
+    "bulan": "Juni",
+    "phishing_detected": 40,
+    "spam_detected": 240
+  }
+]

@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pkg_security_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pkg_security_db
+      # Mengarahkan koneksi AI ke Windows Host
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - db
+    volumes:
+      - ./app:/code/app
+      - ./alembic:/code/alembic
+      - ./alembic.ini:/code/alembic.ini
+
+volumes:
+  pgdata:

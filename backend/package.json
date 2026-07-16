@@ -1,0 +1,14 @@
+{
+  "name": "pkg-backend",
+  "version": "1.0.0",
+  "description": "AI Security Reports - FastAPI Backend",
+  "scripts": {
+    "dev": ".\\venv\\Scripts\\uvicorn.exe app.main:app --reload --host 0.0.0.0 --port 8000",
+    "db": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f db",
+    "migrate:run": ".\\venv\\Scripts\\python.exe -m alembic upgrade head",
+    "migrate:rollback": ".\\venv\\Scripts\\python.exe -m alembic downgrade -1",
+    "dummy": ".\\venv\\Scripts\\python.exe app/tests/generate_dummy_files.py"
+  }
+}
