@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+# backend/app/models/user.py
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text  # Ditambahkan import Text
 from sqlalchemy.sql import func
 from app.db.session import Base
 
@@ -19,5 +20,5 @@ class User(Base):
     full_name = Column(String, nullable=True)
     role = Column(String, default="Analyst")
     department = Column(String, default="IT Security SOC")
-    avatar_url = Column(String, nullable=True)
+    avatar_url = Column(Text, nullable=True)  # Diubah menjadi Text agar aman menampung string Base64 ukuran besar
     created_at = Column(DateTime(timezone=True), server_default=func.now())

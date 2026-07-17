@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { setLanguage as setUiLanguage, t } from "@/utils/i18n";
 import Sidebar from "@/components/Sidebar";
@@ -9,6 +9,7 @@ import ScrollReveal from "@/components/ScrollReveal";
 
 export default function SettingsPage() {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<"general" | "account">("general");
 
   // Loading & Error States
@@ -20,6 +21,7 @@ export default function SettingsPage() {
   // Account Form States
   const [fullName, setFullName] = useState("");
   const [emailAddress, setEmailAddress] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState(""); // Menyimpan Base64 atau URL foto profil
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
@@ -31,31 +33,6 @@ export default function SettingsPage() {
   const [language, setLanguage] = useState("English");
   const [notifySuccess, setNotifySuccess] = useState(true);
   const [notifyFailed, setNotifyFailed] = useState(true);
-  const [appearance, setAppearance] = useState<"light" | "system">("light");
-
-  // ==========================================
-  // EFFECT 1: Menerapkan Tema ke DOM (HTML) secara otomatis
-  // ==========================================
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const root = window.document.documentElement;
-
-      // Bersihkan kelas tema lama
-      root.classList.remove("light", "dark");
-
-      if (appearance === "system") {
-        // Cek preferensi sistem operasi OS pengguna
-        const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-        if (systemPrefersDark) {
-          root.classList.add("dark");
-        } else {
-          root.classList.add("light");
-        }
-      } else {
-        root.classList.add("light");
-      }
-    }
-  }, [appearance]); // Berjalan setiap kali state 'appearance' berubah
 
   // Fetch initial profile & settings on mount
   const loadData = async () => {
@@ -79,6 +56,7 @@ export default function SettingsPage() {
         const profile = await profileRes.json();
         setFullName(profile.full_name || "");
         setEmailAddress(profile.email || "");
+        setAvatarUrl(profile.avatar_url || ""); // Mengambil foto profil dari backend
       }
 
       // 2. Fetch System/User Settings
@@ -90,12 +68,6 @@ export default function SettingsPage() {
         setUiLanguage(langVal);
         setNotifySuccess(settings.include_charts ?? true);
         setNotifyFailed(settings.include_exec_summary ?? true);
-
-        const appearanceVal = settings.appearance === "system" ? "system" : "light";
-        setAppearance(appearanceVal);
-
-        // Simpan ke localStorage untuk akses cepat halaman lain
-        localStorage.setItem("appearance", appearanceVal);
       }
     } catch (err: any) {
       console.error(err);
@@ -107,7 +79,32 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadData();
+    if (typeof window !== "undefined") {
+      window.document.documentElement.classList.remove("dark");
+    }
   }, []);
+
+  // Penanganan pemilihan foto profil (Konversi ke Base64)
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click(); // Memicu klik pada input file yang tersembunyi
+  };
+
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Batasi ukuran file maksimal 2MB untuk mencegah payload kebesaran
+      if (file.size > 2 * 1024 * 1024) {
+        setErrorMsg("Ukuran foto maksimal adalah 2MB.");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAvatarUrl(reader.result as string); // Menyimpan hasil konversi Base64 ke state
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   // Reset to default preferences
   const handleResetToDefault = async () => {
@@ -120,8 +117,6 @@ export default function SettingsPage() {
       setLanguage("English");
       setNotifySuccess(true);
       setNotifyFailed(true);
-      setAppearance("light");
-      localStorage.setItem("appearance", "light");
       setSuccessMsg("Preferensi berhasil diatur ulang ke default.");
       setTimeout(() => setSuccessMsg(""), 3000);
     } catch (e) {
@@ -134,7 +129,6 @@ export default function SettingsPage() {
     setErrorMsg("");
     setSuccessMsg("");
 
-    // Password matching validation
     if (newPassword || confirmNewPassword) {
       if (newPassword.length < 8) {
         setErrorMsg("Password baru minimal terdiri dari 8 karakter.");
@@ -160,10 +154,11 @@ export default function SettingsPage() {
         authHeaders["Authorization"] = `Bearer ${token}`;
       }
 
-      // 1. Save Profile & Password info
+      // 1. Menyatukan data Profile & Avatar Base64 ke dalam satu payload JSON
       const profileBody: Record<string, any> = {
         full_name: fullName,
         email: emailAddress,
+        avatar_url: avatarUrl // Mengirimkan string Base64 langsung ke DB
       };
 
       if (newPassword) {
@@ -182,16 +177,16 @@ export default function SettingsPage() {
         throw new Error(errData.detail || "Gagal memperbarui profil pengguna.");
       }
 
-      // Update local storage token if email is successfully changed (for safety)
       const profileData = await profileRes.json();
       setFullName(profileData.full_name);
       setEmailAddress(profileData.email);
+      setAvatarUrl(profileData.avatar_url || "");
 
       const settingsBody = {
         ai_language: language,
         include_charts: notifySuccess,
         include_exec_summary: notifyFailed,
-        appearance: appearance
+        appearance: "light"
       };
 
       const settingsRes = await fetch("http://localhost:8000/api/v1/settings/", {
@@ -206,10 +201,7 @@ export default function SettingsPage() {
 
       setUiLanguage(language);
 
-      // Simpan preferensi tema ke localStorage saat sukses disimpan
-      localStorage.setItem("appearance", appearance);
-
-      // Reset password fields after successful save
+      // Reset password fields setelah sukses menyimpan
       setCurrentPassword("");
       setNewPassword("");
       setConfirmNewPassword("");
@@ -227,22 +219,20 @@ export default function SettingsPage() {
     }
   };
 
-  // Profile Avatar initial helper
   const getAvatarInitial = () => {
-    if (fullName) return fullName.charAt(0).toUpperCase();
-    return "R";
+    if (fullName && fullName.trim()) {
+      return fullName.trim().charAt(0).toUpperCase();
+    }
+    return "U";
   };
 
   return (
     <div className="min-h-screen bg-petro-bg-warm flex">
-      {/* Sidebar Navigation */}
       <Sidebar />
 
-      {/* Main Content Area */}
       <div className="flex-1 pl-64 flex flex-col min-h-screen">
         <Navbar />
 
-        {/* Main Body */}
         <main className="flex-1 p-8 max-w-4xl mx-auto w-full space-y-6">
           {/* Header Title section */}
           <div className="flex justify-between items-center text-left animate-fadeInUp">
@@ -255,7 +245,7 @@ export default function SettingsPage() {
 
             <button
               onClick={handleResetToDefault}
-              className="inline-flex items-center gap-2 px-4 py-2 border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 font-bold text-xs rounded-xl shadow-sm hover:shadow transition-all duration-200 group"
+              className="inline-flex items-center gap-2 px-4 py-2 border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 font-bold text-xs rounded-xl shadow-sm hover:shadow transition-all duration-200 group cursor-pointer"
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5 transition-transform duration-500 group-hover:-rotate-180">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
@@ -266,7 +256,7 @@ export default function SettingsPage() {
 
           {/* Error and Success alerts */}
           {errorMsg && (
-            <div className="bg-red-50 border border-red-200 text-red-750 px-4 py-3 rounded-xl text-xs font-medium text-left">
+            <div className="bg-red-50 border border-red-200 text-red-750 px-4 py-3 rounded-xl text-xs font-medium text-left animate-fadeIn">
               <strong>Error:</strong> {t(errorMsg)}
             </div>
           )}
@@ -366,7 +356,7 @@ export default function SettingsPage() {
                           <div className="flex gap-4 items-center">
                             <span className="w-10 h-10 rounded-xl bg-[#e6f0ea] border border-[#004D25]/10 flex items-center justify-center text-emerald-600 shrink-0">
                               <span className="w-5 h-5 rounded-full border-2 border-emerald-600 flex items-center justify-center bg-white">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5.h-3.5 text-emerald-650">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-650">
                                   <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
                                 </svg>
                               </span>
@@ -420,42 +410,6 @@ export default function SettingsPage() {
                         </div>
                       </div>
                     </div>
-
-                    {/* Appearance Preference Card */}
-                    <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm text-left premium-card-hover">
-                      <h3 className="font-extrabold text-stone-900 text-sm">{t("Appearance")}</h3>
-                      <p className="text-[10px] text-stone-450 mt-1 font-semibold">{t("Customize how the application looks")}</p>
-
-                      <div className="grid grid-cols-2 gap-4 mt-4 max-w-xl">
-                        {/* Light Card choice */}
-                        <button
-                          onClick={() => setAppearance("light")}
-                          className={`flex items-center gap-3 p-4 rounded-xl border transition-all text-left ${appearance === "light"
-                              ? "border-petro-green bg-white shadow-sm font-bold text-stone-850"
-                              : "border-stone-200 hover:bg-stone-50/50 text-stone-500 font-semibold"
-                            }`}
-                        >
-                          <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${appearance === "light" ? "border-petro-green" : "border-stone-300"}`}>
-                            {appearance === "light" && <span className="w-2.5 h-2.5 rounded-full bg-petro-green"></span>}
-                          </span>
-                          <span className="text-xs font-bold text-stone-700">{t("Light")}</span>
-                        </button>
-
-                        {/* System Card choice */}
-                        <button
-                          onClick={() => setAppearance("system")}
-                          className={`flex items-center gap-3 p-4 rounded-xl border transition-all text-left ${appearance === "system"
-                              ? "border-petro-green bg-white shadow-sm font-bold text-stone-850"
-                              : "border-stone-200 hover:bg-stone-50/50 text-stone-500 font-semibold"
-                            }`}
-                        >
-                          <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${appearance === "system" ? "border-petro-green" : "border-stone-300"}`}>
-                            {appearance === "system" && <span className="w-2.5 h-2.5 rounded-full bg-petro-green"></span>}
-                          </span>
-                          <span className="text-xs font-bold text-stone-700">{t("System")}</span>
-                        </button>
-                      </div>
-                    </div>
                   </div>
                 </ScrollReveal>
               )}
@@ -472,10 +426,33 @@ export default function SettingsPage() {
                       {/* Left Column Profile photo */}
                       <div className="md:col-span-4 flex flex-col items-center py-4">
                         <span className="text-xs font-bold text-stone-500 mb-3">{t("Profile Picture")}</span>
-                        <div className="w-28 h-28 rounded-full bg-stone-100 border border-stone-200 flex items-center justify-center text-petro-green font-black text-4xl mb-4 shadow-sm select-none">
-                          {getAvatarInitial()}
-                        </div>
-                        <button className="px-4 py-2 border border-petro-green text-petro-green hover:bg-petro-green/5 font-extrabold text-[10px] uppercase tracking-wide rounded-xl shadow-sm transition-colors cursor-pointer">
+
+                        {/* Input file tersembunyi */}
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          onChange={handleAvatarChange}
+                          accept="image/*"
+                          className="hidden"
+                        />
+
+                        {/* Penayangan Foto Dinamis (Fallback ke Inisial jika kosong) */}
+                        {avatarUrl ? (
+                          <img
+                            src={avatarUrl}
+                            alt="Avatar"
+                            className="w-28 h-28 rounded-full object-cover border border-stone-200 shadow-sm mb-4 select-none"
+                          />
+                        ) : (
+                          <div className="w-28 h-28 rounded-full bg-stone-100 border border-stone-200 flex items-center justify-center text-petro-green font-black text-4xl mb-4 shadow-sm select-none">
+                            {getAvatarInitial()}
+                          </div>
+                        )}
+
+                        <button
+                          onClick={handleAvatarClick}
+                          className="px-4 py-2 border border-petro-green text-petro-green hover:bg-petro-green/5 font-extrabold text-[10px] uppercase tracking-wide rounded-xl shadow-sm transition-colors cursor-pointer"
+                        >
                           {t("Change Photo")}
                         </button>
                       </div>
@@ -489,7 +466,7 @@ export default function SettingsPage() {
                             type="text"
                             value={fullName}
                             onChange={(e) => setFullName(e.target.value)}
-                            placeholder="Rafika Az Zahra Kusumastuti"
+                            placeholder={t("Enter your full name")}
                             className="w-full px-3 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
                           />
                         </div>
@@ -501,7 +478,7 @@ export default function SettingsPage() {
                             type="email"
                             value={emailAddress}
                             onChange={(e) => setEmailAddress(e.target.value)}
-                            placeholder="rafikaazzahrak@gmail.com"
+                            placeholder={t("Enter your email address")}
                             className="w-full px-3 py-2 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-petro-green text-stone-855 placeholder-stone-400 bg-white"
                           />
                         </div>
@@ -521,7 +498,7 @@ export default function SettingsPage() {
                           <button
                             type="button"
                             onClick={() => setShowCurrentPw(!showCurrentPw)}
-                            className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors"
+                            className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer"
                           >
                             {showCurrentPw ? (
                               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
@@ -549,7 +526,7 @@ export default function SettingsPage() {
                           <button
                             type="button"
                             onClick={() => setShowNewPw(!showNewPw)}
-                            className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors"
+                            className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer"
                           >
                             {showNewPw ? (
                               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
@@ -577,7 +554,7 @@ export default function SettingsPage() {
                           <button
                             type="button"
                             onClick={() => setShowConfirmPw(!showConfirmPw)}
-                            className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors"
+                            className="absolute right-3.5 bottom-2 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer"
                           >
                             {showConfirmPw ? (
                               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
@@ -591,7 +568,7 @@ export default function SettingsPage() {
                             )}
                           </button>
                         </div>
-                        <span className="text-[10px] text-stone-400 font-semibold mt-1">{t("Minimum 8 characters with letters, numbers, and symbols")}</span>
+                        <span className="text-[10px] text-stone-450 font-semibold mt-1">{t("Minimum 8 characters with letters, numbers, and symbols")}</span>
                       </div>
                     </div>
                   </div>
@@ -603,7 +580,7 @@ export default function SettingsPage() {
                 <button
                   onClick={handleSaveChanges}
                   disabled={isSaving}
-                  className="px-6 py-3 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-xs shadow-md transition-all disabled:opacity-60 flex items-center gap-2"
+                  className="px-6 py-3 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-xs shadow-md transition-all disabled:opacity-60 flex items-center gap-2 cursor-pointer"
                 >
                   {isSaving ? (
                     <>

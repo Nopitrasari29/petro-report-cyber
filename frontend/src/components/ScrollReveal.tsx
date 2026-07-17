@@ -9,6 +9,7 @@ interface ScrollRevealProps {
   delay?: number;
   duration?: number;
   threshold?: number;
+  triggerOnce?: boolean;
 }
 
 export default function ScrollReveal({
@@ -16,8 +17,9 @@ export default function ScrollReveal({
   className = "",
   animation = "fadeInUp",
   delay = 0,
-  duration = 500,
+  duration = 1000, // Dinaikkan menjadi 1000ms (1 detik) agar transisi lambat, halus, dan sinematik
   threshold = 0.1,
+  triggerOnce = false,
 }: ScrollRevealProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -27,13 +29,19 @@ export default function ScrollReveal({
       ([entry]) => {
         if (entry.isIntersecting) {
           setIsVisible(true);
-          // Once visible, stop observing to prevent repeating animations on scroll up/down
-          observer.unobserve(entry.target);
+          if (triggerOnce) {
+            observer.unobserve(entry.target);
+          }
+        } else {
+          if (!triggerOnce) {
+            setIsVisible(false);
+          }
         }
       },
       {
         threshold,
-        rootMargin: "0px 0px -20px 0px", // triggers slightly before elements fully enter screen
+        // Memberikan sedikit ruang margin atas dan bawah agar transisi masuk-keluar terasa lebih mulus
+        rootMargin: "-20px 0px -20px 0px",
       }
     );
 
@@ -47,7 +55,7 @@ export default function ScrollReveal({
         observer.unobserve(currentRef);
       }
     };
-  }, [threshold]);
+  }, [threshold, triggerOnce]);
 
   const getAnimationClass = () => {
     switch (animation) {
@@ -56,20 +64,20 @@ export default function ScrollReveal({
       case "scaleIn":
         return isVisible
           ? "opacity-100 scale-100"
-          : "opacity-0 scale-95";
+          : "opacity-0 scale-90"; // Jangkauan skala diturunkan ke 90 agar efek membesar lebih terlihat jelas
       case "slideInLeft":
         return isVisible
           ? "opacity-100 translate-x-0"
-          : "opacity-0 -translate-x-6";
+          : "opacity-0 -translate-x-12"; // Jarak geser diperlebar agar efek terlihat jelas
       case "slideInRight":
         return isVisible
           ? "opacity-100 translate-x-0"
-          : "opacity-0 translate-x-6";
+          : "opacity-0 translate-x-12"; // Jarak geser diperlebar agar efek terlihat jelas
       case "fadeInUp":
       default:
         return isVisible
           ? "opacity-100 translate-y-0"
-          : "opacity-0 translate-y-8";
+          : "opacity-0 translate-y-16"; // Jarak luncur vertikal diperbesar agar efek terlihat jelas
     }
   };
 

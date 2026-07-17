@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { t, getLanguage } from "@/utils/i18n";
 
 const menuItems = [
   {
@@ -37,12 +39,20 @@ const generalItems = [
   },
 ];
 
-import { useEffect, useState } from "react";
-import { t, getLanguage } from "@/utils/i18n";
-
 export default function Sidebar() {
   const pathname = usePathname();
   const [lang, setLang] = useState("English");
+
+  // ==========================================
+  // EFFECT 1: Pengaman Hidrasi (Hydration Guard)
+  // ==========================================
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Fungsi pembantu untuk menerjemahkan teks secara aman setelah hidrasi selesai
+  const tx = (key: string, fallback: string) => mounted ? t(key) : fallback;
 
   useEffect(() => {
     setLang(getLanguage());
@@ -68,8 +78,12 @@ export default function Sidebar() {
           <span className="font-extrabold text-white text-sm">P</span>
         </div>
         <div className="flex flex-col text-left leading-none">
-          <span className="font-extrabold text-sm tracking-tight text-white leading-snug">AI Security Reports</span>
-          <span className="text-[9px] text-white/60 font-semibold tracking-widest uppercase mt-0.5">PT Petrokimia Gresik</span>
+          <span className="font-extrabold text-sm tracking-tight text-white leading-snug">
+            {tx("AI Security Reports", "AI Security Reports")}
+          </span>
+          <span className="text-[9px] text-white/60 font-semibold tracking-widest uppercase mt-0.5">
+            PT Petrokimia Gresik
+          </span>
         </div>
       </Link>
 
@@ -77,7 +91,7 @@ export default function Sidebar() {
       <nav className="flex-1 py-6 px-3 space-y-6 overflow-y-auto">
         <div>
           <span className="text-[9px] font-extrabold text-white/35 tracking-[0.15em] uppercase px-3 block mb-2 animate-fadeIn delay-100">
-            {t("Menu")}
+            {tx("Menu", "Menu")}
           </span>
           <ul className="space-y-1">
             {menuItems.map((item, i) => {
@@ -90,20 +104,19 @@ export default function Sidebar() {
                 >
                   <Link
                     href={item.path}
-                    className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 overflow-hidden ${
-                      active
-                        ? "bg-white/15 text-white"
-                        : "text-white/70 hover:text-white"
-                    }`}
+                    className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 overflow-hidden ${active
+                      ? "bg-white/15 text-white"
+                      : "text-white/70 hover:text-white"
+                      }`}
                   >
                     <span
-                      className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-petro-yellow transition-all duration-300 ${
-                        active ? "h-6 opacity-100" : "h-0 opacity-0"
-                      }`}
+                      className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-petro-yellow transition-all duration-300 ${active ? "h-6 opacity-100" : "h-0 opacity-0"
+                        }`}
                     />
                     <span className="absolute inset-0 rounded-xl bg-white/0 group-hover:bg-white/5 transition-colors duration-200" />
                     <span className="relative z-10">{item.icon}</span>
-                    <span className="relative z-10">{t(item.name)}</span>
+                    {/* Menggunakan 'tx' agar bebas dari Hydration Mismatch pada pemetaan item menu */}
+                    <span className="relative z-10">{tx(item.name, item.name)}</span>
                   </Link>
                 </li>
               );
@@ -113,7 +126,7 @@ export default function Sidebar() {
 
         <div>
           <span className="text-[9px] font-extrabold text-white/35 tracking-[0.15em] uppercase px-3 block mb-2 animate-fadeIn delay-300">
-            {t("General")}
+            {tx("General", "General")}
           </span>
           <ul className="space-y-1">
             {generalItems.map((item, i) => {
@@ -126,20 +139,19 @@ export default function Sidebar() {
                 >
                   <Link
                     href={item.path}
-                    className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 overflow-hidden ${
-                      active
-                        ? "bg-white/15 text-white"
-                        : "text-white/70 hover:text-white"
-                    }`}
+                    className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 overflow-hidden ${active
+                      ? "bg-white/15 text-white"
+                      : "text-white/70 hover:text-white"
+                      }`}
                   >
                     <span
-                      className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-petro-yellow transition-all duration-300 ${
-                        active ? "h-6 opacity-100" : "h-0 opacity-0"
-                      }`}
+                      className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-petro-yellow transition-all duration-300 ${active ? "h-6 opacity-100" : "h-0 opacity-0"
+                        }`}
                     />
                     <span className="absolute inset-0 rounded-xl bg-white/0 group-hover:bg-white/5 transition-colors duration-200" />
                     <span className="relative z-10">{item.icon}</span>
-                    <span className="relative z-10">{t(item.name)}</span>
+                    {/* Menggunakan 'tx' agar bebas dari Hydration Mismatch pada pemetaan item general */}
+                    <span className="relative z-10">{tx(item.name, item.name)}</span>
                   </Link>
                 </li>
               );
@@ -152,7 +164,7 @@ export default function Sidebar() {
       <div className="p-4 border-t border-white/10 flex flex-col items-center gap-2 animate-fadeIn delay-500">
         <div className="relative">
           <span className="px-2.5 py-1 rounded-full bg-white/10 text-white font-bold text-[9px] uppercase tracking-widest">
-            Internal Use Only
+            {tx("Internal Use Only", "Internal Use Only")}
           </span>
           <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-petro-yellow animate-ping opacity-60" />
           <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-petro-yellow" />

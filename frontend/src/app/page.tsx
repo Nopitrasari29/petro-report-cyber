@@ -10,8 +10,17 @@ export default function LandingPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [loadingUser, setLoadingUser] = useState(true);
-
   const [lang, setLang] = useState("English");
+
+  // Pengaman Hidrasi (Hydration Guard)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(false); // Default false untuk SSR
+    setMounted(true);
+  }, []);
+
+  const tx = (key: string, fallback: string) => mounted ? t(key) : fallback;
+
   useEffect(() => {
     setLang(getLanguage());
     const handleLangChange = () => {
@@ -61,8 +70,8 @@ export default function LandingPage() {
   const steps = [
     {
       number: 1,
-      title: t("Upload Data"),
-      desc: t("Upload your security evidence files. Supported formats: PDF, CSV, XLSX"),
+      title: tx("Upload Data", "Upload Data"),
+      desc: tx("Upload your security evidence files. Supported formats: PDF, CSV, XLSX", "Upload your security evidence files. Supported formats: PDF, CSV, XLSX"),
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-6 h-6 transition-transform duration-300 group-hover:scale-110">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 17.25 4.5H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Z" />
@@ -71,8 +80,8 @@ export default function LandingPage() {
     },
     {
       number: 2,
-      title: t("Report Settings"),
-      desc: t("Set period, template, format, and other preferences for your report"),
+      title: tx("Report Settings", "Report Settings"),
+      desc: tx("Set period, template, format, and other preferences for your report", "Set period, template, format, and other preferences for your report"),
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-6 h-6 transition-transform duration-300 group-hover:scale-110">
           <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" />
@@ -81,8 +90,8 @@ export default function LandingPage() {
     },
     {
       number: 3,
-      title: t("AI Processing"),
-      desc: t("Our AI will analyze the data and generate insights, charts, and summary"),
+      title: tx("AI Processing", "AI Processing"),
+      desc: tx("Our AI will analyze the data and generate insights, charts, and summary", "Our AI will analyze the data and generate insights, charts, and summary"),
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-6 h-6 transition-transform duration-350 group-hover:rotate-12 group-hover:scale-110">
           <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
@@ -91,8 +100,8 @@ export default function LandingPage() {
     },
     {
       number: 4,
-      title: t("Preview & Edit"),
-      desc: t("Review AI generated content and make any necessary edits"),
+      title: tx("Preview & Edit", "Preview & Edit"),
+      desc: tx("Review AI generated content and make any necessary edits", "Review AI generated content and make any necessary edits"),
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-6 h-6 transition-transform duration-300 group-hover:scale-110">
           <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
@@ -101,8 +110,8 @@ export default function LandingPage() {
     },
     {
       number: 5,
-      title: t("Export Report"),
-      desc: t("Export your report to PDF or PowerPoint format"),
+      title: tx("Export Report", "Export Report"),
+      desc: tx("Export your report to PDF or PowerPoint format", "Export your report to PDF or PowerPoint format"),
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-6 h-6 transition-transform duration-300 group-hover:scale-110">
           <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
@@ -113,8 +122,8 @@ export default function LandingPage() {
 
   const modules = [
     {
-      title: t("Generate Report"),
-      desc: t("Create monthly SOC reports automatically with AI"),
+      title: tx("Generate Report", "Generate Report"),
+      desc: tx("Create monthly SOC reports automatically with AI", "Create monthly SOC reports automatically with AI"),
       href: "/generate",
       color: "text-petro-green",
       bg: "bg-petro-green-light",
@@ -125,8 +134,8 @@ export default function LandingPage() {
       ),
     },
     {
-      title: t("Report History"),
-      desc: t("View, search, download, and manage previously generated reports"),
+      title: tx("Report History", "Report History"),
+      desc: tx("View, search, download, and manage previously generated reports", "View, search, download, and manage previously generated reports"),
       href: "/history",
       color: "text-amber-600",
       bg: "bg-amber-50",
@@ -137,8 +146,8 @@ export default function LandingPage() {
       ),
     },
     {
-      title: t("Settings"),
-      desc: t("Manage account preferences and profile settings"),
+      title: tx("Settings", "Settings"),
+      desc: tx("Manage account preferences and profile settings", "Manage account preferences and profile settings"),
       href: "/settings",
       color: "text-violet-650",
       bg: "bg-violet-50/70",
@@ -154,77 +163,87 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-petro-bg-warm flex flex-col overflow-x-hidden selection:bg-petro-green/10 selection:text-petro-green">
 
-      {/* ── HEADER NAVBAR ────────────────────────────────────────── */}
-      <header className="w-full px-8 py-3 flex items-center justify-between border-b border-white/10 bg-petro-green text-white sticky top-0 z-40 shadow-md">
-        <Link href="/" className="flex items-center gap-3 group">
+      {/* ── HEADER NAVBAR (Di-Revisi agar Lebih Lapang & Mewah) ── */}
+      <header className="w-full px-10 py-4.5 flex items-center justify-between border-b border-white/10 bg-petro-green text-white sticky top-0 z-40 shadow-md">
+        <Link href="/" className="flex items-center gap-4 group">
           <img src="/LOGO_PETRO.png" alt="Petrokimia Logo" className="h-12 lg:h-14 w-auto object-contain shrink-0 -my-2 lg:-my-3 transition-transform duration-300 group-hover:scale-105" />
+          {/* Garis vertikal pembatas tipis */}
+          <div className="h-10 w-[1px] bg-white/20 shrink-0 hidden sm:block" />
           <div className="flex flex-col text-left leading-none">
-            <span className="font-extrabold text-sm text-white tracking-tight">{t("AI Security Reports")}</span>
-            <span className="text-[9px] text-white/70 font-semibold uppercase tracking-widest mt-0.5">{t("PT Petrokimia Gresik")}</span>
+            <span className="font-extrabold text-sm text-white tracking-wide uppercase">{tx("AI Security Reports", "AI Security Reports")}</span>
+            <span className="text-[9px] text-petro-yellow font-bold uppercase tracking-widest mt-1.5">{tx("PT Petrokimia Gresik", "PT Petrokimia Gresik")}</span>
           </div>
         </Link>
 
-        <nav className="flex items-center gap-3">
+        <nav className="flex items-center gap-4">
           {loadingUser ? (
-            <div className="w-24 h-9 bg-white/10 animate-pulse rounded-xl" />
+            <div className="w-24 h-10 bg-white/10 animate-pulse rounded-xl" />
           ) : user ? (
-            <div className="flex items-center gap-3 bg-white/10 border border-white/15 px-3 py-1.5 rounded-xl shadow-sm hover:bg-white/15 transition-all duration-300">
-              {user.avatar_url ? (
-                <img src={user.avatar_url} alt={user.full_name || user.username} className="w-8 h-8 rounded-lg border border-white/20 object-cover" />
-              ) : (
-                <div className="w-8 h-8 rounded-lg bg-petro-yellow flex items-center justify-center font-black text-xs uppercase text-white shrink-0 shadow-inner">
-                  {user.full_name ? user.full_name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() : user.username.slice(0, 2).toUpperCase()}
+            <div className="flex items-center gap-4">
+              {/* Profile Card Capsule yang Lebih Lebar dan Nyaman Dibaca */}
+              <div className="flex items-center gap-3 bg-white/10 border border-white/15 pl-2.5 pr-5 py-2 rounded-xl shadow-sm select-none">
+                {user.avatar_url ? (
+                  <img src={user.avatar_url} alt={user.full_name || user.username} className="w-9 h-9 rounded-lg border border-white/20 object-cover" />
+                ) : (
+                  <div className="w-9 h-9 rounded-lg bg-petro-yellow flex items-center justify-center font-black text-xs uppercase text-white shrink-0 shadow-inner">
+                    {user.full_name ? user.full_name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() : user.username.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex flex-col text-left max-w-[180px] hidden sm:flex">
+                  <span className="text-xs font-black text-white leading-none truncate">{user.full_name || user.username}</span>
+                  <span className="text-[10px] text-white/70 font-semibold mt-1.5 truncate">{user.email}</span>
                 </div>
-              )}
-              <div className="flex flex-col text-left max-w-[120px] hidden sm:flex">
-                <span className="text-xs font-bold text-white leading-none truncate">{user.full_name || user.username}</span>
-                <span className="text-[9px] text-white/60 font-semibold mt-0.5 truncate">{user.email}</span>
               </div>
+
+              {/* Tombol Logout Berdiri Sendiri dengan Ikon Rapi */}
               <button
                 onClick={handleLogout}
-                className="ml-1.5 text-[10px] uppercase font-bold text-white bg-red-650 hover:bg-red-700 px-3 py-2 rounded-xl hover:shadow transition-all duration-200 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-red-650 hover:bg-red-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer shrink-0"
               >
-                {t("Logout")}
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.3} stroke="currentColor" className="w-3.5 h-3.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
+                </svg>
+                {tx("Logout", "Logout")}
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <Link
                 href="/login"
-                className="px-4 py-2 text-xs font-bold text-white/80 hover:text-white transition-colors rounded-xl hover:bg-white/10"
+                className="px-4 py-2.5 text-xs font-bold text-white/80 hover:text-white transition-colors rounded-xl hover:bg-white/10"
               >
-                {t("Sign In")}
+                {tx("Sign In", "Sign In")}
               </Link>
               <Link
                 href="/register"
-                className="px-4 py-2.5 text-xs font-extrabold text-white bg-petro-yellow hover:bg-petro-yellow-hover rounded-xl shadow-sm transition-all duration-200"
+                className="px-4 py-3 text-xs font-extrabold text-white bg-petro-yellow hover:bg-petro-yellow-hover rounded-xl shadow-sm transition-all duration-200"
               >
-                {t("Register")}
+                {tx("Register", "Register")}
               </Link>
             </div>
           )}
         </nav>
       </header>
 
-      {/* ── HERO BANNER SECTION ───────────────────────────────────── */}
+      {/* ── HERO BANNER SECTION ── */}
       <section className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20 md:py-28 relative bg-gradient-to-b from-stone-50/40 to-transparent border-b border-stone-200/40">
-        
+
         {/* Subtle grid pattern background */}
         <div className="absolute inset-0 bg-[linear-gradient(rgba(0,77,37,0.02)_1.5px,transparent_1.5px),linear-gradient(90deg,rgba(0,77,37,0.02)_1.5px,transparent_1.5px)] bg-[size:32px_32px] pointer-events-none opacity-60" />
 
         <div className="relative z-10 max-w-4xl flex flex-col items-center space-y-6">
-          <div className="animate-scaleIn inline-flex items-center gap-2 px-3 py-1 rounded-full bg-petro-yellow-light border border-petro-yellow/30 text-petro-yellow-hover text-[10px] font-extrabold uppercase tracking-widest">
-            <span className="w-1.5 h-1.5 rounded-full bg-petro-yellow animate-ping" />
-            {t("Local LLM Integrated")}
-          </div>
-          
+          {/* Lencana Terintegrasi LLM Lokal Dihapus sesuai Permintaan */}
+
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-black text-stone-900 leading-[1.1] tracking-tight max-w-3xl animate-fadeInUp delay-100">
-            {t("Automate Your")} <br />
-            <span className="text-petro-green">{t("SOC Security Reports")}</span>
+            {tx("Automate Your", "Automate Your")} <br />
+            <span className="text-petro-green">{tx("SOC Security Reports", "SOC Security Reports")}</span>
           </h1>
 
           <p className="max-w-xl text-sm md:text-base text-stone-500 font-medium leading-relaxed animate-fadeInUp delay-150">
-            {t("Automatically transform network firewall logs, VAPT scans, and email threats into executive summaries using advanced AI models.")}
+            {tx(
+              "Automatically transform network firewall logs, VAPT scans, and email threats into executive summaries using advanced AI models.",
+              "Automatically transform network firewall logs, VAPT scans, and email threats into executive summaries using advanced AI models."
+            )}
           </p>
 
           <div className="pt-2 animate-fadeInUp delay-200">
@@ -232,7 +251,7 @@ export default function LandingPage() {
               href="/generate"
               className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-xs tracking-wider uppercase shadow-lg hover:shadow-xl transition-all duration-300 group cursor-pointer"
             >
-              {t("Get Started Wizard")}
+              {tx("Get Started Wizard", "Get Started Wizard")}
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4 transition-transform group-hover:translate-x-1">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
               </svg>
@@ -249,8 +268,8 @@ export default function LandingPage() {
               </svg>
             </div>
             <div className="text-left leading-tight">
-              <div className="font-bold text-stone-850 text-xs">{t("Division Compliant")}</div>
-              <div className="text-[10px] text-stone-400 font-semibold mt-0.5">{t("PT Petrokimia Gresik")}</div>
+              <div className="font-bold text-stone-850 text-xs">{tx("Division Compliant", "Division Compliant")}</div>
+              <div className="text-[10px] text-stone-400 font-semibold mt-0.5">{tx("PT Petrokimia Gresik", "PT Petrokimia Gresik")}</div>
             </div>
           </div>
 
@@ -261,8 +280,8 @@ export default function LandingPage() {
               </svg>
             </div>
             <div className="text-left leading-tight">
-              <div className="font-bold text-stone-850 text-xs">{t("90% Time Saved")}</div>
-              <div className="text-[10px] text-stone-400 font-semibold mt-0.5">{t("Local offline analytics")}</div>
+              <div className="font-bold text-stone-850 text-xs">{tx("90% Time Saved", "90% Time Saved")}</div>
+              <div className="text-[10px] text-stone-400 font-semibold mt-0.5">{tx("Local offline analytics", "Local offline analytics")}</div>
             </div>
           </div>
 
@@ -273,8 +292,8 @@ export default function LandingPage() {
               </svg>
             </div>
             <div className="text-left leading-tight">
-              <div className="font-bold text-stone-850 text-xs">{t("PDF & PPTX Output")}</div>
-              <div className="text-[10px] text-stone-400 font-semibold mt-0.5">{t("Multi-format support")}</div>
+              <div className="font-bold text-stone-850 text-xs">{tx("PDF & PPTX Output", "PDF & PPTX Output")}</div>
+              <div className="text-[10px] text-stone-400 font-semibold mt-0.5">{tx("Multi-format support", "Multi-format support")}</div>
             </div>
           </div>
         </div>
@@ -284,12 +303,12 @@ export default function LandingPage() {
       <section className="relative py-20 px-6 bg-[#f2f4f0] border-b border-stone-200/40 overflow-hidden">
         {/* Subtle sage/dotted pattern background */}
         <div className="absolute inset-0 bg-[radial-gradient(rgba(0,77,37,0.045)_1.2px,transparent_1.2px)] bg-[size:24px_24px] pointer-events-none" />
-        
+
         <ScrollReveal animation="fadeInUp" className="relative z-10 max-w-5xl mx-auto">
           <div className="text-center mb-16">
-            <span className="text-[10px] font-extrabold tracking-widest text-petro-yellow uppercase bg-petro-yellow-light border border-petro-yellow/20 px-3 py-1 rounded-full">{t("Process Flow")}</span>
-            <h2 className="text-3xl font-extrabold text-stone-900 mt-3.5">{t("How It Works")}</h2>
-            <p className="text-xs text-stone-450 font-bold mt-1.5 max-w-md mx-auto">{t("Transform complex cybersecurity logs into structured reports in five simple phases.")}</p>
+            <span className="text-[10px] font-extrabold tracking-widest text-petro-yellow uppercase bg-petro-yellow-light border border-petro-yellow/20 px-3 py-1 rounded-full">{tx("Process Flow", "Process Flow")}</span>
+            <h2 className="text-3xl font-extrabold text-stone-900 mt-3.5">{tx("How It Works", "How It Works")}</h2>
+            <p className="text-xs text-stone-450 font-bold mt-1.5 max-w-md mx-auto">{tx("Transform complex cybersecurity logs into structured reports in five simple phases.", "Transform complex cybersecurity logs into structured reports in five simple phases.")}</p>
           </div>
 
           {/* Desktop timeline horizontal view */}
@@ -305,7 +324,7 @@ export default function LandingPage() {
                     </span>
                   </div>
                   <div className="mt-4 flex-1 flex flex-col justify-center">
-                    <h3 className="font-bold text-stone-850 text-xs tracking-tight group-hover:text-petro-green transition-colors duration-200">{step.title}</h3>
+                    <h3 className="font-bold text-stone-855 text-xs tracking-tight group-hover:text-petro-green transition-colors duration-200">{step.title}</h3>
                     <p className="text-[10px] text-stone-400 font-semibold mt-1 leading-relaxed max-w-[140px] mx-auto">{step.desc}</p>
                   </div>
                 </div>
@@ -330,7 +349,7 @@ export default function LandingPage() {
                   <span className="font-extrabold text-sm">{step.number}</span>
                 </div>
                 <div className="text-left">
-                  <h3 className="font-bold text-stone-850 text-xs">{step.title}</h3>
+                  <h3 className="font-bold text-stone-855 text-xs">{step.title}</h3>
                   <p className="text-[10px] text-stone-450 font-semibold mt-0.5 leading-relaxed">{step.desc}</p>
                 </div>
               </div>
@@ -343,12 +362,12 @@ export default function LandingPage() {
       <section className="relative py-20 px-6 bg-white/70 overflow-hidden">
         {/* Subtle gold diagonal pinstripe pattern background */}
         <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(217,167,0,0.02)_25%,transparent_25%,transparent_50%,rgba(217,167,0,0.02)_50%,rgba(217,167,0,0.02)_75%,transparent_75%,transparent)] bg-[size:40px_40px] pointer-events-none" />
-        
+
         <ScrollReveal animation="fadeInUp" className="relative z-10 max-w-4xl mx-auto">
           <div className="text-center mb-14">
-            <span className="text-[10px] font-extrabold tracking-widest text-petro-yellow uppercase bg-petro-yellow-light border border-petro-yellow/20 px-3 py-1 rounded-full">{t("Launch Centre")}</span>
-            <h2 className="text-3xl font-extrabold text-stone-900 mt-3.5">{t("Available Modules")}</h2>
-            <p className="text-xs text-stone-455 font-bold mt-1.5 max-w-sm mx-auto">{t("Direct shortcuts to generate reports, view logs, or adjust settings.")}</p>
+            <span className="text-[10px] font-extrabold tracking-widest text-petro-yellow uppercase bg-petro-yellow-light border border-petro-yellow/20 px-3 py-1 rounded-full">{tx("Launch Centre", "Launch Centre")}</span>
+            <h2 className="text-3xl font-extrabold text-stone-900 mt-3.5">{tx("Available Modules", "Available Modules")}</h2>
+            <p className="text-xs text-stone-455 font-bold mt-1.5 max-w-sm mx-auto">{tx("Direct shortcuts to generate reports, view logs, or adjust settings.", "Direct shortcuts to generate reports, view logs, or adjust settings.")}</p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
@@ -362,35 +381,38 @@ export default function LandingPage() {
                   {mod.icon}
                 </div>
                 <h3 className="font-extrabold text-stone-855 text-sm tracking-tight">{mod.title}</h3>
-                <p className="text-[10px] text-stone-450 font-semibold mt-2.5 leading-relaxed max-w-[180px]">{mod.desc}</p>
+                <p className="text-[10px] text-stone-455 font-semibold mt-2.5 leading-relaxed max-w-[180px]">{mod.desc}</p>
               </Link>
             ))}
           </div>
         </ScrollReveal>
       </section>
 
-      {/* ── BRAND FOOTER SECTION ──────────────────────────────────── */}
+      {/* ── BRAND FOOTER SECTION (Telah Di-Revisi Ukuran & Kontrasnya) ── */}
       <footer className="border-t border-white/10 bg-petro-green py-12 px-8 text-white mt-auto">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-3">
             <img src="/LOGO_PETRO.png" alt="Petrokimia Logo" className="h-12 lg:h-14 w-auto object-contain shrink-0 -my-2 lg:-my-3" />
             <div className="flex flex-col text-left leading-none">
-              <span className="font-extrabold text-sm text-white tracking-wide">{t("AI Security Reports")}</span>
-              <span className="text-[9px] text-white/60 font-semibold tracking-wider mt-0.5">{t("PT Petrokimia Gresik")}</span>
+              <span className="font-extrabold text-sm text-white tracking-wide">{tx("AI Security Reports", "AI Security Reports")}</span>
+              <span className="text-[9px] text-white/60 font-semibold tracking-wider mt-0.5">{tx("PT Petrokimia Gresik", "PT Petrokimia Gresik")}</span>
             </div>
           </div>
 
           <div className="text-center sm:text-right">
-            <p className="text-[10px] font-extrabold text-white/80 uppercase tracking-widest">{t("Internal Use Only")}</p>
-            <p className="text-[9px] text-white/50 font-medium mt-1">© 2026 PT Petrokimia Gresik. All rights reserved.</p>
+            {/* Diubah menjadi text-xs, font-black, dan text-petro-yellow untuk ketegasan visual */}
+            <p className="text-xs font-black text-petro-yellow uppercase tracking-widest">{tx("Internal Use Only", "Internal Use Only")}</p>
+            {/* Diubah menjadi text-xs dan text-stone-300 untuk meningkatkan kontras */}
+            <p className="text-xs text-stone-300 font-semibold mt-1.5">© 2026 PT Petrokimia Gresik. All rights reserved.</p>
           </div>
         </div>
 
-        <div className="max-w-5xl mx-auto mt-6 pt-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-2 text-[9px] text-white/40 font-medium">
-          <p>{t("IT Infrastructure Security Division System — PT Petrokimia Gresik")}</p>
-          <p className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            {t("System Status: Operational")}
+        {/* Diubah menjadi text-xs dan text-stone-300 agar tulisan nampak jelas dan tajam */}
+        <div className="max-w-5xl mx-auto mt-6 pt-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-stone-300 font-semibold">
+          <p>{tx("IT Infrastructure Security Division System — PT Petrokimia Gresik", "IT Infrastructure Security Division System — PT Petrokimia Gresik")}</p>
+          <p className="flex items-center gap-1.5 text-xs text-stone-300 font-semibold">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-sm" />
+            {tx("System Status: Operational", "System Status: Operational")}
           </p>
         </div>
       </footer>

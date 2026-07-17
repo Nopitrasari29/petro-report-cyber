@@ -1,8 +1,15 @@
-from fastapi import APIRouter, HTTPException, Depends
+# backend/app/api/v1/endpoints/settings.py
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 import json
 import os
+from sqlalchemy.orm import Session
+
+from app.db.session import SessionLocal, get_db
+from app.models.system_setting import SystemSetting
+from app.api.v1.endpoints.auth import get_current_user
+from app.schemas.user import UserResponse
 
 router = APIRouter()
 
@@ -53,9 +60,6 @@ class SettingsSchema(BaseModel):
     security_audit_logging: bool = True
     security_encryption: bool = True
 
-from app.db.session import SessionLocal, get_db
-from app.models.system_setting import SystemSetting
-from sqlalchemy.orm import Session
 
 def load_settings_file() -> dict:
     os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
@@ -66,6 +70,7 @@ def load_settings_file() -> dict:
         return default_data
     with open(SETTINGS_FILE, "r") as f:
         return json.load(f)
+
 
 def load_settings() -> dict:
     """
@@ -90,6 +95,7 @@ def load_settings() -> dict:
     finally:
         db.close()
 
+
 @router.get("/")
 def get_settings():
     """
@@ -100,24 +106,24 @@ def get_settings():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal memuat pengaturan: {str(e)}")
 
+
 @router.put("/")
 def update_settings(payload: Dict[str, Any], db: Session = Depends(get_db)):
     """
     Memperbarui pengaturan konfigurasi sistem secara persisten ke database (hanya field yang dikirim).
     """
     try:
-        # 1. Ambil settings saat ini dari DB/default
         current_settings = load_settings()
         
-        # 2. Update field yang dikirim saja (partial update)
+        # Update field yang dikirim saja (partial update)
         for key, value in payload.items():
             current_settings[key] = value
             
-        # 3. Validasi hasil merge dengan Pydantic Schema agar data type tetap aman
+        # Validasi hasil merge dengan Pydantic Schema agar data type tetap aman
         validated_settings = SettingsSchema(**current_settings)
         data = validated_settings.model_dump()
         
-        # 4. Simpan kembali ke DB
+        # Simpan kembali ke DB
         setting = db.query(SystemSetting).filter(SystemSetting.key == "global").first()
         if not setting:
             setting = SystemSetting(key="global", value=data)
@@ -126,7 +132,7 @@ def update_settings(payload: Dict[str, Any], db: Session = Depends(get_db)):
             setting.value = data
         db.commit()
         
-        # 5. Simpan ke file cadangan
+        # Simpan ke file cadangan lokal
         try:
             with open(SETTINGS_FILE, "w") as f:
                 json.dump(data, f, indent=2)
@@ -137,12 +143,8 @@ def update_settings(payload: Dict[str, Any], db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal memperbarui pengaturan: {str(e)}")
 
-# ── PROFILE CONFIGURATION ENDPOINTS ─────────────────────────────
 
-from sqlalchemy.orm import Session
-from app.db.session import get_db
-from app.api.v1.endpoints.auth import get_current_user
-from app.schemas.user import UserResponse
+# ── PROFILE CONFIGURATION ENDPOINTS ─────────────────────────────
 
 class ProfileUpdateSchema(BaseModel):
     full_name: Optional[str] = None
@@ -153,12 +155,14 @@ class ProfileUpdateSchema(BaseModel):
     current_password: Optional[str] = None
     new_password: Optional[str] = None
 
+
 @router.get("/profile", response_model=UserResponse)
 def get_profile(current_user = Depends(get_current_user)):
     """
     Mendapatkan data profil user yang sedang login dari database.
     """
     return current_user
+
 
 @router.put("/profile", response_model=UserResponse)
 def update_profile(
@@ -167,7 +171,7 @@ def update_profile(
     db: Session = Depends(get_db)
 ):
     """
-    Memperbarui data profil user di database secara riil.
+    Memperbarui data profil user (Nama, Email, dan Foto Profil Base64) di database secara riil.
     """
     from app.crud.user import update_user, get_user_by_email
     from app.core.security import verify_password, get_password_hash
@@ -176,21 +180,30 @@ def update_profile(
     if profile_in.email and profile_in.email != current_user.email:
         existing = get_user_by_email(db, email=profile_in.email)
         if existing:
-            raise HTTPException(status_code=400, detail="Alamat email sudah digunakan oleh pengguna lain.")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="Alamat email sudah digunakan oleh pengguna lain."
+            )
             
     update_data = profile_in.model_dump(exclude_unset=True)
     
-    # Penanganan perubahan password
+    # Penanganan perubahan password jika dikirimkan oleh Frontend
     if profile_in.new_password:
         if not profile_in.current_password:
-            raise HTTPException(status_code=400, detail="Password saat ini wajib diisi untuk melakukan perubahan password.")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="Password saat ini wajib diisi untuk melakukan perubahan password."
+            )
         if not verify_password(profile_in.current_password, current_user.hashed_password):
-            raise HTTPException(status_code=400, detail="Password saat ini salah.")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="Password saat ini salah."
+            )
         
         # Hash new password dan simpan di hashed_password
         update_data["hashed_password"] = get_password_hash(profile_in.new_password)
         
-    # Buang key dummy untuk password agar tidak mengganggu kolom SQL model
+    # Buang key dummy password agar tidak mengganggu kolom SQL model User
     update_data.pop("current_password", None)
     update_data.pop("new_password", None)
             
