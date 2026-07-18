@@ -1,9 +1,13 @@
+# backend/app/services/export_ppt.py
+import base64
+import datetime
+import io
+import os
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from app.models.report import Report
-import io
 
 try:
     import plotly.io as pio
@@ -11,6 +15,27 @@ try:
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
+
+
+def format_report_date(dt: datetime.datetime, language: str | None) -> str:
+    """
+    Format tanggal pembuatan laporan secara dinamis berdasarkan preferensi bahasa
+    agar otomatis melokalkan nama bulan ke Bahasa Indonesia di slide judul.
+    """
+    if not dt:
+        return "-"
+    
+    # Jika bahasa laporan diset ke Indonesian, konversi nama bulan secara manual
+    if language and language.strip().lower() == "indonesian":
+        months_id = {
+            1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
+            5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
+            9: "September", 10: "Oktober", 11: "November", 12: "Desember"
+        }
+        return f"{dt.day} {months_id[dt.month]} {dt.year}"
+        
+    return dt.strftime('%d %B %Y')
+
 
 class PPTXExporter:
     @classmethod
@@ -20,9 +45,13 @@ class PPTXExporter:
         """
         prs = Presentation()
         
-        # Palet Warna Korporat Petrokimia Gresik
-        GREEN = RGBColor(0, 158, 84)      # Hijau Petro
-        BLUE = RGBColor(0, 90, 156)       # Biru Petro
+        # Resolve logo path dari aset publik frontend
+        logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "LOGO_PETRO.png"))
+        has_logo = os.path.exists(logo_path)
+        
+        # Palet Warna Korporat Resmi PT Petrokimia Gresik (GSM Aligned)
+        GREEN = RGBColor(0, 77, 37)       # Hijau Petro Resmi (#004D25)
+        GOLD = RGBColor(217, 167, 0)      # Emas Petro Resmi (#d9a700)
         DARK_TEXT = RGBColor(51, 51, 51)  # Hitam Elegan
         
         # -------------------------------------------------------------
@@ -30,6 +59,13 @@ class PPTXExporter:
         # -------------------------------------------------------------
         blank_slide_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_slide_layout)
+        
+        # Tambahkan logo Petrokimia di cover slide (jika ada)
+        if has_logo:
+            try:
+                slide.shapes.add_picture(logo_path, Inches(8.0), Inches(0.6), width=Inches(1.3))
+            except Exception:
+                pass
         
         # Tambahkan ornamen garis hijau di bagian atas slide
         top_bar = slide.shapes.add_shape(
@@ -45,7 +81,7 @@ class PPTXExporter:
         tf = tx_box.text_frame
         tf.word_wrap = True
         
-        # Perusahaan
+        # Nama Perusahaan
         p_comp = tf.paragraphs[0]
         p_comp.text = "PT PETROKIMIA GRESIK"
         p_comp.font.size = Pt(20)
@@ -53,21 +89,22 @@ class PPTXExporter:
         p_comp.font.color.rgb = GREEN
         p_comp.alignment = PP_ALIGN.LEFT
         
-        # Judul Laporan
+        # Judul Laporan utama
         p_title = tf.add_paragraph()
         p_title.text = report.title
         p_title.font.size = Pt(32)
         p_title.font.bold = True
-        p_title.font.color.rgb = BLUE
+        p_title.font.color.rgb = GREEN
         p_title.alignment = PP_ALIGN.LEFT
         p_title.space_before = Pt(12)
         
-        # Subjudul
+        # Subjudul (Penanggalan yang sudah melokalkan bahasa Indonesia)
         p_sub = tf.add_paragraph()
-        formatted_date = report.created_at.strftime('%d %B %Y') if report.created_at else "-"
+        formatted_date = format_report_date(report.created_at, report.language)
         p_sub.text = f"Sistem Otomasi Report SOC | Laporan {report.data_type.upper()} | {formatted_date}"
-        p_sub.font.size = Pt(13)
-        p_sub.font.color.rgb = DARK_TEXT
+        p_sub.font.size = Pt(12)
+        p_sub.font.bold = True
+        p_sub.font.color.rgb = GOLD
         p_sub.alignment = PP_ALIGN.LEFT
         p_sub.space_before = Pt(18)
 
@@ -78,6 +115,13 @@ class PPTXExporter:
             # Layout 5 adalah slide bertajuk tanpa konten bawaan
             slide_layout = prs.slide_layouts[5]
             c_slide = prs.slides.add_slide(slide_layout)
+            
+            # Tambahkan logo kecil di pojok kanan atas slide konten
+            if has_logo:
+                try:
+                    c_slide.shapes.add_picture(logo_path, Inches(8.6), Inches(0.15), width=Inches(0.95))
+                except Exception:
+                    pass
             
             # Konfigurasi Judul Slide
             title_shape = c_slide.shapes.title
@@ -122,6 +166,13 @@ class PPTXExporter:
                 chart_slide_layout = prs.slide_layouts[6]  # blank layout
                 chart_slide = prs.slides.add_slide(chart_slide_layout)
 
+                # Tambahkan logo kecil di pojok kanan atas slide chart
+                if has_logo:
+                    try:
+                        chart_slide.shapes.add_picture(logo_path, Inches(8.6), Inches(0.15), width=Inches(0.95))
+                    except Exception:
+                        pass
+
                 # Judul slide chart
                 title_box = chart_slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(0.7))
                 tf = title_box.text_frame
@@ -147,8 +198,15 @@ class PPTXExporter:
         rec_slide_layout = prs.slide_layouts[5]
         rec_slide = prs.slides.add_slide(rec_slide_layout)
         
+        # Tambahkan logo kecil di pojok kanan atas slide rekomendasi
+        if has_logo:
+            try:
+                rec_slide.shapes.add_picture(logo_path, Inches(8.6), Inches(0.15), width=Inches(0.95))
+            except Exception:
+                pass
+        
         title_shape = rec_slide.shapes.title
-        title_shape.text = "Rekomendasi Keamanan siber"
+        title_shape.text = "Rekomendasi Keamanan Siber"
         title_shape.text_frame.paragraphs[0].font.size = Pt(28)
         title_shape.text_frame.paragraphs[0].font.bold = True
         title_shape.text_frame.paragraphs[0].font.color.rgb = GREEN

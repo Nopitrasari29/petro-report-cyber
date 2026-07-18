@@ -32,10 +32,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── Custom Scrollbar ─────────────────────────────────── */
+/* ── Custom Scrollbar (Ambient Mode) ──────────────────── */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -43,11 +43,14 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 77, 37, 0.22);
+  /* Lebih samar saat diam untuk kesederhanaan visual */
+  background: rgba(0, 77, 37, 0.12);
   border-radius: 99px;
+  transition: background-color 0.3s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
+  /* Berubah tegas dan jelas saat didekati kursor pengguna */
   background: rgba(0, 77, 37, 0.45);
 }
 
@@ -225,15 +228,16 @@ body {
   animation-delay: 700ms;
 }
 
-/* ── SKELETON SHIMMER ─────────────────────────────────── */
+/* ── SKELETON SHIMMER (Slower Ambient Wave) ─────────────── */
 .skeleton {
   background: linear-gradient(90deg,
-      #eeebe4 25%,
-      #e4e1da 50%,
-      #eeebe4 75%);
-  background-size: 500px 100%;
-  animation: shimmer 1.6s infinite linear;
-  border-radius: 8px;
+      #f3f1eb 25%,
+      #e8e5dc 50%,
+      #f3f1eb 75%);
+  background-size: 600px 100%;
+  animation: shimmer 2.2s infinite linear;
+  /* Diperlambat agar transisi mengalir tenang */
+  border-radius: 12px;
 }
 
 /* ── SMOOTH CSS TOGGLE SWITCH ────────────────────────── */
@@ -282,14 +286,18 @@ body {
   transform: translateX(20px);
 }
 
-/* ── PREMIUM CARD HOVER ───────────────────────────────── */
+/* ── PREMIUM CARD HOVER (Dual-Ambient Glow) ─────────────── */
 .premium-card-hover {
-  transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), border-color 0.4s ease;
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.4s ease;
   position: relative;
 }
 
 .premium-card-hover:hover {
-  transform: translateY(-4px) scale(1.008);
-  box-shadow: 0 12px 30px rgba(0, 77, 37, 0.07);
+  transform: translateY(-4px) scale(1.005);
+  /* Perpaduan bayangan dasar hijau botol dengan pendaran emas keemasan Petrokimia (#d9a700) */
+  box-shadow: 0 15px 35px -5px rgba(0, 77, 37, 0.08),
+    0 10px 15px -8px rgba(217, 167, 0, 0.18);
   border-color: rgba(217, 167, 0, 0.4) !important;
 }

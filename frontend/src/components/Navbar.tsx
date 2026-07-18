@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
+import { createPortal } from "react-dom"; // IMPOR BARU: Untuk teleportasi modal ke body dokumen
 import { t, getLanguage } from "@/utils/i18n";
 
 export default function Navbar() {
@@ -12,7 +13,7 @@ export default function Navbar() {
   const [user, setUser] = useState<any>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotif, setShowNotif] = useState(false);
-  const [showAllNotifModal, setShowAllNotifModal] = useState(false); // State untuk mengontrol Modal Semua Notifikasi
+  const [showAllNotifModal, setShowAllNotifModal] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
   const [lang, setLang] = useState("English");
@@ -187,8 +188,8 @@ export default function Navbar() {
   };
 
   return (
-    // h-20 (80px) memberikan ruang napas yang lega
-    <header className="h-20 border-b border-stone-200/60 bg-white/80 backdrop-blur-xl flex items-center justify-between px-10 sticky top-0 z-20 w-full transition-all duration-300">
+    // DIUBAH Z-INDEX MENJADI z-40 AGAR FLOATING DROPDOWN SELALU DI ATAS SIDEBAR (z-30)
+    <header className="h-20 border-b border-stone-200/60 bg-white/80 backdrop-blur-xl flex items-center justify-between px-10 sticky top-0 z-40 w-full transition-all duration-300">
 
       {/* Sisi Kiri: Breadcrumb Module dengan Garis Vertikal Emas Petrokimia */}
       <div className="flex items-center gap-4">
@@ -265,7 +266,7 @@ export default function Navbar() {
                 ))}
               </div>
 
-              {/* REVISI: Mengklik "Lihat semua" kini memicu pembukaan Modal Popup Semua Notifikasi */}
+              {/* Mengklik "Lihat semua" kini memicu pembukaan Modal Popup Semua Notifikasi */}
               <div className="px-4 py-2.5 border-t border-stone-100 text-center">
                 <button
                   onClick={() => { setShowAllNotifModal(true); setShowNotif(false); }}
@@ -342,9 +343,10 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* ── REVISI: MODAL POPUP "SEMUA NOTIFIKASI" (INTERAKTIF & INTEGRATIF) ── */}
-      {showAllNotifModal && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-md flex items-center justify-center z-50 animate-fadeIn px-4">
+      {/* ── REVISI: TELEPORTASI MODAL POPUP MENGGUNAKAN REACT PORTAL ── */}
+      {/* Menggunakan createPortal agar modal dimuat langsung di bawah <body> untuk menghindari clipping dari header */}
+      {showAllNotifModal && mounted && createPortal(
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-md flex items-center justify-center z-[9999] animate-fadeIn px-4">
           <div className="bg-white rounded-3xl shadow-2xl border border-stone-200/80 w-full max-w-xl max-h-[80vh] flex flex-col overflow-hidden animate-scaleIn border-t-4 border-t-petro-yellow">
 
             {/* Header Modal */}
@@ -396,7 +398,8 @@ export default function Navbar() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body // Meneleportasikan HTML modal langsung di bawah body dokumen
       )}
     </header>
   );

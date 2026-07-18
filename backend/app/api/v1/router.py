@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, upload, analysis, chart, history, datasources, validation, settings, dashboard, analytics
+from app.api.v1.endpoints import auth, upload, analysis, chart, history, datasources, validation, settings, dashboard, analytics, profile
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -12,3 +12,4 @@ api_router.include_router(analytics.router, prefix="/analytics", tags=["analytic
 api_router.include_router(datasources.router, prefix="/datasources", tags=["datasources"])
 api_router.include_router(validation.router, prefix="/validation", tags=["validation"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
+api_router.include_router(profile.router, prefix="/settings", tags=["profile"])

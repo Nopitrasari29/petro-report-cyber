@@ -17,8 +17,8 @@ export default function ScrollReveal({
   className = "",
   animation = "fadeInUp",
   delay = 0,
-  duration = 1000, // Dinaikkan menjadi 1000ms (1 detik) agar transisi lambat, halus, dan sinematik
-  threshold = 0.1,
+  duration = 800, // Durasi 800ms sangat ideal untuk transisi lambat yang elegan
+  threshold = 0.05, // Diturunkan sedikit ke 0.05 agar animasi langsung terpicu saat tepi kartu menyentuh layar
   triggerOnce = false,
 }: ScrollRevealProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -40,8 +40,8 @@ export default function ScrollReveal({
       },
       {
         threshold,
-        // Memberikan sedikit ruang margin atas dan bawah agar transisi masuk-keluar terasa lebih mulus
-        rootMargin: "-20px 0px -20px 0px",
+        // Margin bawah disesuaikan agar transisi masuk dan keluar terasa sangat halus saat di-scroll
+        rootMargin: "0px 0px -40px 0px",
       }
     );
 
@@ -64,33 +64,36 @@ export default function ScrollReveal({
       case "scaleIn":
         return isVisible
           ? "opacity-100 scale-100"
-          : "opacity-0 scale-90"; // Jangkauan skala diturunkan ke 90 agar efek membesar lebih terlihat jelas
+          : "opacity-0 scale-90";
       case "slideInLeft":
         return isVisible
           ? "opacity-100 translate-x-0"
-          : "opacity-0 -translate-x-12"; // Jarak geser diperlebar agar efek terlihat jelas
+          : "opacity-0 -translate-x-12";
       case "slideInRight":
         return isVisible
           ? "opacity-100 translate-x-0"
-          : "opacity-0 translate-x-12"; // Jarak geser diperlebar agar efek terlihat jelas
+          : "opacity-0 translate-x-12";
       case "fadeInUp":
       default:
         return isVisible
           ? "opacity-100 translate-y-0"
-          : "opacity-0 translate-y-16"; // Jarak luncur vertikal diperbesar agar efek terlihat jelas
+          : "opacity-0 translate-y-12"; // Jarak luncur 12 unit sangat pas dan anggun
     }
   };
 
   return (
-    <div
-      ref={ref}
-      className={`transition-all ease-out ${getAnimationClass()} ${className}`}
-      style={{
-        transitionDelay: `${delay}ms`,
-        transitionDuration: `${duration}ms`,
-      }}
-    >
-      {children}
+    // Parent Div (ref): Diam secara statis di posisinya sebagai jangkar sensor
+    <div ref={ref} className={className}>
+      {/* Child Div: Menerima seluruh efek transisi visual animasi */}
+      <div
+        className={`transition-all ease-out ${getAnimationClass()}`}
+        style={{
+          transitionDelay: `${delay}ms`,
+          transitionDuration: `${duration}ms`,
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }

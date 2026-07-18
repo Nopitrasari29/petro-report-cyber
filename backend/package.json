@@ -9,6 +9,6 @@
     "db:logs": "docker compose logs -f db",
     "migrate:run": ".\\venv\\Scripts\\python.exe -m alembic upgrade head",
     "migrate:rollback": ".\\venv\\Scripts\\python.exe -m alembic downgrade -1",
-    "dummy": ".\\venv\\Scripts\\python.exe app/tests/generate_dummy_files.py"
+    "dummy": ".\\venv\\Scripts\\python.exe tests/generate_dummy_files.py"
   }
 }
