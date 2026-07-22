@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import AuthLeftPanel from "./components/AuthLeftPanel";
 import Step1AccountDetails from "./components/Step1AccountDetails";
 import Step2EmailVerification from "./components/Step2EmailVerification";
 
 export default function RegisterPage() {
+  const router = useRouter();
   const [step, setStep] = useState(1);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -15,6 +17,36 @@ export default function RegisterPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const handleGoogleSuccess = async (googleToken: string) => {
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(
+        "http://localhost:8000/api/v1/auth/google-login",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: googleToken }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Gagal mendaftar menggunakan akun Google.");
+      }
+      localStorage.setItem("token", data.access_token);
+      router.push("/generate");
+    } catch (err: any) {
+      console.error("[GOOGLE AUTH] Exception saat Google register:", err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleError = (msg: string) => {
+    setError(msg);
+  };
 
   const handleNext = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,6 +107,8 @@ export default function RegisterPage() {
             onNext={handleNext}
             error={error}
             loading={loading}
+            onGoogleSuccess={handleGoogleSuccess}
+            onGoogleError={handleGoogleError}
           />
         ) : (
           <Step2EmailVerification email={email} onBack={() => setStep(1)} />

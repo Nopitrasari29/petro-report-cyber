@@ -1,5 +1,12 @@
 import React from "react";
 import ScrollReveal from "@/components/ScrollReveal";
+import ReportChartPanel from "./ReportChartPanel";
+import RichTextEditor from "./RichTextEditor";
+
+// Mendeteksi apakah suatu string konten itu HTML (hasil rich text editor) atau teks polos
+// (AI-generated asli / laporan lama sebelum editor ini ada). Dipakai biar tab Preview bisa
+// nampilin dua-duanya dengan benar tanpa nge-render tag mentah sebagai teks literal.
+const looksLikeHtml = (value: string) => /<[a-zA-Z][^>]*>/.test(value);
 
 interface Step4PreviewEditProps {
   activePage: string;
@@ -45,16 +52,23 @@ export default function Step4PreviewEdit({
   return (
     <ScrollReveal animation="fadeInUp" className="space-y-6">
       <div className="text-left">
-        <h2 className="text-2xl font-extrabold text-stone-900">{tx("Preview & Edit", "Preview & Edit")}</h2>
+        <h2 className="text-2xl font-extrabold text-stone-900">
+          {tx("Preview & Edit", "Preview & Edit")}
+        </h2>
         <p className="text-sm text-stone-500 font-semibold mt-1">
-          {tx("Review AI generated content and make any necessary edits", "Review AI generated content and make any necessary edits")}
+          {tx(
+            "Review AI generated content and make any necessary edits",
+            "Review AI generated content and make any necessary edits",
+          )}
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 text-left items-start mt-6">
         {/* Left Panel: Pages List */}
         <div className="lg:col-span-3 bg-white rounded-2xl border border-stone-200/80 p-5 shadow-sm space-y-4 premium-card-hover transition-colors">
-          <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2">{tx("Pages", "Pages")}</h3>
+          <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2">
+            {tx("Pages", "Pages")}
+          </h3>
 
           <div className="space-y-1.5">
             {[
@@ -75,7 +89,9 @@ export default function Step4PreviewEdit({
                     : "bg-transparent text-stone-600 hover:bg-stone-50 border border-transparent"
                 }`}
               >
-                <span className="truncate">{tx(pg.label.substring(3), pg.label.substring(3))}</span>
+                <span className="truncate">
+                  {tx(pg.label.substring(3), pg.label.substring(3))}
+                </span>
               </button>
             ))}
           </div>
@@ -118,7 +134,9 @@ export default function Step4PreviewEdit({
                   key={tab}
                   onClick={() => setActiveTab(tab)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all capitalize cursor-pointer ${
-                    activeTab === tab ? "bg-stone-900 text-white" : "bg-stone-50 text-stone-500 hover:bg-stone-100"
+                    activeTab === tab
+                      ? "bg-stone-900 text-white"
+                      : "bg-stone-50 text-stone-500 hover:bg-stone-100"
                   }`}
                 >
                   {tab === "edit" ? tx("Edit Text", "Edit Text") : tx(tab, tab)}
@@ -136,15 +154,33 @@ export default function Step4PreviewEdit({
                 {isSaving ? (
                   <div className="w-3 h-3 border-2 border-white/35 border-t-white rounded-full animate-spin"></div>
                 ) : saveSuccess ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="w-3.5 h-3.5"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
+                      clipRule="evenodd"
+                    />
                   </svg>
                 ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="w-3.5 h-3.5"
+                  >
                     <path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z" />
                   </svg>
                 )}
-                {isSaving ? tx("Saving...", "Saving...") : saveSuccess ? tx("Saved!", "Saved!") : tx("Save Changes", "Save Changes")}
+                {isSaving
+                  ? tx("Saving...", "Saving...")
+                  : saveSuccess
+                    ? tx("Saved!", "Saved!")
+                    : tx("Save Changes", "Save Changes")}
               </button>
             )}
           </div>
@@ -161,41 +197,78 @@ export default function Step4PreviewEdit({
                         PKG
                       </div>
                       <div className="text-left leading-none">
-                        <span className="text-[10px] font-black text-stone-855 tracking-wider">PETROKIMIA GRESIK</span>
+                        <span className="text-[10px] font-black text-stone-855 tracking-wider">
+                          PETROKIMIA GRESIK
+                        </span>
                         <br />
-                        <span className="text-[6px] font-bold text-stone-400 uppercase tracking-widest">Solusi Agroindustri</span>
+                        <span className="text-[6px] font-bold text-stone-400 uppercase tracking-widest">
+                          Solusi Agroindustri
+                        </span>
                       </div>
                     </div>
-                    <span className="text-[8px] font-bold text-stone-450 tracking-wider uppercase">{tx("SOC Executive Summary", "SOC Executive Summary")}</span>
+                    <span className="text-[8px] font-bold text-stone-450 tracking-wider uppercase">
+                      {tx("SOC Executive Summary", "SOC Executive Summary")}
+                    </span>
                   </div>
 
                   {/* Letter Content */}
                   <div className="space-y-4 text-left">
                     <div>
-                      <h4 className="text-[9px] text-petro-green font-black uppercase tracking-widest">{tx(getPageTitle(activePage), getPageTitle(activePage))}</h4>
-                      <h2 className="text-sm font-black text-stone-855 mt-1">{tx("Monthly Security Operations Summary", "Monthly Security Operations Summary")}</h2>
+                      <h4 className="text-[9px] text-petro-green font-black uppercase tracking-widest">
+                        {tx(getPageTitle(activePage), getPageTitle(activePage))}
+                      </h4>
+                      <h2 className="text-sm font-black text-stone-855 mt-1">
+                        {tx(
+                          "Monthly Security Operations Summary",
+                          "Monthly Security Operations Summary",
+                        )}
+                      </h2>
                       <p className="text-[8px] text-stone-400 font-bold mt-0.5">
-                        {tx("Period:", "Period:")} {periodStart} {tx("to", "to")} {periodEnd}
+                        {tx("Period:", "Period:")} {periodStart}{" "}
+                        {tx("to", "to")} {periodEnd}
                       </p>
                     </div>
 
-                    <p className="text-xs text-stone-600 font-semibold leading-relaxed whitespace-pre-wrap">{getPageText(activePage)}</p>
+                    {looksLikeHtml(getPageText(activePage)) ? (
+                      <div
+                        className="text-xs text-stone-600 font-semibold leading-relaxed rte-preview"
+                        dangerouslySetInnerHTML={{
+                          __html: getPageText(activePage),
+                        }}
+                      />
+                    ) : (
+                      <p className="text-xs text-stone-600 font-semibold leading-relaxed whitespace-pre-wrap">
+                        {getPageText(activePage)}
+                      </p>
+                    )}
 
                     {/* Highlights on Step 1 */}
                     {activePage === "01" && (
                       <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl text-left mt-5 space-y-1">
-                        <h5 className="text-[9px] font-black text-stone-755 uppercase tracking-wider">{tx("Key Highlights", "Key Highlights")}</h5>
+                        <h5 className="text-[9px] font-black text-stone-755 uppercase tracking-wider">
+                          {tx("Key Highlights", "Key Highlights")}
+                        </h5>
                         <div className="grid grid-cols-2 gap-4 pt-1">
                           <div>
-                            <span className="text-[8px] text-stone-400 font-semibold uppercase">{tx("Total Alerts", "Total Alerts")}</span>
+                            <span className="text-[8px] text-stone-400 font-semibold uppercase">
+                              {tx("Total Alerts", "Total Alerts")}
+                            </span>
                             <p className="text-sm font-black text-stone-800">
-                              {reportDetails?.total_records_parsed ?? 177} <span className="text-[9px] text-emerald-600 font-bold">+18.2%</span>
+                              {reportDetails?.total_records_parsed ?? 177}{" "}
+                              <span className="text-[9px] text-emerald-600 font-bold">
+                                +18.2%
+                              </span>
                             </p>
                           </div>
                           <div>
-                            <span className="text-[8px] text-stone-400 font-semibold uppercase">{tx("Critical Threats", "Critical Threats")}</span>
+                            <span className="text-[8px] text-stone-400 font-semibold uppercase">
+                              {tx("Critical Threats", "Critical Threats")}
+                            </span>
                             <p className="text-sm font-black text-stone-800">
-                              {reportDetails?.threat_count_critical ?? 18} <span className="text-[9px] text-red-650 font-bold">+12.0%</span>
+                              {reportDetails?.threat_count_critical ?? 18}{" "}
+                              <span className="text-[9px] text-red-650 font-bold">
+                                +12.0%
+                              </span>
                             </p>
                           </div>
                         </div>
@@ -206,83 +279,35 @@ export default function Step4PreviewEdit({
 
                 {/* Page Footer */}
                 <div className="flex justify-between items-center border-t border-stone-200 pt-3 mt-8 text-[8px] text-stone-400">
-                  <span className="font-bold uppercase tracking-wider">{tx("AI Security Reports", "AI Security Reports")}</span>
-                  <span className="font-black text-stone-700">{activePage}</span>
+                  <span className="font-bold uppercase tracking-wider">
+                    {tx("AI Security Reports", "AI Security Reports")}
+                  </span>
+                  <span className="font-black text-stone-700">
+                    {activePage}
+                  </span>
                 </div>
               </div>
             )}
 
             {activeTab === "edit" && (
               <div className="space-y-4">
-                <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">{tx("Edit Content Text Area", "Edit Content Text Area")}</label>
-                <textarea
+                <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">
+                  {tx("Edit Content", "Edit Content")}
+                </label>
+                <RichTextEditor
                   value={getPageText(activePage)}
-                  onChange={(e) => handleTextChange(e.target.value)}
-                  className="w-full h-80 bg-stone-50 border border-stone-250 rounded-xl p-4 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all leading-relaxed"
-                  placeholder={tx("Type report page narrative contents here...", "Type report page narrative contents here...")}
+                  onChange={handleTextChange}
+                  tx={tx}
                 />
               </div>
             )}
 
             {activeTab === "charts" && (
-              <div className="border border-stone-200 rounded-xl p-6 bg-stone-50/50 flex flex-col justify-center items-center min-h-[350px]">
-                <h4 className="text-xs font-black text-stone-755 uppercase tracking-wider mb-6">{tx("Threats Severity Distribution Chart", "Threats Severity Distribution Chart")}</h4>
-
-                <svg className="w-full max-w-sm h-64" viewBox="0 0 500 240">
-                  <line x1="50" y1="30" x2="450" y2="30" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="50" y1="80" x2="450" y2="80" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="50" y1="130" x2="450" y2="130" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="50" y1="180" x2="450" y2="180" stroke="#d1d5db" strokeWidth="1.5" />
-
-                  <text x="35" y="35" className="text-[10px] font-bold fill-stone-400" textAnchor="end">
-                    150
-                  </text>
-                  <text x="35" y="85" className="text-[10px] font-bold fill-stone-400" textAnchor="end">
-                    100
-                  </text>
-                  <text x="35" y="135" className="text-[10px] font-bold fill-stone-400" textAnchor="end">
-                    50
-                  </text>
-                  <text x="35" y="185" className="text-[10px] font-bold fill-stone-400" textAnchor="end">
-                    0
-                  </text>
-
-                  {/* Critical */}
-                  <rect x="80" y={180 - Math.min(150, (reportDetails?.threat_count_critical ?? 18) * 1.2)} width="40" height={Math.min(150, (reportDetails?.threat_count_critical ?? 18) * 1.2)} rx="4" fill="#dc2626" />
-                  <text x="100" y={170 - Math.min(150, (reportDetails?.threat_count_critical ?? 18) * 1.2)} className="text-[10px] font-black fill-red-600" textAnchor="middle">
-                    {reportDetails?.threat_count_critical ?? 18}
-                  </text>
-                  <text x="100" y="205" className="text-[9px] font-bold fill-stone-500" textAnchor="middle">
-                    {tx("Critical", "Critical")}
-                  </text>
-
-                  {/* High */}
-                  <rect x="180" y={180 - Math.min(150, (reportDetails?.threat_count_high ?? 56) * 1.2)} width="40" height={Math.min(150, (reportDetails?.threat_count_high ?? 56) * 1.2)} rx="4" fill="#ea580c" />
-                  <text x="200" y={170 - Math.min(150, (reportDetails?.threat_count_high ?? 56) * 1.2)} className="text-[10px] font-black fill-amber-600" textAnchor="middle">
-                    {reportDetails?.threat_count_high ?? 56}
-                  </text>
-                  <text x="200" y="205" className="text-[9px] font-bold fill-stone-500" textAnchor="middle">
-                    {tx("High", "High")}
-                  </text>
-
-                  {/* Medium */}
-                  <rect x="280" y={180 - Math.min(150, (reportDetails?.threat_count_medium ?? 103) * 1.2)} width="40" height={Math.min(150, (reportDetails?.threat_count_medium ?? 103) * 1.2)} rx="4" fill="#eab308" />
-                  <text x="300" y={170 - Math.min(150, (reportDetails?.threat_count_medium ?? 103) * 1.2)} className="text-[10px] font-black fill-yellow-600" textAnchor="middle">
-                    {reportDetails?.threat_count_medium ?? 103}
-                  </text>
-                  <text x="300" y="205" className="text-[9px] font-bold fill-stone-500" textAnchor="middle">
-                    {tx("Medium", "Medium")}
-                  </text>
-
-                  {/* Low */}
-                  <rect x="380" y={180 - Math.min(150, (reportDetails?.threat_count_low ?? 20) * 1.2)} width="40" height={Math.min(150, (reportDetails?.threat_count_low ?? 20) * 1.2)} rx="4" fill="#3b82f6" />
-                  <text x="400" y={170 - Math.min(150, (reportDetails?.threat_count_low ?? 20) * 1.2)} className="text-[10px] font-black fill-blue-600" textAnchor="middle">
-                    {reportDetails?.threat_count_low ?? 20}
-                  </text>
-                  <text x="400" y="205" className="text-[9px] font-bold fill-stone-500" textAnchor="middle">
-                    {tx("Low", "Low")}
-                  </text>
-                </svg>
+              <div>
+                <h4 className="text-xs font-black text-stone-755 uppercase tracking-wider mb-4">
+                  {tx("Chart Visualization", "Chart Visualization")}
+                </h4>
+                <ReportChartPanel reportId={reportDetails?.id} tx={tx} />
               </div>
             )}
           </div>
@@ -290,13 +315,23 @@ export default function Step4PreviewEdit({
 
         {/* Right Panel: Properties */}
         <div className="lg:col-span-3 bg-white rounded-2xl border border-stone-200/80 p-5 shadow-sm space-y-4 premium-card-hover transition-colors">
-          <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2">{tx("Properties", "Properties")}</h3>
+          <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2">
+            {tx("Properties", "Properties")}
+          </h3>
 
           <div>
-            <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1.5">{tx("Language", "Language")}</label>
-            <select disabled value={language} className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs focus:outline-none text-stone-500">
+            <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1.5">
+              {tx("Language", "Language")}
+            </label>
+            <select
+              disabled
+              value={language}
+              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs focus:outline-none text-stone-500"
+            >
               <option value="English">{tx("English", "English")}</option>
-              <option value="Indonesian">{tx("Indonesian", "Indonesian")}</option>
+              <option value="Indonesian">
+                {tx("Indonesian", "Indonesian")}
+              </option>
             </select>
           </div>
         </div>
@@ -308,8 +343,19 @@ export default function Step4PreviewEdit({
           onClick={onBack}
           className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold text-sm shadow-sm transition-all duration-200 cursor-pointer"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2.5}
+            stroke="currentColor"
+            className="w-3.5 h-3.5"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"
+            />
           </svg>
           {tx("Back", "Back")}
         </button>
@@ -319,8 +365,19 @@ export default function Step4PreviewEdit({
           className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-petro-green hover:bg-petro-green-hover text-white font-bold text-sm shadow transition-all duration-200 group cursor-pointer"
         >
           {tx("Next Export", "Next Export")}
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2.5}
+            stroke="currentColor"
+            className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
+            />
           </svg>
         </button>
       </div>

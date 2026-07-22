@@ -26,7 +26,7 @@ export default function LoginPage() {
     setMounted(true);
   }, []);
 
-  const tx = (key: string, fallback: string) => mounted ? t(key) : fallback;
+  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
 
   useEffect(() => {
     setLang(getLanguage());
@@ -55,11 +55,14 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/google-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: googleToken }),
-      });
+      const res = await fetch(
+        "http://localhost:8000/api/v1/auth/google-login",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: googleToken }),
+        },
+      );
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.detail || "Gagal masuk menggunakan akun Google.");
@@ -68,16 +71,25 @@ export default function LoginPage() {
 
       // Decode Google JWT email to save email for autofill
       try {
-        const base64Url = googleToken.split('.')[1];
-        let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const base64Url = googleToken.split(".")[1];
+        let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
         const pad = base64.length % 4;
         if (pad) {
-          if (pad === 2) { base64 += '=='; }
-          else if (pad === 3) { base64 += '='; }
+          if (pad === 2) {
+            base64 += "==";
+          } else if (pad === 3) {
+            base64 += "=";
+          }
         }
-        const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
-            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-        }).join(''));
+        const jsonPayload = decodeURIComponent(
+          window
+            .atob(base64)
+            .split("")
+            .map(function (c) {
+              return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+            })
+            .join(""),
+        );
         const payload = JSON.parse(jsonPayload);
         if (payload.email) {
           localStorage.setItem("saved_email", payload.email);
@@ -87,7 +99,7 @@ export default function LoginPage() {
         console.warn("[GOOGLE AUTH] Gagal decode JWT email untuk autofill:", e);
       }
 
-      router.push("/");
+      router.push("/generate");
     } catch (err: any) {
       console.error("[GOOGLE AUTH] Exception saat Google login:", err);
       setError(err.message);
@@ -127,7 +139,7 @@ export default function LoginPage() {
         localStorage.removeItem("remember_me");
       }
 
-      router.push("/");
+      router.push("/generate");
     } catch (err: any) {
       console.error("[LOGIN] Exception saat login:", err);
       setError(err.message);
@@ -140,16 +152,23 @@ export default function LoginPage() {
     setResendLoading(true);
     setResendMessage("");
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/resend-verification", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: unverifiedEmail }),
-      });
+      const res = await fetch(
+        "http://localhost:8000/api/v1/auth/resend-verification",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: unverifiedEmail }),
+        },
+      );
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.detail || "Gagal mengirim ulang email verifikasi.");
+        throw new Error(
+          data.detail || "Gagal mengirim ulang email verifikasi.",
+        );
       }
-      setResendMessage(data.message || "Tautan verifikasi baru berhasil dikirim!");
+      setResendMessage(
+        data.message || "Tautan verifikasi baru berhasil dikirim!",
+      );
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -167,8 +186,15 @@ export default function LoginPage() {
         <div className="w-full max-w-[560px] bg-white rounded-2xl shadow-sm border border-stone-200/80 p-10 sm:p-12 animate-scaleIn">
           {/* Heading */}
           <div className="text-center mb-10 animate-fadeInUp delay-100">
-            <h2 className="text-2xl font-extrabold text-stone-900">{tx("Welcome Back!", "Welcome Back!")}</h2>
-            <p className="text-sm text-stone-500 font-semibold mt-2">{tx("Sign in to continue to your dashboard", "Sign in to continue to your dashboard")}</p>
+            <h2 className="text-2xl font-extrabold text-stone-900">
+              {tx("Welcome Back!", "Welcome Back!")}
+            </h2>
+            <p className="text-sm text-stone-500 font-semibold mt-2">
+              {tx(
+                "Sign in to continue to your dashboard",
+                "Sign in to continue to your dashboard",
+              )}
+            </p>
           </div>
 
           {/* Form */}
@@ -206,7 +232,10 @@ export default function LoginPage() {
           {/* Footer link */}
           <p className="text-center text-sm text-stone-500 font-medium mt-6">
             {tx("Don't have an account?", "Don't have an account?")}{" "}
-            <Link href="/register" className="text-petro-green font-bold hover:underline">
+            <Link
+              href="/register"
+              className="text-petro-green font-bold hover:underline"
+            >
               {tx("Register Now", "Register Now")}
             </Link>
           </p>

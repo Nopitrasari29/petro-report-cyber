@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { t } from "@/utils/i18n";
 
@@ -11,6 +11,12 @@ export default function Step2EmailVerification({
   email,
   onBack,
 }: Step2EmailVerificationProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+
   const [resent, setResent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -19,13 +25,19 @@ export default function Step2EmailVerification({
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/resend-verification", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
+      const res = await fetch(
+        "http://localhost:8000/api/v1/auth/resend-verification",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        },
+      );
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Gagal mengirim ulang email verifikasi.");
+      if (!res.ok)
+        throw new Error(
+          data.detail || "Gagal mengirim ulang email verifikasi.",
+        );
       setResent(true);
       setTimeout(() => setResent(false), 6000);
     } catch (err: any) {
@@ -42,17 +54,37 @@ export default function Step2EmailVerification({
           onClick={onBack}
           className="flex items-center gap-1.5 text-sm text-stone-600 hover:text-stone-900 font-semibold transition-colors cursor-pointer"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2.5}
+            stroke="currentColor"
+            className="w-4 h-4"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"
+            />
           </svg>
-          {t("Back")}
+          {tx("Back", "Back")}
         </button>
-        <span className="text-sm font-bold text-petro-green">{t("Step 2 of 2")}</span>
+        <span className="text-sm font-bold text-petro-green">
+          {tx("Step 2 of 2", "Step 2 of 2")}
+        </span>
       </div>
 
       <div className="mb-8">
-        <h2 className="text-xl font-extrabold text-stone-900">{t("Confirm Your Account")}</h2>
-        <p className="text-sm text-stone-500 font-medium mt-1">{t("We've sent a verification link to your email")}</p>
+        <h2 className="text-xl font-extrabold text-stone-900">
+          {tx("Confirm Your Account", "Confirm Your Account")}
+        </h2>
+        <p className="text-sm text-stone-500 font-medium mt-1">
+          {tx(
+            "We've sent a verification link to your email",
+            "We've sent a verification link to your email",
+          )}
+        </p>
       </div>
 
       {error && (
@@ -64,33 +96,112 @@ export default function Step2EmailVerification({
       {/* Email Envelope Illustration */}
       <div className="flex justify-center mb-8">
         <div className="relative">
-          <svg viewBox="0 0 150 120" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-44 h-36">
+          <svg
+            viewBox="0 0 150 120"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            className="w-44 h-36"
+          >
             {/* Sparkles & Dots */}
-            <circle cx="20" cy="40" r="2.5" fill="#EAB308" className="animate-pulse" opacity="0.8" />
-            <circle cx="130" cy="30" r="1.5" fill="#10B981" className="animate-ping" />
+            <circle
+              cx="20"
+              cy="40"
+              r="2.5"
+              fill="#EAB308"
+              className="animate-pulse"
+              opacity="0.8"
+            />
+            <circle
+              cx="130"
+              cy="30"
+              r="1.5"
+              fill="#10B981"
+              className="animate-ping"
+            />
             <circle cx="125" cy="80" r="2" fill="#EAB308" />
-            <path d="M12 25 L15 28 L12 31 L9 28 Z" fill="#EAB308" opacity="0.6" />
-            <path d="M138 65 L140 67 L138 69 L136 67 Z" fill="#10B981" opacity="0.5" />
+            <path
+              d="M12 25 L15 28 L12 31 L9 28 Z"
+              fill="#EAB308"
+              opacity="0.6"
+            />
+            <path
+              d="M138 65 L140 67 L138 69 L136 67 Z"
+              fill="#10B981"
+              opacity="0.5"
+            />
 
             {/* Envelope Back & Inside Background */}
-            <path d="M25 55 L25 100 C25 104 28 107 32 107 L118 107 C122 107 125 104 125 100 L125 55 Z" fill="#D1FAE5" />
-            <path d="M25 55 L75 22 L125 55" stroke="#A7F3D0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              d="M25 55 L25 100 C25 104 28 107 32 107 L118 107 C122 107 125 104 125 100 L125 55 Z"
+              fill="#D1FAE5"
+            />
+            <path
+              d="M25 55 L75 22 L125 55"
+              stroke="#A7F3D0"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
 
             {/* The Document sliding out */}
-            <g className="animate-bounce" style={{ animationDuration: '3s' }}>
-              <rect x="42" y="32" width="66" height="50" rx="4" fill="#FFFFFF" filter="drop-shadow(0px 2px 4px rgba(0,0,0,0.05))" />
-              <line x1="50" y1="42" x2="100" y2="42" stroke="#E2E8F0" strokeWidth="3" strokeLinecap="round" />
-              <line x1="50" y1="52" x2="90" y2="52" stroke="#E2E8F0" strokeWidth="3" strokeLinecap="round" />
-              <line x1="50" y1="62" x2="80" y2="62" stroke="#E2E8F0" strokeWidth="3" strokeLinecap="round" />
+            <g className="animate-bounce" style={{ animationDuration: "3s" }}>
+              <rect
+                x="42"
+                y="32"
+                width="66"
+                height="50"
+                rx="4"
+                fill="#FFFFFF"
+                filter="drop-shadow(0px 2px 4px rgba(0,0,0,0.05))"
+              />
+              <line
+                x1="50"
+                y1="42"
+                x2="100"
+                y2="42"
+                stroke="#E2E8F0"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+              <line
+                x1="50"
+                y1="52"
+                x2="90"
+                y2="52"
+                stroke="#E2E8F0"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+              <line
+                x1="50"
+                y1="62"
+                x2="80"
+                y2="62"
+                stroke="#E2E8F0"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
               {/* Checkmark Badge on the Document */}
               <circle cx="90" cy="58" r="9" fill="#10B981" />
-              <path d="M87 58 L89 60 L93 56" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M87 58 L89 60 L93 56"
+                stroke="#FFFFFF"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </g>
 
             {/* Envelope Sides & Front Flaps (drawn over the document) */}
             <path d="M25 55 L75 78 L125 55" fill="#E6FDF4" opacity="0.95" />
             <path d="M25 107 L75 77 L125 107" fill="#E6FDF4" opacity="0.9" />
-            <path d="M25 55 L25 100 C25 104 28 107 32 107 L118 107 C122 107 125 104 125 100 L125 55 Z" stroke="#34D399" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              d="M25 55 L25 100 C25 104 28 107 32 107 L118 107 C122 107 125 104 125 100 L125 55 Z"
+              stroke="#34D399"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         </div>
       </div>
@@ -98,33 +209,47 @@ export default function Step2EmailVerification({
       {/* Message */}
       <div className="text-center space-y-2 mb-8">
         <p className="text-sm font-semibold text-stone-700">
-          {t("Please check your email")}{" "}
+          {tx("Please check your email", "Please check your email")}{" "}
           <span className="text-petro-green font-bold">({email})</span>
         </p>
         <p className="text-sm text-stone-500 font-medium">
-          {t("and click the verification link to activate your account.")}
+          {tx(
+            "and click the verification link to activate your account.",
+            "and click the verification link to activate your account.",
+          )}
         </p>
       </div>
 
       {/* Resend */}
       <div className="text-center space-y-2">
-        <p className="text-sm text-stone-500 font-medium">{t("Didn't receive the email?")}</p>
+        <p className="text-sm text-stone-500 font-medium">
+          {tx("Didn't receive the email?", "Didn't receive the email?")}
+        </p>
         {resent ? (
-          <p className="text-sm text-emerald-600 font-bold">✓ {t("Verification email resent!")}</p>
+          <p className="text-sm text-emerald-600 font-bold">
+            ✓ {tx("Verification email resent!", "Verification email resent!")}
+          </p>
         ) : (
           <button
             onClick={handleResend}
             disabled={loading}
             className="text-sm text-petro-green font-bold hover:underline transition-colors disabled:opacity-50 cursor-pointer"
           >
-            {loading ? t("Resending...") : t("Resend verification email")}
+            {loading
+              ? tx("Resending...", "Resending...")
+              : tx("Resend verification email", "Resend verification email")}
           </button>
         )}
       </div>
 
       <p className="text-center text-sm text-stone-500 font-medium mt-8">
-        {t("Already have an account?")}{" "}
-        <Link href="/login" className="text-petro-green font-bold hover:underline">{t("Sign In")}</Link>
+        {tx("Already have an account?", "Already have an account?")}{" "}
+        <Link
+          href="/login"
+          className="text-petro-green font-bold hover:underline"
+        >
+          {tx("Sign In", "Sign In")}
+        </Link>
       </p>
     </div>
   );

@@ -33,6 +33,12 @@ interface ReportItem {
 }
 
 export default function ReportHistoryPage() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+
   const router = useRouter();
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,9 +79,12 @@ export default function ReportHistoryPage() {
       }
 
       // Fetch all reports to calculate stats and perform flexible filtering
-      const res = await fetch("http://localhost:8000/api/v1/history/?limit=200", {
-        headers,
-      });
+      const res = await fetch(
+        "http://localhost:8000/api/v1/history/?limit=200",
+        {
+          headers,
+        },
+      );
 
       if (res.status === 401 || res.status === 403) {
         router.push("/login");
@@ -102,7 +111,9 @@ export default function ReportHistoryPage() {
 
   // Delete Action handler
   const handleDelete = async (id: number) => {
-    if (!confirm("Apakah Anda yakin ingin menghapus laporan ini dari riwayat?")) {
+    if (
+      !confirm("Apakah Anda yakin ingin menghapus laporan ini dari riwayat?")
+    ) {
       return;
     }
     try {
@@ -203,35 +214,50 @@ export default function ReportHistoryPage() {
 
   // Dynamic Statistics Calculation
   const totalCount = reports.length;
-  const approvedCount = reports.filter(r => r.status === "completed").length;
-  const inReviewCount = reports.filter(r => r.status === "analyzed" || r.status === "parsed").length;
-  const draftCount = reports.filter(r => r.status === "draft").length;
+  const approvedCount = reports.filter((r) => r.status === "completed").length;
+  const inReviewCount = reports.filter(
+    (r) => r.status === "analyzed" || r.status === "parsed",
+  ).length;
+  const draftCount = reports.filter((r) => r.status === "draft").length;
   const exportedCount = approvedCount; // Statically equal to approved for demo consistency
 
-  const approvedPercent = totalCount ? ((approvedCount / totalCount) * 100).toFixed(1) : "0.0";
-  const inReviewPercent = totalCount ? ((inReviewCount / totalCount) * 100).toFixed(1) : "0.0";
-  const draftPercent = totalCount ? ((draftCount / totalCount) * 100).toFixed(1) : "0.0";
-  const exportedPercent = totalCount ? ((exportedCount / totalCount) * 100).toFixed(1) : "0.0";
+  const approvedPercent = totalCount
+    ? ((approvedCount / totalCount) * 100).toFixed(1)
+    : "0.0";
+  const inReviewPercent = totalCount
+    ? ((inReviewCount / totalCount) * 100).toFixed(1)
+    : "0.0";
+  const draftPercent = totalCount
+    ? ((draftCount / totalCount) * 100).toFixed(1)
+    : "0.0";
+  const exportedPercent = totalCount
+    ? ((exportedCount / totalCount) * 100).toFixed(1)
+    : "0.0";
 
   // Filtered reports
   const filteredReports = reports.filter((item) => {
     // Search filter
     const matchesSearch =
       item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      getDataTypeLabel(item.data_type).toLowerCase().includes(searchQuery.toLowerCase()) ||
+      getDataTypeLabel(item.data_type)
+        .toLowerCase()
+        .includes(searchQuery.toLowerCase()) ||
       item.created_by_name?.toLowerCase().includes(searchQuery.toLowerCase());
 
     // Status filter
     let matchesStatus = true;
     if (statusFilter !== "All Statuses") {
       const statusDetails = getStatusDetails(item.status);
-      matchesStatus = statusDetails.label.toLowerCase() === statusFilter.toLowerCase();
+      matchesStatus =
+        statusDetails.label.toLowerCase() === statusFilter.toLowerCase();
     }
 
     // Type filter
     let matchesType = true;
     if (typeFilter !== "All Types") {
-      matchesType = getDataTypeLabel(item.data_type).toLowerCase() === typeFilter.toLowerCase();
+      matchesType =
+        getDataTypeLabel(item.data_type).toLowerCase() ===
+        typeFilter.toLowerCase();
     }
 
     // User filter
@@ -244,7 +270,9 @@ export default function ReportHistoryPage() {
   });
 
   // Unique list of creators for filter dropdown
-  const creators = Array.from(new Set(reports.map(r => r.created_by_name).filter(Boolean)));
+  const creators = Array.from(
+    new Set(reports.map((r) => r.created_by_name).filter(Boolean)),
+  );
 
   // Pagination logic
   const indexOfLastRow = currentPage * rowsPerPage;
@@ -254,23 +282,27 @@ export default function ReportHistoryPage() {
 
   const handleExportList = () => {
     // Mock export list as CSV
-    const headers = "Report Name,Period,Report Type,Created By,Status,Created At\n";
+    const headers =
+      "Report Name,Period,Report Type,Created By,Status,Created At\n";
     const rows = filteredReports
       .map(
         (r) =>
           `"${r.title}","${formatPeriod(r.period_start, r.period_end)}","${getDataTypeLabel(
-            r.data_type
-          )}","${r.created_by_name || "Rafika"}","${getStatusDetails(r.status).label}","${formatDateString(
-            r.created_at
-          )}"`
+            r.data_type,
+          )}","${r.created_by_name || tx("Analyst", "Analyst")}","${getStatusDetails(r.status).label}","${formatDateString(
+            r.created_at,
+          )}"`,
       )
       .join("\n");
-    
+
     const blob = new Blob([headers + rows], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.setAttribute("href", url);
-    a.setAttribute("download", `soc_reports_history_${new Date().toISOString().slice(0, 10)}.csv`);
+    a.setAttribute(
+      "download",
+      `soc_reports_history_${new Date().toISOString().slice(0, 10)}.csv`,
+    );
     a.click();
   };
 
@@ -292,26 +324,42 @@ export default function ReportHistoryPage() {
           {/* Header section */}
           <div className="flex justify-between items-center animate-fadeInUp">
             <div className="text-left">
-              <h2 className="text-2xl font-extrabold text-stone-900">{t("Report History")}</h2>
+              <h2 className="text-2xl font-extrabold text-stone-900">
+                {tx("Report History", "Report History")}
+              </h2>
               <p className="text-sm text-stone-500 font-medium mt-1">
-                {t("View, search, and manage all generated SOC reports.")}
+                {tx(
+                  "View, search, and manage all generated SOC reports.",
+                  "View, search, and manage all generated SOC reports.",
+                )}
               </p>
             </div>
             <button
               onClick={handleExportList}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-sm shadow-md hover:shadow-lg transition-all duration-200 group"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={2}
+                stroke="currentColor"
+                className="w-4 h-4"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                />
               </svg>
-              {t("Export List")}
+              {tx("Export List", "Export List")}
             </button>
           </div>
 
           {/* Error Message */}
           {errorMsg && (
             <div className="bg-red-50 border border-red-200 text-red-750 px-4 py-3 rounded-xl text-xs font-medium text-left">
-              <strong>Error:</strong> {t(errorMsg)}
+              <strong>Error:</strong> {errorMsg}
             </div>
           )}
 

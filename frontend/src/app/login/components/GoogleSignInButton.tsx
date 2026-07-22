@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 interface GoogleSignInButtonProps {
   onSuccess: (credential: string) => void;
@@ -9,38 +9,50 @@ interface GoogleSignInButtonProps {
 }
 
 export default function GoogleSignInButton({ onSuccess, onError, loading }: GoogleSignInButtonProps) {
+  // Callback terbaru disimpan di ref (bukan dependency effect), supaya effect di bawah
+  // tidak perlu re-run tiap kali komponen induk re-render dan bikin onSuccess/onError
+  // ganti referensi — itu penyebab google.accounts.id.initialize() sempat terpanggil berkali-kali.
+  const onSuccessRef = useRef(onSuccess);
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+    onErrorRef.current = onError;
+  }, [onSuccess, onError]);
+
   useEffect(() => {
     const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "126885950302-sua5h4t01g4qfaug5m7c9is04uvhce88.apps.googleusercontent.com";
+    let initialized = false;
 
     const handleCredentialResponse = (response: any) => {
       console.log("[GOOGLE AUTH] 🌐 Menerima credential token dari Google OAuth.");
       if (response && response.credential) {
-        onSuccess(response.credential);
+        onSuccessRef.current(response.credential);
       } else {
-        onError("Gagal mendapatkan kredensial dari Google.");
+        onErrorRef.current("Gagal mendapatkan kredensial dari Google.");
       }
     };
 
     const initializeGoogle = () => {
-      if ((window as any).google) {
-        (window as any).google.accounts.id.initialize({
-          client_id: googleClientId,
-          callback: handleCredentialResponse,
-        });
-        
-        const buttonDiv = document.getElementById("google-signin-btn");
-        if (buttonDiv) {
-          (window as any).google.accounts.id.renderButton(
-            buttonDiv,
-            { 
-              theme: "outline", 
-              size: "large", 
-              width: buttonDiv.clientWidth || 360,
-              text: "signin_with",
-              shape: "rectangular"
-            }
-          );
-        }
+      if (initialized || !(window as any).google) return;
+      initialized = true;
+
+      (window as any).google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: handleCredentialResponse,
+      });
+
+      const buttonDiv = document.getElementById("google-signin-btn");
+      if (buttonDiv) {
+        (window as any).google.accounts.id.renderButton(
+          buttonDiv,
+          {
+            theme: "outline",
+            size: "large",
+            width: buttonDiv.clientWidth || 360,
+            text: "signin_with",
+            shape: "rectangular"
+          }
+        );
       }
     };
 
@@ -61,7 +73,9 @@ export default function GoogleSignInButton({ onSuccess, onError, loading }: Goog
         document.body.appendChild(script);
       }
     }
-  }, [onSuccess, onError]);
+    // Deps kosong: script Google dimuat & diinisialisasi sekali per mount komponen,
+    // tidak setiap kali prop onSuccess/onError berganti identitas.
+  }, []);
 
   return (
     <div className="flex justify-center w-full min-h-[44px]">
