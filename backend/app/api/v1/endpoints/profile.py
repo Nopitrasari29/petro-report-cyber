@@ -18,6 +18,12 @@ class ProfileUpdateSchema(BaseModel):
     current_password: Optional[str] = None
     new_password: Optional[str] = None
 
+    # Preferensi personal per-user (dulunya salah kesimpan di pengaturan global)
+    language: Optional[str] = None
+    appearance: Optional[str] = None
+    notify_report_success: Optional[bool] = None
+    notify_report_failed: Optional[bool] = None
+
 
 @router.get("/profile", response_model=UserResponse)
 def get_profile(current_user = Depends(get_current_user)):
@@ -50,21 +56,27 @@ def update_profile(
             
     update_data = profile_in.model_dump(exclude_unset=True)
     
-    # Penanganan perubahan password jika dikirimkan oleh Frontend
+    # Penanganan perubahan password jika dikirimkan oleh Frontend.
+    # Kalau akun ini belum pernah nge-set password sendiri (password_set == False, artinya
+    # daftar via Google dan passwordnya cuma string acak dari sistem yang user sendiri tidak
+    # tahu), maka current_password TIDAK wajib diisi — ini bukan "ganti password", tapi
+    # "nge-set password untuk pertama kali".
     if profile_in.new_password:
-        if not profile_in.current_password:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
-                detail="Password saat ini wajib diisi untuk melakukan perubahan password."
-            )
-        if not verify_password(profile_in.current_password, current_user.hashed_password):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
-                detail="Password saat ini salah."
-            )
+        if current_user.password_set:
+            if not profile_in.current_password:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, 
+                    detail="Password saat ini wajib diisi untuk melakukan perubahan password."
+                )
+            if not verify_password(profile_in.current_password, current_user.hashed_password):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, 
+                    detail="Password saat ini salah."
+                )
         
         # Hash new password dan simpan di hashed_password
         update_data["hashed_password"] = get_password_hash(profile_in.new_password)
+        update_data["password_set"] = True
         
     # Buang key dummy password agar tidak mengganggu kolom SQL model User
     update_data.pop("current_password", None)

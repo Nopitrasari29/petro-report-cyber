@@ -53,17 +53,9 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Membaca daftar CORS Origins secara dinamis dari settings, dengan fallback localhost
-# Pastikan di app/core/config.py terdapat definisi ALLOWED_HOSTS atau sejenisnya.
-# Jika tidak ada, fallback ke localhost akan berjalan otomatis.
-allowed_origins = getattr(settings, "BACKEND_CORS_ORIGINS", [
-    "http://localhost:3000",
-    "http://localhost:3001"
-])
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=settings.BACKEND_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

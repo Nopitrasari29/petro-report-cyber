@@ -19,11 +19,12 @@ class ReportCreate(ReportBase):
     ai_confidence: Optional[float] = 94.0
     sla_met: Optional[bool] = True
     processing_time_sec: Optional[int] = 15
-    created_by_name: Optional[str] = "Rafika A.Z.K"
+    created_by_name: Optional[str] = None
     threat_count_critical: Optional[int] = 0
     threat_count_high: Optional[int] = 0
     threat_count_medium: Optional[int] = 0
     threat_count_low: Optional[int] = 0
+    threat_count_info: Optional[int] = 0
     total_records_parsed: Optional[int] = 0
 
 class ReportUpdate(BaseModel):
@@ -48,6 +49,7 @@ class ReportUpdate(BaseModel):
     threat_count_high: Optional[int] = None
     threat_count_medium: Optional[int] = None
     threat_count_low: Optional[int] = None
+    threat_count_info: Optional[int] = None
     total_records_parsed: Optional[int] = None
 
 class ReportResponse(ReportBase):
@@ -68,6 +70,7 @@ class ReportResponse(ReportBase):
     threat_count_high: Optional[int]
     threat_count_medium: Optional[int]
     threat_count_low: Optional[int]
+    threat_count_info: Optional[int]
     total_records_parsed: Optional[int]
     created_at: datetime
     updated_at: datetime

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.session import get_db
 from app.core.security import get_password_hash
+from app.core.rate_limit import rate_limiter
 from app.crud.user import get_user_by_email
 from app.models.user import User
 
@@ -25,7 +26,11 @@ class ForgotPasswordPayload(BaseModel):
 async def forgot_password(payload: ForgotPasswordPayload, db: Session = Depends(get_db)):
     """
     Meminta link reset password untuk email yang didaftarkan.
+    Dibatasi 3 percobaan per 15 menit per email, supaya tidak dipakai untuk email-bombing
+    (spam email reset ke satu korban terus-menerus).
     """
+    rate_limiter.check(key=f"forgot-password:{payload.email.lower()}", max_attempts=3, window_seconds=900)
+
     print(f"\n[AUTH] 🔑 {C}Permintaan Lupa Sandi untuk:{R} {payload.email}")
     user = get_user_by_email(db, email=payload.email)
     if not user:

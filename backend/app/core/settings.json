@@ -14,7 +14,7 @@
   "ai_max_tokens": 4000,
   "ai_prompt_style": "Executive Style",
   "ai_narrative_length": "Medium",
-  "ai_language": "English",
+  "ai_language": "Indonesian",
   "appearance": "light",
   "storage_type": "Local Storage",
   "storage_path": "/reports",

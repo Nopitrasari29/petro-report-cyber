@@ -5,6 +5,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from app.db.session import get_db
+from app.core.rate_limit import rate_limiter
 from app.crud.user import get_user_by_email
 from app.models.user import User
 from app.services.email import send_verification_email
@@ -58,7 +59,10 @@ class ResendVerificationPayload(BaseModel):
 async def resend_verification(payload: ResendVerificationPayload, db: Session = Depends(get_db)):
     """
     Mengirim ulang email verifikasi ke email pengguna.
+    Dibatasi 3 percobaan per 15 menit per email, supaya tidak dipakai untuk email-bombing.
     """
+    rate_limiter.check(key=f"resend-verification:{payload.email.lower()}", max_attempts=3, window_seconds=900)
+
     print(f"\n[AUTH] 📧 {C}Mencoba kirim ulang verifikasi:{R} {payload.email}")
     user = get_user_by_email(db, email=payload.email)
     if not user:

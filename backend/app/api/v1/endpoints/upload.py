@@ -5,7 +5,9 @@ from typing import Optional
 from datetime import datetime
 
 from app.db.session import get_db
+from app.core.config import settings
 from app.services.parser.factory import ParserFactory
+from app.services.period_detector import detect_period
 from app.crud.report import create_report
 from app.schemas.report import ReportCreate, ReportResponse
 from app.api.v1.endpoints.auth import get_current_user
@@ -18,16 +20,16 @@ def count_threats(parsed_data: list) -> dict:
     Menghitung jumlah insiden keamanan berdasarkan level keparahan (severity) dari data log.
     Menangani berbagai macam variasi nama kunci severity yang dihasilkan oleh parser.
     """
-    counters = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    counters = {"critical": 0, "high": 0, "medium": 0, "low": 0, "informational": 0}
     severity_keys = ["severity", "Severity", "level", "Level", "threat_level", "Threat Level", "priority", "Priority"]
-    
+
     for row in parsed_data:
         severity_value = None
         for key in severity_keys:
             if key in row:
                 severity_value = row[key]
                 break
-        
+
         if severity_value is not None:
             val_str = str(severity_value).strip().lower()
             if val_str in counters:
@@ -38,14 +40,61 @@ def count_threats(parsed_data: list) -> dict:
                 counters["high"] += 1
             elif "med" in val_str or "warn" in val_str:
                 counters["medium"] += 1
-            elif "low" in val_str or "info" in val_str:
+            elif "info" in val_str:
+                # Dicek sebelum "low" supaya "Informational"/"Info" punya kategori sendiri,
+                # bukan ikut ke-gabung ke "low" (dulu digabung, dashboard jadi harus
+                # mengarang ulang angka informational dari 5% total low+medium).
+                counters["informational"] += 1
+            elif "low" in val_str:
                 counters["low"] += 1
-                
+
     return counters
 
 @router.get("/ping")
 def ping():
     return {"message": "upload module ready"}
+
+@router.post("/detect-period")
+def detect_period_from_file(
+    file: UploadFile = File(...),
+    current_user = Depends(get_current_user),
+):
+    """
+    Parse cepat sebuah file (tanpa menyimpan apapun ke database) hanya untuk mendeteksi
+    rentang tanggal (period_start/period_end) dari isinya, kalau ada kolom tanggal yang jelas.
+    Dipanggil frontend sesaat setelah file dipilih di Step 1 (Upload Data), supaya field
+    "Report Period" di Step 2 (Report Settings) sudah terisi otomatis.
+
+    Kalau data tidak punya kolom tanggal yang bisa dideteksi (contoh: cuma ada "bulan": "Januari"
+    tanpa tahun), period_start & period_end dikembalikan null — di sini frontend harus fallback
+    ke pengisian manual oleh user.
+    """
+    try:
+        max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        if file.size is not None and file.size > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Ukuran berkas melebihi batas maksimum {settings.MAX_UPLOAD_SIZE_MB}MB."
+            )
+
+        try:
+            parser = ParserFactory.get_parser(file.filename)
+            parsed_data = parser.parse(file.file)
+        finally:
+            file.file.close()
+
+        period_start, period_end = detect_period(parsed_data)
+        return {
+            "period_start": period_start,
+            "period_end": period_end,
+            "detected": period_start is not None and period_end is not None
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=f"Kesalahan validasi format data: {str(ve)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal membaca berkas untuk deteksi periode: {str(e)}")
 
 @router.post("/", response_model=ReportResponse)
 def upload_security_file(
@@ -75,7 +124,16 @@ def upload_security_file(
             p_start = datetime.strptime(period_start.strip(), "%Y-%m-%d").date()
         if period_end and period_end.strip():
             p_end = datetime.strptime(period_end.strip(), "%Y-%m-%d").date()
-            
+
+        # Validasi ukuran berkas SEBELUM diproses, sesuai batas di settings (MAX_UPLOAD_SIZE_MB).
+        # file.size tersedia dari Starlette tanpa perlu baca seluruh file ke memory dulu.
+        max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        if file.size is not None and file.size > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Ukuran berkas melebihi batas maksimum {settings.MAX_UPLOAD_SIZE_MB}MB."
+            )
+
         # Membaca file dan memanggil parser yang sesuai dari factory
         try:
             parser = ParserFactory.get_parser(file.filename)
@@ -106,6 +164,7 @@ def upload_security_file(
             threat_count_high=threat_metrics["high"],
             threat_count_medium=threat_metrics["medium"],
             threat_count_low=threat_metrics["low"],
+            threat_count_info=threat_metrics["informational"],
             total_records_parsed=total_records
         )
         
@@ -114,5 +173,7 @@ def upload_security_file(
         
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=f"Kesalahan validasi format data: {str(ve)}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal memproses unggahan log siber: {str(e)}")

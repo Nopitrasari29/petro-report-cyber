@@ -7,6 +7,7 @@ import os
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal, get_db
+from app.api.v1.endpoints.auth import get_current_user
 from app.models.system_setting import SystemSetting
 
 router = APIRouter()
@@ -14,49 +15,18 @@ router = APIRouter()
 # Tentukan path file settings lokal
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "core", "settings.json")
 
+
 class SettingsSchema(BaseModel):
+    """
+    Pengaturan level ORGANISASI (bukan per-user) — berlaku untuk 1 deployment/instance web ini.
+    Field yang dulu ada di sini tapi cuma dekorasi tanpa fungsi nyata (security_2fa, storage_*,
+    chart_*, export_*, ai_model/ai_temperature, dst.) sudah dibuang. Preferensi personal seperti
+    bahasa, notifikasi, dan tampilan sekarang disimpan per-user di /settings/profile, bukan di sini.
+    """
     organization_name: str = "PT Petrokimia Gresik"
     primary_color: str = "#008B45"
     secondary_color: str = "#2DAA7D"
     description: str = "AI-Powered Security Report Generator for SOC Team"
-    
-    default_template: str = "Executive SOC Report (Monthly)"
-    default_output_format: str = "PDF"
-    include_charts: bool = True
-    include_exec_summary: bool = True
-    confidential_watermark: bool = True
-    
-    ai_model_provider: str = "Ollama (Local)"
-    ai_model: str = "qwen3:8b"
-    ai_temperature: float = 0.3
-    ai_max_tokens: int = 4000
-    ai_prompt_style: str = "Executive Style"
-    ai_narrative_length: str = "Medium"
-    ai_language: str = "Indonesian"
-    appearance: str = "light"
-    
-    storage_type: str = "Local Storage"
-    storage_path: str = "/reports"
-    storage_retention_days: int = 365
-    storage_max_upload_mb: int = 250
-    storage_auto_delete: bool = False
-    
-    chart_style: str = "Auto (Recommended)"
-    chart_resolution: str = "High (1920px)"
-    chart_refresh_interval: str = "Daily at 00:00"
-    
-    export_format: str = "PDF"
-    export_enable_pptx: bool = True
-    export_pptx_template: str = "Petrokimia - Executive Template"
-    export_include_cover_page: bool = True
-    export_table_of_contents: bool = True
-    export_compress_files: bool = True
-    
-    security_2fa: bool = True
-    security_timeout_minutes: int = 30
-    security_ip_whitelist: bool = False
-    security_audit_logging: bool = True
-    security_encryption: bool = True
 
 
 def load_settings_file() -> dict:
@@ -72,7 +42,7 @@ def load_settings_file() -> dict:
 
 def load_settings() -> dict:
     """
-    Membaca pengaturan dari database (tabel system_settings). Jika belum ada, buat default.
+    Membaca pengaturan organisasi dari database (tabel system_settings). Jika belum ada, buat default.
     """
     db = SessionLocal()
     try:
@@ -83,10 +53,12 @@ def load_settings() -> dict:
             db.add(setting)
             db.commit()
             return default_data
-            
-        # Merge dengan default data agar field baru yang belum ada di DB tetap terisi default-nya
+
         merged_data = {**default_data, **(setting.value or {})}
-        return merged_data
+        # Buang key lama peninggalan skema sebelumnya (mis. security_2fa) yang mungkin
+        # masih tersimpan di DB lama, biar respons selalu bersih sesuai skema saat ini.
+        cleaned = {k: v for k, v in merged_data.items() if k in default_data}
+        return cleaned
     except Exception as e:
         print(f"[SETTINGS WARNING] Gagal memuat dari DB: {e}. Fallback ke file.")
         return load_settings_file()
@@ -95,9 +67,9 @@ def load_settings() -> dict:
 
 
 @router.get("/")
-def get_settings():
+def get_settings(current_user = Depends(get_current_user)):
     """
-    Mendapatkan pengaturan konfigurasi sistem aktif saat ini.
+    Mendapatkan pengaturan organisasi aktif saat ini. Wajib login.
     """
     try:
         return load_settings()
@@ -106,22 +78,26 @@ def get_settings():
 
 
 @router.put("/")
-def update_settings(payload: Dict[str, Any], db: Session = Depends(get_db)):
+def update_settings(
+    payload: Dict[str, Any],
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Memperbarui pengaturan konfigurasi sistem secara persisten ke database (hanya field yang dikirim).
+    Memperbarui pengaturan organisasi. Wajib login.
+    Catatan: saat ini semua user yang login boleh mengubah ini (belum ada pembatasan role/admin
+    khusus, karena sistem role belum diaktifkan di seluruh aplikasi). Kalau ke depannya cuma admin
+    yang boleh ubah, tambahkan pengecekan current_user.role di sini.
     """
     try:
         current_settings = load_settings()
-        
-        # Update field yang dikirim saja (partial update)
+
         for key, value in payload.items():
             current_settings[key] = value
-            
-        # Validasi hasil merge dengan Pydantic Schema agar data type tetap aman
+
         validated_settings = SettingsSchema(**current_settings)
         data = validated_settings.model_dump()
-        
-        # Simpan kembali ke DB
+
         setting = db.query(SystemSetting).filter(SystemSetting.key == "global").first()
         if not setting:
             setting = SystemSetting(key="global", value=data)
@@ -129,14 +105,13 @@ def update_settings(payload: Dict[str, Any], db: Session = Depends(get_db)):
         else:
             setting.value = data
         db.commit()
-        
-        # Simpan ke file cadangan lokal
+
         try:
             with open(SETTINGS_FILE, "w") as f:
                 json.dump(data, f, indent=2)
         except Exception:
             pass
-            
-        return {"status": "success", "message": "Pengaturan berhasil diperbarui secara persisten ke database.", "settings": data}
+
+        return {"status": "success", "message": "Pengaturan organisasi berhasil diperbarui.", "settings": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal memperbarui pengaturan: {str(e)}")

@@ -2,21 +2,27 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.db.session import get_db
+from app.api.v1.endpoints.auth import get_current_user
 from app.models.report import Report
-from app.models.datasource import DataSource
 from typing import List
 import datetime
 
 router = APIRouter()
 
 @router.get("/stats")
-def get_dashboard_stats(db: Session = Depends(get_db)):
+def get_dashboard_stats(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Mendapatkan seluruh statistik ringkasan, grafik tren ancaman, dan antrean untuk Dashboard utama secara riil dari database.
+    Mendapatkan seluruh statistik ringkasan, grafik tren ancaman, dan antrean untuk Dashboard.
+    Semua angka di sini di-scope hanya ke laporan milik user yang sedang login.
     """
-    # 1. Ambil 5 laporan terbaru dari database
-    recent_reports = db.query(Report).order_by(Report.created_at.desc()).limit(5).all()
-    
+    base_query = db.query(Report).filter(Report.user_id == current_user.id)
+
+    # 1. Ambil 5 laporan terbaru milik user ini
+    recent_reports = base_query.order_by(Report.created_at.desc()).limit(5).all()
+
     formatted_reports = []
     for rep in recent_reports:
         formatted_reports.append({
@@ -29,41 +35,43 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             "created_by": rep.created_by_name or "SOC Analyst"
         })
 
-    # 2. Hitung metrics/counters utama secara riil
-    total_reports = db.query(Report).count()
-    pending_queue_count = db.query(Report).filter(Report.status.in_(["processing", "queued", "waiting"])).count()
-    
-    crit_incidents = db.query(func.sum(Report.threat_count_critical)).scalar() or 0
-    avg_confidence = db.query(func.avg(Report.ai_confidence)).scalar() or 94.0
-    connected_sources = db.query(DataSource).filter(DataSource.status == "Connected").count()
-    available_reports = db.query(Report).filter(Report.status.in_(["parsed", "analyzed", "completed"])).count()
+    # 2. Hitung metrics/counters utama, semuanya di-scope ke user_id
+    total_reports = base_query.count()
+    pending_queue_count = base_query.filter(Report.status.in_(["processing", "queued", "waiting"])).count()
 
-    # Hitung persentase perubahan Critical Incidents secara dinamis (30 hari terakhir vs 30 s/d 60 hari yang lalu)
+    crit_incidents = db.query(func.sum(Report.threat_count_critical)).filter(Report.user_id == current_user.id).scalar() or 0
+    avg_confidence = db.query(func.avg(Report.ai_confidence)).filter(Report.user_id == current_user.id).scalar() or 94.0
+    available_reports = base_query.filter(Report.status.in_(["parsed", "analyzed", "completed"])).count()
+
+    # Hitung persentase perubahan Critical Incidents (30 hari terakhir vs 30 s/d 60 hari yang lalu)
     now = datetime.datetime.utcnow()
     last_30_days = now - datetime.timedelta(days=30)
     prev_30_to_60_days = now - datetime.timedelta(days=60)
-    
+
     crit_last_30 = db.query(func.sum(Report.threat_count_critical))\
+        .filter(Report.user_id == current_user.id)\
         .filter(Report.created_at >= last_30_days).scalar() or 0
-        
+
     crit_prev_30 = db.query(func.sum(Report.threat_count_critical))\
+        .filter(Report.user_id == current_user.id)\
         .filter(Report.created_at >= prev_30_to_60_days)\
         .filter(Report.created_at < last_30_days).scalar() or 0
-        
+
     if crit_prev_30 > 0:
         crit_pct_change = round(((crit_last_30 - crit_prev_30) / crit_prev_30) * 100, 1)
     else:
         crit_pct_change = 0.0 if crit_last_30 == 0 else 100.0
 
-    # 3. Hitung distribusi tingkat keparahan (Severity Distribution) secara riil
-    sum_crit = db.query(func.sum(Report.threat_count_critical)).scalar() or 0
-    sum_high = db.query(func.sum(Report.threat_count_high)).scalar() or 0
-    sum_med = db.query(func.sum(Report.threat_count_medium)).scalar() or 0
-    sum_low = db.query(func.sum(Report.threat_count_low)).scalar() or 0
-    sum_info = int((sum_low + sum_med) * 0.05) if (sum_low + sum_med) > 0 else 0
-    
+    # 3. Distribusi tingkat keparahan (Severity Distribution), di-scope ke user_id
+    user_reports_filter = Report.user_id == current_user.id
+    sum_crit = db.query(func.sum(Report.threat_count_critical)).filter(user_reports_filter).scalar() or 0
+    sum_high = db.query(func.sum(Report.threat_count_high)).filter(user_reports_filter).scalar() or 0
+    sum_med = db.query(func.sum(Report.threat_count_medium)).filter(user_reports_filter).scalar() or 0
+    sum_low = db.query(func.sum(Report.threat_count_low)).filter(user_reports_filter).scalar() or 0
+    sum_info = db.query(func.sum(Report.threat_count_info)).filter(user_reports_filter).scalar() or 0
+
     total_events = sum_crit + sum_high + sum_med + sum_low + sum_info
-    
+
     def get_percentage(part, total):
         return round((part / total) * 100) if total > 0 else 0
 
@@ -75,8 +83,8 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         {"severity": "Informational", "count": sum_info, "percentage": get_percentage(sum_info, total_events)}
     ]
 
-    # 4. Hitung tren ancaman bulanan (Threat Trend Chart) secara riil
-    trend_reports = db.query(Report).order_by(Report.created_at.asc()).limit(5).all()
+    # 4. Tren ancaman bulanan (Threat Trend Chart), di-scope ke user_id
+    trend_reports = base_query.order_by(Report.created_at.asc()).limit(5).all()
     if trend_reports:
         labels = [
             rep.period_start.strftime("%d %b") if rep.period_start else rep.created_at.strftime("%d %b")
@@ -89,7 +97,6 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             {"label": "Low", "data": [rep.threat_count_low or 0 for rep in trend_reports]}
         ]
     else:
-        # Kembalikan struktur kosong riil jika database kosong
         labels = []
         datasets = [
             {"label": "Critical", "data": []},
@@ -98,10 +105,10 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             {"label": "Low", "data": []}
         ]
 
-    # 5. Pipeline antrean pemrosesan AI (AI Generation Queue) secara riil
-    db_queued = db.query(Report).filter(Report.status.in_(["processing", "queued", "waiting", "draft"])).order_by(Report.updated_at.desc()).all()
+    # 5. Antrean pemrosesan AI, di-scope ke user_id
+    db_queued = base_query.filter(Report.status.in_(["processing", "queued", "waiting", "draft"])).order_by(Report.updated_at.desc()).all()
     queue_list = []
-    
+
     for rep in db_queued:
         progress = 0
         q_status = "Waiting in Queue"
@@ -111,7 +118,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         elif rep.status == "draft":
             progress = 100
             q_status = "Completed Parsing"
-            
+
         queue_list.append({
             "report_name": rep.title,
             "progress_percentage": progress,
@@ -133,10 +140,6 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             "ai_analysis_score": {
                 "value": round(avg_confidence),
                 "label": "High Confidence" if avg_confidence >= 85 else "Medium Confidence"
-            },
-            "data_sources": {
-                "value": connected_sources,
-                "label": "Connected Sources"
             },
             "report_history": {
                 "value": available_reports,

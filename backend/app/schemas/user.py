@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
@@ -30,6 +29,13 @@ class UserResponse(UserBase):
     department: str
     avatar_url: Optional[str] = None
     created_at: datetime
+
+    # Preferensi personal per-user
+    language: Optional[str] = "English"
+    appearance: Optional[str] = "light"
+    notify_report_success: Optional[bool] = True
+    notify_report_failed: Optional[bool] = True
+    password_set: Optional[bool] = True
 
 
 class Token(BaseModel):

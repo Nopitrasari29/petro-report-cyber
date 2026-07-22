@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.session import get_db
 from app.core.security import verify_password, create_access_token
+from app.core.rate_limit import rate_limiter
 from app.crud.user import create_user, get_user_by_email
 from app.schemas.user import UserCreate, UserResponse, Token, LoginPayload
 from app.services.email import send_verification_email
@@ -59,7 +60,10 @@ async def register(user_in: UserCreate, db: Session = Depends(get_db)):
 def login(payload: LoginPayload, db: Session = Depends(get_db)):
     """
     Login user, mengembalikan token akses JWT jika kredensial valid dan email terverifikasi.
+    Dibatasi 5 percobaan per 5 menit per alamat email, untuk mencegah brute-force password.
     """
+    rate_limiter.check(key=f"login:{payload.email.lower()}", max_attempts=5, window_seconds=300)
+
     print(f"\n[AUTH] 🔑 {C}Mencoba login manual:{R} {payload.email}")
     user = get_user_by_email(db, email=payload.email)
 

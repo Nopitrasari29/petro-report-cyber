@@ -5,7 +5,8 @@ from typing import List, Optional
 import io
 
 from app.db.session import get_db
-from app.crud.report import get_report, delete_report, update_report
+from app.api.v1.endpoints.auth import get_current_user
+from app.crud.report import get_owned_report, delete_report, update_report
 from app.schemas.report import ReportResponse, ReportUpdate
 from app.models.report import Report
 from app.services.export_pdf import PDFExporter
@@ -30,89 +31,104 @@ def read_reports(
     search: Optional[str] = None,
     period_start: Optional[str] = None,
     period_end: Optional[str] = None,
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Mendapatkan daftar riwayat laporan dengan pencarian, filter tipe data/status/periode, dan paginasi.
+    Hanya menampilkan laporan milik user yang sedang login (tidak bisa lihat punya user lain).
     """
-    query = db.query(Report)
-    
+    query = db.query(Report).filter(Report.user_id == current_user.id)
+
     if data_type:
         query = query.filter(Report.data_type == data_type)
-        
+
     if status:
         query = query.filter(Report.status == status)
-        
+
     if search:
         query = query.filter(Report.title.ilike(f"%{search}%"))
-        
+
     if period_start:
         try:
             p_start = datetime.strptime(period_start, "%Y-%m-%d").date()
             query = query.filter(Report.period_start >= p_start)
         except ValueError:
             pass
-            
+
     if period_end:
         try:
             p_end = datetime.strptime(period_end, "%Y-%m-%d").date()
             query = query.filter(Report.period_end <= p_end)
         except ValueError:
             pass
-            
-    # Dapatkan total count sebelum paginasi offset/limit
+
     total_count = query.count()
     response.headers["X-Total-Count"] = str(total_count)
     response.headers["Access-Control-Expose-Headers"] = "X-Total-Count"
-    
+
     return query.order_by(Report.created_at.desc()).offset(skip).limit(limit).all()
 
 @router.get("/{report_id}", response_model=ReportResponse)
-def read_report_detail(report_id: int, db: Session = Depends(get_db)):
+def read_report_detail(
+    report_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Mendapatkan detail lengkap satu riwayat laporan berdasarkan ID.
+    Hanya bisa diakses oleh pemilik laporan tersebut.
     """
-    db_report = get_report(db, report_id)
+    db_report = get_owned_report(db, report_id, current_user.id)
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
     return db_report
 
 @router.delete("/{report_id}")
-def remove_report(report_id: int, db: Session = Depends(get_db)):
+def remove_report(
+    report_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Menghapus satu laporan dari database riwayat.
+    Hanya bisa dilakukan oleh pemilik laporan tersebut.
     """
-    db_report = delete_report(db, report_id)
+    db_report = get_owned_report(db, report_id, current_user.id)
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
+    delete_report(db, report_id)
     return {"status": "success", "message": "Laporan berhasil dihapus dari riwayat siber."}
 
 @router.get("/{report_id}/pdf")
-def download_pdf_report(report_id: int, db: Session = Depends(get_db)):
+def download_pdf_report(
+    report_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Mengekspor laporan keamanan siber ke file PDF dan mendownloadnya.
+    Hanya bisa dilakukan oleh pemilik laporan tersebut.
     """
-    db_report = get_report(db, report_id)
+    db_report = get_owned_report(db, report_id, current_user.id)
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
-    
+
     if not db_report.ai_summary:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Laporan belum dianalisis oleh AI. Silakan jalankan analisis terlebih dahulu sebelum melakukan ekspor."
         )
 
-    # Auto-generate chart jika kosong sebelum diexport
     if not db_report.chart_data and db_report.parsed_data:
         try:
             chart_config = ChartGenerator.generate_chart_config(db_report.data_type, db_report.parsed_data)
             db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
         except Exception as chart_err:
             print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PDF: {chart_err}")
-        
+
     try:
         pdf_bytes = PDFExporter.generate_pdf_report(db_report)
-        # Mengembalikan berkas PDF biner langsung sebagai berkas unduhan
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -127,28 +143,32 @@ def download_pdf_report(report_id: int, db: Session = Depends(get_db)):
         )
 
 @router.get("/{report_id}/pptx")
-def download_pptx_report(report_id: int, db: Session = Depends(get_db)):
+def download_pptx_report(
+    report_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Mengekspor laporan keamanan siber ke slide presentasi PowerPoint (.pptx).
+    Hanya bisa dilakukan oleh pemilik laporan tersebut.
     """
-    db_report = get_report(db, report_id)
+    db_report = get_owned_report(db, report_id, current_user.id)
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
-        
+
     if not db_report.ai_summary:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Laporan belum dianalisis oleh AI. Silakan jalankan analisis terlebih dahulu."
         )
 
-    # Auto-generate chart jika kosong sebelum diexport
     if not db_report.chart_data and db_report.parsed_data:
         try:
             chart_config = ChartGenerator.generate_chart_config(db_report.data_type, db_report.parsed_data)
             db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
         except Exception as chart_err:
             print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PPTX: {chart_err}")
-        
+
     try:
         ppt_bytes = PPTXExporter.generate_ppt_report(db_report)
         return Response(

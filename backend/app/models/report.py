@@ -37,6 +37,7 @@ class Report(Base):
     threat_count_high = Column(Integer, nullable=True, default=0)
     threat_count_medium = Column(Integer, nullable=True, default=0)
     threat_count_low = Column(Integer, nullable=True, default=0)
+    threat_count_info = Column(Integer, nullable=True, default=0)
     total_records_parsed = Column(Integer, nullable=True, default=0)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())

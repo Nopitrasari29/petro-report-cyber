@@ -77,7 +77,8 @@ def create_user_oauth(db: Session, email: str, username: str, full_name: str | N
         avatar_url=avatar_url,
         is_verified=True,  # Pengguna Google sudah diverifikasi oleh Google
         role="Analyst",
-        department="IT Security SOC"
+        department="IT Security SOC",
+        password_set=False  # Belum pernah nge-set password sendiri, cuma password acak dari sistem
     )
     db.add(db_user)
     db.commit()
