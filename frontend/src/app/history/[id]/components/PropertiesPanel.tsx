@@ -52,35 +52,66 @@ export default function PropertiesPanel({ report }: PropertiesPanelProps) {
         </svg>
       </h3>
 
-      <div className="mt-4 space-y-4 text-left">
-        <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-black text-stone-500 uppercase tracking-wider">
-            {tx("Language", "Language")}
-          </label>
-          <div className="relative">
-            <select
-              value={report.language || "English"}
-              disabled
-              className="appearance-none w-full pl-3 pr-8 py-2 border border-stone-200 rounded-xl text-xs font-bold text-stone-700 bg-stone-50 cursor-not-allowed"
-            >
-              <option>{tx("English", "English")}</option>
-              <option>{tx("Indonesian", "Indonesian")}</option>
-            </select>
-            <span className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none text-stone-400">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={2.5}
-                stroke="currentColor"
-                className="w-3.5 h-3.5"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="m19.5 8.25-7.5 7.5-7.5-7.5"
-                />
-              </svg>
+      <div className="mt-4 space-y-3.5 text-left overflow-y-auto max-h-[440px] pr-1">
+        {/* Report Title */}
+        <div className="bg-stone-50/80 p-3 rounded-xl border border-stone-150">
+          <span className="text-[10px] font-extrabold text-stone-400 uppercase tracking-wider block">
+            {tx("Report Name", "Report Name")}
+          </span>
+          <span className="text-xs font-black text-stone-850 mt-1 block truncate">
+            {report.title}
+          </span>
+        </div>
+
+        {/* Source File */}
+        <div className="bg-stone-50/80 p-3 rounded-xl border border-stone-150">
+          <span className="text-[10px] font-extrabold text-stone-400 uppercase tracking-wider block">
+            {tx("Input File", "Input File")}
+          </span>
+          <span className="text-xs font-bold text-stone-700 mt-1 block truncate">
+            {report.input_file_name || "firewall_logs.csv"}
+          </span>
+        </div>
+
+        {/* Created By */}
+        <div className="bg-stone-50/80 p-3 rounded-xl border border-stone-150">
+          <span className="text-[10px] font-extrabold text-stone-400 uppercase tracking-wider block">
+            {tx("Created By", "Created By")}
+          </span>
+          <span className="text-xs font-bold text-stone-700 mt-1 block">
+            {report.created_by_name || tx("Analyst", "Analyst")}
+          </span>
+        </div>
+
+        {/* Output Formats */}
+        <div className="bg-stone-50/80 p-3 rounded-xl border border-stone-150">
+          <span className="text-[10px] font-extrabold text-stone-400 uppercase tracking-wider block">
+            {tx("Supported Exports", "Supported Exports")}
+          </span>
+          <div className="flex gap-2 mt-1.5">
+            <span className="px-2 py-0.5 bg-red-50 text-red-600 font-extrabold text-[10px] rounded border border-red-150">
+              PDF
+            </span>
+            <span className="px-2 py-0.5 bg-amber-50 text-amber-600 font-extrabold text-[10px] rounded border border-amber-150">
+              PPTX
+            </span>
+          </div>
+        </div>
+
+        {/* AI Confidence */}
+        <div className="bg-stone-50/80 p-3 rounded-xl border border-stone-150">
+          <span className="text-[10px] font-extrabold text-stone-400 uppercase tracking-wider block">
+            {tx("AI Confidence Score", "AI Confidence Score")}
+          </span>
+          <div className="flex items-center gap-2 mt-1">
+            <div className="flex-1 h-2 bg-stone-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-petro-green rounded-full"
+                style={{ width: `${report.ai_confidence ?? 95}%` }}
+              ></div>
+            </div>
+            <span className="text-xs font-black text-petro-green">
+              {report.ai_confidence ?? 95}%
             </span>
           </div>
         </div>

@@ -97,9 +97,8 @@ export default function NotFound() {
         </div>
       </div>
 
-      {/* Decorative Corporate Footer Tag */}
-      <div className="mt-12 flex items-center gap-2 opacity-60 hover:opacity-100 transition-opacity duration-200 select-none cursor-default">
-        <img src="/LOGO_PETRO.png" alt="Petrokimia Logo" className="h-12 lg:h-14 w-auto object-contain shrink-0 -my-2 lg:-my-3" />
+      <div className="mt-12 flex items-center gap-3 opacity-80 hover:opacity-100 transition-opacity duration-200 select-none cursor-default bg-white/95 backdrop-blur px-3.5 py-1.5 rounded-xl border border-stone-200 shadow-sm">
+        <img src="/LOGO_PETRO_DANANTARA.png" alt="Petrokimia Danantara Logo" className="h-8 w-auto object-contain shrink-0" />
         <span className="text-[10px] font-black text-stone-600 tracking-widest uppercase">
           PT Petrokimia Gresik
         </span>

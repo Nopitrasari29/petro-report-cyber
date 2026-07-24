@@ -107,6 +107,13 @@ export default function ReportHistoryPage() {
 
   useEffect(() => {
     fetchReports();
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlSearch = params.get("search");
+      if (urlSearch) {
+        setSearchQuery(urlSearch);
+      }
+    }
   }, []);
 
   // Delete Action handler
@@ -167,18 +174,20 @@ export default function ReportHistoryPage() {
   const getStatusDetails = (status: string) => {
     switch (status?.toLowerCase()) {
       case "completed":
+      case "analyzed":
       case "approved":
         return {
           label: "Completed",
           classes: "bg-emerald-50 text-emerald-600 border border-emerald-200",
         };
-      case "analyzed":
+      case "processing":
       case "in review":
         return {
           label: "In Review",
           classes: "bg-amber-50 text-amber-600 border border-amber-250",
         };
       case "draft":
+      case "parsed":
         return {
           label: "Draft",
           classes: "bg-blue-50 text-blue-600 border border-blue-200",
@@ -190,15 +199,38 @@ export default function ReportHistoryPage() {
         };
       default:
         return {
-          label: status || "Draft",
-          classes: "bg-stone-50 text-stone-600 border border-stone-200",
+          label: status || "Completed",
+          classes: "bg-emerald-50 text-emerald-600 border border-emerald-200",
         };
     }
   };
 
-  // DataType mapping to display label
-  const getDataTypeLabel = (dataType: string) => {
-    switch (dataType?.toLowerCase()) {
+  // Template/DataType mapping to dynamic display label
+  const getDataTypeLabel = (item: any) => {
+    if (!item) return "SOC Report";
+    if (typeof item === "string") {
+      switch (item.toLowerCase()) {
+        case "firewall":
+          return "SOC Report";
+        case "vapt":
+          return "Threat Trend";
+        case "email_security":
+          return "Threat Hunting";
+        case "ids_ips":
+          return "IDS/IPS Report";
+        default:
+          return item || "SOC Report";
+      }
+    }
+    if (item.template_type) {
+      const t = item.template_type.toLowerCase();
+      if (t.includes("soc")) return "SOC Report";
+      if (t.includes("threat")) return "Threat Trend";
+      if (t.includes("email") || t.includes("phish")) return "Threat Hunting";
+      if (t.includes("ids") || t.includes("ips")) return "IDS/IPS Report";
+      return item.template_type;
+    }
+    switch (item.data_type?.toLowerCase()) {
       case "firewall":
         return "SOC Report";
       case "vapt":
@@ -208,17 +240,21 @@ export default function ReportHistoryPage() {
       case "ids_ips":
         return "IDS/IPS Report";
       default:
-        return dataType || "SOC Report";
+        return item.data_type || "SOC Report";
     }
   };
 
   // Dynamic Statistics Calculation
   const totalCount = reports.length;
-  const approvedCount = reports.filter((r) => r.status === "completed").length;
-  const inReviewCount = reports.filter(
-    (r) => r.status === "analyzed" || r.status === "parsed",
+  const approvedCount = reports.filter(
+    (r) => r.status === "completed" || r.status === "analyzed" || r.status === "approved",
   ).length;
-  const draftCount = reports.filter((r) => r.status === "draft").length;
+  const inReviewCount = reports.filter(
+    (r) => r.status === "processing" || r.status === "in review",
+  ).length;
+  const draftCount = reports.filter(
+    (r) => r.status === "draft" || r.status === "parsed",
+  ).length;
   const exportedCount = approvedCount; // Statically equal to approved for demo consistency
 
   const approvedPercent = totalCount
@@ -237,12 +273,18 @@ export default function ReportHistoryPage() {
   // Filtered reports
   const filteredReports = reports.filter((item) => {
     // Search filter
+    const searchLower = searchQuery.toLowerCase();
     const matchesSearch =
-      item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      getDataTypeLabel(item.data_type)
-        .toLowerCase()
-        .includes(searchQuery.toLowerCase()) ||
-      item.created_by_name?.toLowerCase().includes(searchQuery.toLowerCase());
+      !searchQuery ||
+      item.title.toLowerCase().includes(searchLower) ||
+      getDataTypeLabel(item).toLowerCase().includes(searchLower) ||
+      (item.template_type && item.template_type.toLowerCase().includes(searchLower)) ||
+      (item.data_type && item.data_type.toLowerCase().includes(searchLower)) ||
+      (item.created_by_name && item.created_by_name.toLowerCase().includes(searchLower)) ||
+      (item.status && item.status.toLowerCase().includes(searchLower)) ||
+      getStatusDetails(item.status).label.toLowerCase().includes(searchLower) ||
+      formatPeriod(item.period_start, item.period_end).toLowerCase().includes(searchLower) ||
+      formatDateString(item.created_at).toLowerCase().includes(searchLower);
 
     // Status filter
     let matchesStatus = true;
@@ -256,8 +298,18 @@ export default function ReportHistoryPage() {
     let matchesType = true;
     if (typeFilter !== "All Types") {
       matchesType =
-        getDataTypeLabel(item.data_type).toLowerCase() ===
-        typeFilter.toLowerCase();
+        getDataTypeLabel(item).toLowerCase() === typeFilter.toLowerCase();
+    }
+
+    // Period filter
+    let matchesPeriod = true;
+    if (periodFilter && periodFilter !== "Select Periods" && periodFilter !== "All Periods") {
+      const pFormatted = formatPeriod(item.period_start, item.period_end).toLowerCase();
+      const pTarget = periodFilter.toLowerCase();
+      const createdAtFormatted = item.created_at
+        ? new Date(item.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" }).toLowerCase()
+        : "";
+      matchesPeriod = pFormatted.includes(pTarget) || createdAtFormatted.includes(pTarget);
     }
 
     // User filter
@@ -266,7 +318,7 @@ export default function ReportHistoryPage() {
       matchesUser = item.created_by_name === userFilter;
     }
 
-    return matchesSearch && matchesStatus && matchesType && matchesUser;
+    return matchesSearch && matchesStatus && matchesType && matchesPeriod && matchesUser;
   });
 
   // Unique list of creators for filter dropdown
@@ -288,7 +340,7 @@ export default function ReportHistoryPage() {
       .map(
         (r) =>
           `"${r.title}","${formatPeriod(r.period_start, r.period_end)}","${getDataTypeLabel(
-            r.data_type,
+            r,
           )}","${r.created_by_name || tx("Analyst", "Analyst")}","${getStatusDetails(r.status).label}","${formatDateString(
             r.created_at,
           )}"`,
@@ -306,8 +358,43 @@ export default function ReportHistoryPage() {
     a.click();
   };
 
-  const handleDownloadPDF = (id: number) => {
-    window.open(`http://localhost:8000/api/v1/history/${id}/pdf`, "_blank");
+  const handleDownloadFile = async (id: number, format: "pdf" | "pptx") => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    if (!token) {
+      alert("Token akses tidak ditemukan. Silakan login ulang.");
+      return;
+    }
+
+    try {
+      const url = `http://localhost:8000/api/v1/history/${id}/${format}`;
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        let detail = `Gagal mengunduh file ${format.toUpperCase()}.`;
+        try {
+          const data = await res.json();
+          detail = data.detail || detail;
+        } catch {}
+        alert(detail);
+        return;
+      }
+
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = `soc_report_${id}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err: any) {
+      alert(err.message || "Terjadi kesalahan saat mengunduh file.");
+    }
   };
 
   return (
@@ -319,64 +406,82 @@ export default function ReportHistoryPage() {
       <div className="flex-1 pl-64 flex flex-col min-h-screen">
         <Navbar />
 
-        {/* Main Body */}
-        <main className="flex-1 p-8 max-w-6xl mx-auto w-full space-y-8">
-          {/* Header section */}
-          <div className="flex justify-between items-center animate-fadeInUp">
+        {/* Header Title Bar */}
+        <main className="flex-1 p-8 max-w-7xl mx-auto w-full space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="text-left">
-              <h2 className="text-2xl font-extrabold text-stone-900">
+              <h1 className="text-2xl font-extrabold text-stone-900 tracking-tight">
                 {tx("Report History", "Report History")}
-              </h2>
-              <p className="text-sm text-stone-500 font-medium mt-1">
+              </h1>
+              <p className="text-xs text-stone-500 font-semibold mt-1">
                 {tx(
-                  "View, search, and manage all generated SOC reports.",
-                  "View, search, and manage all generated SOC reports.",
+                  "Manage, search, preview, and download previously generated SOC reports.",
+                  "Manage, search, preview, and download previously generated SOC reports.",
                 )}
               </p>
             </div>
-            <button
-              onClick={handleExportList}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-sm shadow-md hover:shadow-lg transition-all duration-200 group"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={2}
-                stroke="currentColor"
-                className="w-4 h-4"
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleExportList}
+                className="px-4 py-2.5 bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
-                />
-              </svg>
-              {tx("Export List", "Export List")}
-            </button>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                  className="w-4 h-4 text-stone-500"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                  />
+                </svg>
+                {tx("Export CSV", "Export CSV")}
+              </button>
+
+              <Link
+                href="/generate"
+                className="px-4 py-2.5 bg-petro-green hover:bg-petro-green-hover text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-2"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2.5}
+                  stroke="currentColor"
+                  className="w-4 h-4"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 4.5v15m7.5-7.5h-15"
+                  />
+                </svg>
+                {tx("New Report", "New Report")}
+              </Link>
+            </div>
           </div>
 
-          {/* Error Message */}
-          {errorMsg && (
-            <div className="bg-red-50 border border-red-200 text-red-750 px-4 py-3 rounded-xl text-xs font-medium text-left">
-              <strong>Error:</strong> {errorMsg}
-            </div>
-          )}
+          {/* Metric Stats Cards Row */}
+          <ScrollReveal animation="fadeInUp" delay={100}>
+            <HistoryStatsCards
+              totalCount={totalCount}
+              approvedCount={approvedCount}
+              inReviewCount={inReviewCount}
+              draftCount={draftCount}
+              exportedCount={exportedCount}
+              approvedPercent={approvedPercent}
+              inReviewPercent={inReviewPercent}
+              draftPercent={draftPercent}
+              exportedPercent={exportedPercent}
+            />
+          </ScrollReveal>
 
-          {/* Summary Stats Cards Grid */}
-          <HistoryStatsCards
-            totalCount={totalCount}
-            approvedCount={approvedCount}
-            inReviewCount={inReviewCount}
-            draftCount={draftCount}
-            exportedCount={exportedCount}
-            approvedPercent={approvedPercent}
-            inReviewPercent={inReviewPercent}
-            draftPercent={draftPercent}
-            exportedPercent={exportedPercent}
-          />
-
-          {/* Filters & Table Card Wrapper */}
+          {/* Table Container Card */}
           <ScrollReveal animation="fadeInUp" delay={200}>
             <div className="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden flex flex-col">
               <HistoryFilterBar
@@ -409,7 +514,7 @@ export default function ReportHistoryPage() {
                 formatPeriod={formatPeriod}
                 getDataTypeLabel={getDataTypeLabel}
                 formatDateString={formatDateString}
-                handleDownloadPDF={handleDownloadPDF}
+                handleDownloadFile={handleDownloadFile}
                 handleDelete={handleDelete}
               />
             </div>

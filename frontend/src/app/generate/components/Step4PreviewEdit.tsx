@@ -49,6 +49,8 @@ export default function Step4PreviewEdit({
   onNext,
   tx,
 }: Step4PreviewEditProps) {
+  const [previewFormat, setPreviewFormat] = React.useState<"pdf" | "pptx">("pdf");
+
   return (
     <ScrollReveal animation="fadeInUp" className="space-y-6">
       <div className="text-left">
@@ -188,104 +190,238 @@ export default function Step4PreviewEdit({
           {/* Tab Contents */}
           <div className="min-h-[350px]">
             {activeTab === "preview" && (
-              <div className="border border-stone-200 rounded-xl p-8 shadow-inner bg-white max-w-lg mx-auto flex flex-col justify-between min-h-[460px]">
-                {/* Letter Header */}
-                <div>
-                  <div className="flex items-center justify-between border-b-2 border-stone-300 pb-3 mb-6">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full bg-petro-green flex items-center justify-center text-white font-black text-[10px]">
-                        PKG
-                      </div>
-                      <div className="text-left leading-none">
-                        <span className="text-[10px] font-black text-stone-855 tracking-wider">
-                          PETROKIMIA GRESIK
-                        </span>
-                        <br />
-                        <span className="text-[6px] font-bold text-stone-400 uppercase tracking-widest">
-                          Solusi Agroindustri
-                        </span>
-                      </div>
-                    </div>
-                    <span className="text-[8px] font-bold text-stone-450 tracking-wider uppercase">
-                      {tx("SOC Executive Summary", "SOC Executive Summary")}
-                    </span>
+              <div className="space-y-4">
+                {/* Format Preview Toggle (PDF Document / PPTX Slide) */}
+                <div className="flex justify-center">
+                  <div className="inline-flex p-1 bg-stone-100/90 rounded-xl border border-stone-200 shadow-inner gap-1">
+                    <button
+                      onClick={() => setPreviewFormat("pdf")}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                        previewFormat === "pdf"
+                          ? "bg-white text-stone-900 shadow-sm"
+                          : "text-stone-500 hover:text-stone-800"
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                      {tx("PDF Document View", "PDF Document View")}
+                    </button>
+                    <button
+                      onClick={() => setPreviewFormat("pptx")}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                        previewFormat === "pptx"
+                          ? "bg-white text-stone-900 shadow-sm"
+                          : "text-stone-500 hover:text-stone-800"
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                      {tx("PPTX Slide View", "PPTX Slide View")}
+                    </button>
                   </div>
+                </div>
 
-                  {/* Letter Content */}
-                  <div className="space-y-4 text-left">
+                {/* MODE 1: PDF DOCUMENT VIEW (A4 Portrait) */}
+                {previewFormat === "pdf" && (
+                  <div className="border border-stone-200/90 rounded-xl p-6 shadow-md bg-white max-w-lg mx-auto flex flex-col justify-between min-h-[480px] animate-fadeIn">
                     <div>
-                      <h4 className="text-[9px] text-petro-green font-black uppercase tracking-widest">
-                        {tx(getPageTitle(activePage), getPageTitle(activePage))}
-                      </h4>
-                      <h2 className="text-sm font-black text-stone-855 mt-1">
-                        {tx(
-                          "Monthly Security Operations Summary",
-                          "Monthly Security Operations Summary",
+                      {/* Document Kop */}
+                      <div className="flex items-center justify-between border-b-2 border-stone-300 pb-3 mb-5">
+                        <div className="flex items-center gap-2">
+                          <img
+                            src="/LOGO_PETRO_DANANTARA.png"
+                            alt="Petrokimia Danantara Logo"
+                            className="h-9 w-auto object-contain"
+                          />
+                        </div>
+                        <span className="text-[9px] font-black text-amber-600 tracking-wider uppercase">
+                          {tx("SOC Executive Summary", "SOC Executive Summary")}
+                        </span>
+                      </div>
+
+                      {/* Document Body */}
+                      <div className="space-y-4 text-left">
+                        <div>
+                          <h4 className="text-[10px] text-petro-green font-black uppercase tracking-widest">
+                            {tx(getPageTitle(activePage), getPageTitle(activePage))}
+                          </h4>
+                          <h2 className="text-sm font-black text-stone-855 mt-0.5">
+                            {tx(
+                              "Monthly Security Operations Summary",
+                              "Monthly Security Operations Summary",
+                            )}
+                          </h2>
+                          <p className="text-[8px] text-stone-400 font-bold mt-0.5">
+                            {tx("Period:", "Period:")} {periodStart || "2026-07-01"}{" "}
+                            {tx("to", "to")} {periodEnd || "2026-07-31"}
+                          </p>
+                        </div>
+
+                        {looksLikeHtml(getPageText(activePage)) ? (
+                          <div
+                            className="text-xs text-stone-600 font-semibold leading-relaxed rte-preview"
+                            dangerouslySetInnerHTML={{
+                              __html: getPageText(activePage),
+                            }}
+                          />
+                        ) : (
+                          <p className="text-xs text-stone-600 font-semibold leading-relaxed whitespace-pre-wrap">
+                            {getPageText(activePage)}
+                          </p>
                         )}
-                      </h2>
-                      <p className="text-[8px] text-stone-400 font-bold mt-0.5">
-                        {tx("Period:", "Period:")} {periodStart}{" "}
-                        {tx("to", "to")} {periodEnd}
-                      </p>
+
+                        {/* Highlights on Page 01 */}
+                        {activePage === "01" && (
+                          <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl text-left mt-4 space-y-1">
+                            <h5 className="text-[9px] font-black text-stone-755 uppercase tracking-wider">
+                              {tx("Key Highlights", "Key Highlights")}
+                            </h5>
+                            <div className="grid grid-cols-2 gap-4 pt-1">
+                              <div>
+                                <span className="text-[8px] text-stone-400 font-semibold uppercase">
+                                  {tx("Total Alerts", "Total Alerts")}
+                                </span>
+                                <p className="text-sm font-black text-stone-800">
+                                  {reportDetails?.total_records_parsed ?? 0}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-[8px] text-stone-400 font-semibold uppercase">
+                                  {tx("Critical Threats", "Critical Threats")}
+                                </span>
+                                <p className="text-sm font-black text-stone-800">
+                                  {reportDetails?.threat_count_critical ?? 0}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    {looksLikeHtml(getPageText(activePage)) ? (
-                      <div
-                        className="text-xs text-stone-600 font-semibold leading-relaxed rte-preview"
-                        dangerouslySetInnerHTML={{
-                          __html: getPageText(activePage),
-                        }}
-                      />
-                    ) : (
-                      <p className="text-xs text-stone-600 font-semibold leading-relaxed whitespace-pre-wrap">
-                        {getPageText(activePage)}
-                      </p>
-                    )}
+                    {/* Page Footer */}
+                    <div className="flex justify-between items-center border-t border-stone-200 pt-3 mt-6 text-[8px] text-stone-400">
+                      <span className="font-bold uppercase tracking-wider">
+                        {tx("PT Petrokimia Gresik • SOC Security Reports", "PT Petrokimia Gresik • SOC Security Reports")}
+                      </span>
+                      <span className="font-black text-stone-700">
+                        Page {activePage} of 07
+                      </span>
+                    </div>
+                  </div>
+                )}
 
-                    {/* Highlights on Step 1 */}
-                    {activePage === "01" && (
-                      <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl text-left mt-5 space-y-1">
-                        <h5 className="text-[9px] font-black text-stone-755 uppercase tracking-wider">
-                          {tx("Key Highlights", "Key Highlights")}
-                        </h5>
-                        <div className="grid grid-cols-2 gap-4 pt-1">
-                          <div>
-                            <span className="text-[8px] text-stone-400 font-semibold uppercase">
-                              {tx("Total Alerts", "Total Alerts")}
-                            </span>
-                            <p className="text-sm font-black text-stone-800">
-                              {reportDetails?.total_records_parsed ?? 177}{" "}
-                              <span className="text-[9px] text-emerald-600 font-bold">
-                                +18.2%
-                              </span>
-                            </p>
+                {/* MODE 2: PPTX PRESENTATION SLIDE VIEW (16:9 Landscape Widescreen) */}
+                {previewFormat === "pptx" && (
+                  <div className="border-2 border-stone-300 rounded-2xl shadow-xl bg-white max-w-lg mx-auto overflow-hidden aspect-[16/9] flex flex-col justify-between text-left relative animate-fadeIn">
+                    {activePage === "01" ? (
+                      /* Cover Slide Layout */
+                      <div className="h-full bg-gradient-to-br from-[#004D25] via-[#047857] to-[#013219] p-6 text-white flex flex-col justify-between relative">
+                        <div className="flex justify-between items-start">
+                          <div className="bg-white/95 backdrop-blur px-2.5 py-1 rounded-lg shadow-sm">
+                            <img
+                              src="/LOGO_PETRO_DANANTARA.png"
+                              alt="Petrokimia Danantara Logo"
+                              className="h-7 w-auto object-contain"
+                            />
                           </div>
-                          <div>
-                            <span className="text-[8px] text-stone-400 font-semibold uppercase">
-                              {tx("Critical Threats", "Critical Threats")}
-                            </span>
-                            <p className="text-sm font-black text-stone-800">
-                              {reportDetails?.threat_count_critical ?? 18}{" "}
-                              <span className="text-[9px] text-red-650 font-bold">
-                                +12.0%
-                              </span>
-                            </p>
+                          <span className="px-2 py-0.5 bg-amber-400/20 text-amber-300 border border-amber-300/30 text-[9px] font-black uppercase tracking-widest rounded-full">
+                            PPTX PRESENTATION SLIDE
+                          </span>
+                        </div>
+
+                        <div className="my-auto space-y-2">
+                          <h2 className="text-base font-black text-white leading-tight tracking-wide">
+                            MONTHLY SECURITY OPERATIONS SUMMARY
+                          </h2>
+                          <p className="text-[10px] text-stone-200 font-semibold">
+                            PT Petrokimia Gresik • SOC Security Operations
+                          </p>
+                          <p className="text-[9px] text-amber-300 font-bold">
+                            Period: {periodStart || "2026-07-01"} to {periodEnd || "2026-07-31"}
+                          </p>
+                        </div>
+
+                        <div className="flex justify-between items-center border-t border-white/20 pt-2 text-[8px] text-stone-300">
+                          <span>Confidential • Internal SOC Use Only</span>
+                          <span className="font-bold">Slide 01 of 07</span>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Content Slide Layout */
+                      <div className="h-full flex flex-col justify-between bg-stone-50">
+                        {/* Slide Top Bar */}
+                        <div className="bg-[#004D25] text-white px-5 py-2.5 flex items-center justify-between">
+                          <h3 className="text-xs font-black tracking-wide uppercase">
+                            {activePage} {getPageTitle(activePage)}
+                          </h3>
+                          <div className="bg-white px-2 py-0.5 rounded shadow-sm">
+                            <img
+                              src="/LOGO_PETRO_DANANTARA.png"
+                              alt="Petrokimia Danantara Logo"
+                              className="h-5 w-auto object-contain"
+                            />
                           </div>
+                        </div>
+
+                        {/* Slide Content Body */}
+                        <div className="p-5 flex-1 overflow-y-auto space-y-3">
+                          {looksLikeHtml(getPageText(activePage)) ? (
+                            <div
+                              className="text-[10px] text-stone-700 font-semibold leading-relaxed rte-preview"
+                              dangerouslySetInnerHTML={{
+                                __html: getPageText(activePage),
+                              }}
+                            />
+                          ) : (
+                            <p className="text-[10px] text-stone-700 font-semibold leading-relaxed whitespace-pre-wrap">
+                              {getPageText(activePage)}
+                            </p>
+                          )}
+
+                          {/* Threat Breakdown Bar on Slide */}
+                          <div className="bg-white border border-stone-200 p-3 rounded-xl">
+                            <span className="text-[9px] font-black text-stone-800 uppercase tracking-wide block mb-2">
+                              Threat Severity Summary
+                            </span>
+                            <div className="grid grid-cols-4 gap-2 text-center text-[8px] font-bold">
+                              <div className="bg-red-50 text-red-700 p-1.5 rounded border border-red-150">
+                                <span className="block text-[10px] font-black">
+                                  {reportDetails?.threat_count_critical ?? 0}
+                                </span>
+                                Critical
+                              </div>
+                              <div className="bg-amber-50 text-amber-700 p-1.5 rounded border border-amber-150">
+                                <span className="block text-[10px] font-black">
+                                  {reportDetails?.threat_count_high ?? 0}
+                                </span>
+                                High
+                              </div>
+                              <div className="bg-yellow-50 text-yellow-700 p-1.5 rounded border border-yellow-150">
+                                <span className="block text-[10px] font-black">
+                                  {reportDetails?.threat_count_medium ?? 0}
+                                </span>
+                                Medium
+                              </div>
+                              <div className="bg-emerald-50 text-emerald-700 p-1.5 rounded border border-emerald-150">
+                                <span className="block text-[10px] font-black">
+                                  {reportDetails?.threat_count_low ?? 0}
+                                </span>
+                                Low
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Slide Footer */}
+                        <div className="px-5 py-2 border-t border-stone-200 bg-white flex items-center justify-between text-[8px] text-stone-500 font-semibold">
+                          <span>PT Petrokimia Gresik • SOC Security Operations</span>
+                          <span className="font-bold text-stone-800">
+                            Slide {activePage} of 07
+                          </span>
                         </div>
                       </div>
                     )}
                   </div>
-                </div>
-
-                {/* Page Footer */}
-                <div className="flex justify-between items-center border-t border-stone-200 pt-3 mt-8 text-[8px] text-stone-400">
-                  <span className="font-bold uppercase tracking-wider">
-                    {tx("AI Security Reports", "AI Security Reports")}
-                  </span>
-                  <span className="font-black text-stone-700">
-                    {activePage}
-                  </span>
-                </div>
+                )}
               </div>
             )}
 

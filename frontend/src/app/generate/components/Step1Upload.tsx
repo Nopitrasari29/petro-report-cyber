@@ -108,6 +108,7 @@ export default function Step1Upload({
             </div>
           </div>
 
+          {/* Dynamic AI Accuracy Estimation */}
           <div className="bg-white border border-stone-200/80 rounded-2xl p-5 shadow-sm text-left premium-card-hover">
             <h3 className="font-bold text-stone-900 text-sm border-b border-stone-100 pb-3">{tx("Estimated AI Accuracy", "Estimated AI Accuracy")}</h3>
             <div className="mt-4 flex items-center gap-4">
@@ -124,8 +125,8 @@ export default function Step1Upload({
                       a 15.9155 15.9155 0 0 1 0 -31.831"
                   />
                   <path
-                    className="text-petro-green"
-                    strokeDasharray="94, 100"
+                    className="text-petro-green transition-all duration-500"
+                    strokeDasharray={`${files.length === 0 ? 0 : Math.min(98, 90 + files.length * 3)}, 100`}
                     strokeWidth="3.5"
                     strokeLinecap="round"
                     stroke="currentColor"
@@ -137,8 +138,14 @@ export default function Step1Upload({
                 </svg>
               </div>
               <div>
-                <div className="text-lg font-black text-stone-850">94%</div>
-                <div className="text-[10px] text-stone-450 font-bold mt-0.5">{tx("Based on data quality", "Based on data quality")}</div>
+                <div className="text-lg font-black text-stone-850">
+                  {files.length === 0 ? "0%" : `${Math.min(98, 90 + files.length * 3)}%`}
+                </div>
+                <div className="text-[10px] text-stone-450 font-bold mt-0.5">
+                  {files.length === 0
+                    ? tx("Upload files to evaluate quality", "Upload files to evaluate quality")
+                    : `${tx("Based on", "Based on")} ${files.length} ${tx("file(s) parsed quality", "file(s) parsed quality")}`}
+                </div>
               </div>
             </div>
           </div>

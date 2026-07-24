@@ -33,16 +33,20 @@ export default function GoogleSignInButton({ onSuccess, onError, loading }: Goog
     };
 
     const initializeGoogle = () => {
-      if (initialized || !(window as any).google) return;
-      initialized = true;
-
-      (window as any).google.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: handleCredentialResponse,
-      });
+      if (!(window as any).google?.accounts?.id) return;
 
       const buttonDiv = document.getElementById("google-signin-btn");
-      if (buttonDiv) {
+      if (!buttonDiv) return;
+
+      try {
+        (window as any).google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: handleCredentialResponse,
+          auto_select: false,
+          cancel_on_tap_outside: true,
+        });
+
+        buttonDiv.innerHTML = "";
         (window as any).google.accounts.id.renderButton(
           buttonDiv,
           {
@@ -53,6 +57,8 @@ export default function GoogleSignInButton({ onSuccess, onError, loading }: Goog
             shape: "rectangular"
           }
         );
+      } catch (e) {
+        console.warn("[GOOGLE AUTH] Exception initializing Google Sign-In:", e);
       }
     };
 

@@ -74,7 +74,9 @@ export default function LandingPage() {
       {/* ── HEADER NAVBAR ── */}
       <header className="w-full px-10 py-4.5 flex items-center justify-between border-b border-white/10 bg-petro-green text-white sticky top-0 z-40 shadow-md">
         <Link href="/" className="flex items-center gap-4 group">
-          <img src="/LOGO_PETRO.png" alt="Petrokimia Logo" className="h-12 lg:h-14 w-auto object-contain shrink-0 -my-2 lg:-my-3 transition-transform duration-300 group-hover:scale-105" />
+          <div className="bg-white px-3 py-1.5 rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-105">
+            <img src="/LOGO_PETRO_DANANTARA.png" alt="Petrokimia Danantara Logo" className="h-9 lg:h-10 w-auto object-contain shrink-0" />
+          </div>
           {/* Garis vertikal pembatas tipis */}
           <div className="h-10 w-[1px] bg-white/20 shrink-0 hidden sm:block" />
           <div className="flex flex-col text-left leading-none">
@@ -144,7 +146,9 @@ export default function LandingPage() {
       <footer className="border-t border-white/10 bg-petro-green py-12 px-8 text-white mt-auto">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-3">
-            <img src="/LOGO_PETRO.png" alt="Petrokimia Logo" className="h-12 lg:h-14 w-auto object-contain shrink-0 -my-2 lg:-my-3" />
+            <div className="bg-white px-3 py-1.5 rounded-xl shadow-sm">
+              <img src="/LOGO_PETRO_DANANTARA.png" alt="Petrokimia Danantara Logo" className="h-9 lg:h-10 w-auto object-contain shrink-0" />
+            </div>
             <div className="flex flex-col text-left leading-none">
               <span className="font-extrabold text-sm text-white tracking-wide">{tx("AI Security Reports", "AI Security Reports")}</span>
               <span className="text-[9px] text-white/60 font-semibold tracking-wider mt-0.5">{tx("PT Petrokimia Gresik", "PT Petrokimia Gresik")}</span>

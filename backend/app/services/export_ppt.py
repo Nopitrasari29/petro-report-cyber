@@ -47,8 +47,9 @@ class PPTXExporter:
         """
         prs = Presentation()
         
-        # Resolve logo path dari aset publik frontend
-        logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "LOGO_PETRO.png"))
+        logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "LOGO_PETRO_DANANTARA.png"))
+        if not os.path.exists(logo_path):
+            logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "LOGO_PETRO.png"))
         has_logo = os.path.exists(logo_path)
         
         # Palet Warna Korporat Resmi PT Petrokimia Gresik (GSM Aligned)
@@ -62,10 +63,10 @@ class PPTXExporter:
         blank_slide_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_slide_layout)
         
-        # Tambahkan logo Petrokimia di cover slide (jika ada)
+        # Tambahkan logo Petrokimia di cover slide (diperbesar agar menonjol)
         if has_logo:
             try:
-                slide.shapes.add_picture(logo_path, Inches(8.0), Inches(0.6), width=Inches(1.3))
+                slide.shapes.add_picture(logo_path, Inches(6.8), Inches(0.55), width=Inches(2.7))
             except Exception:
                 pass
         
@@ -112,9 +113,7 @@ class PPTXExporter:
         p_sub.line_spacing = 1.2
 
         # -------------------------------------------------------------
-        # Helper: garis aksen tipis + label kecil di bawah judul slide, supaya slide
-        # dengan konten pendek (1 paragraf singkat) tidak terlihat kosong/hampa seperti
-        # sebelumnya (teks nempel di atas, sisa area di bawahnya kosong total).
+        # Helper: garis aksen tipis + label kecil di bawah judul slide
         # -------------------------------------------------------------
         def add_title_rule(c_slide, y_top=Inches(1.35)):
             rule = c_slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.75), y_top, Inches(1.2), Pt(3))
@@ -123,8 +122,7 @@ class PPTXExporter:
             rule.line.fill.background()
 
         # -------------------------------------------------------------
-        # Helper: bar aksen vertikal tipis di sisi kiri blok konten, memberi struktur
-        # visual pada slide walau tinggi tulisan bervariasi (pendek/panjang).
+        # Helper: bar aksen vertikal tipis di sisi kiri blok konten
         # -------------------------------------------------------------
         def add_left_accent(c_slide, top, height):
             bar = c_slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.4), top, Pt(3.5), height)
@@ -136,17 +134,12 @@ class PPTXExporter:
         # Helper Fungsi untuk Membuat Slide Konten Generik
         # -------------------------------------------------------------
         def add_content_slide(title_text: str, content_htmls: list):
-            """
-            content_htmls: list berisi string HTML (hasil rich text editor) atau teks polos.
-            Setiap item dirender sebagai satu atau lebih paragraf berformat (bold/italic/underline/
-            warna/list/tabel) ke dalam satu text box, memakai html_to_pptx sebagai penerjemah.
-            """
             slide_layout = prs.slide_layouts[5]
             c_slide = prs.slides.add_slide(slide_layout)
 
             if has_logo:
                 try:
-                    c_slide.shapes.add_picture(logo_path, Inches(8.6), Inches(0.15), width=Inches(0.95))
+                    c_slide.shapes.add_picture(logo_path, Inches(7.6), Inches(0.12), width=Inches(1.9))
                 except Exception:
                     pass
 
@@ -162,8 +155,6 @@ class PPTXExporter:
             body_box = c_slide.shapes.add_textbox(body_left, body_top, body_width, body_height)
             btf = body_box.text_frame
             btf.word_wrap = True
-            # Konten pendek (mis. 1 paragraf ringkasan) jadi rata tengah vertikal di area
-            # kontennya, bukan nempel di baris paling atas dengan sisa ruang kosong di bawah.
             btf.vertical_anchor = MSO_ANCHOR.MIDDLE
 
             all_blocks = []
@@ -189,43 +180,48 @@ class PPTXExporter:
         # Slide 2: Ringkasan Eksekutif
         add_content_slide("Ringkasan Eksekutif", [exec_summary])
 
-        # Slide 3: Visualisasi Chart (jika chart tersedia)
-        if chart_data and PLOTLY_AVAILABLE and "data" in chart_data:
-            try:
-                png_bytes = ChartGenerator.render_png(chart_data, width=1000, height=560, scale=2)
-                img_io = io.BytesIO(png_bytes)
+        # Slide 3+: Visualisasi Chart (Render SEMUA chart yang ada)
+        charts_list = []
+        if isinstance(chart_data.get("charts"), list) and len(chart_data["charts"]) > 0:
+            charts_list = chart_data["charts"]
+        elif "data" in chart_data:
+            charts_list = [chart_data]
 
-                chart_slide_layout = prs.slide_layouts[6]  # blank layout
-                chart_slide = prs.slides.add_slide(chart_slide_layout)
+        if PLOTLY_AVAILABLE and charts_list:
+            for idx, c_dict in enumerate(charts_list):
+                try:
+                    png_bytes = ChartGenerator.render_png(c_dict, width=1000, height=560, scale=2)
+                    img_io = io.BytesIO(png_bytes)
 
-                # Tambahkan logo kecil di pojok kanan atas slide chart
-                if has_logo:
-                    try:
-                        chart_slide.shapes.add_picture(logo_path, Inches(8.4), Inches(0.15), width=Inches(0.95))
-                    except Exception:
-                        pass
+                    chart_slide_layout = prs.slide_layouts[6]
+                    chart_slide = prs.slides.add_slide(chart_slide_layout)
 
-                # Judul slide chart
-                title_box = chart_slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(0.7))
-                tf = title_box.text_frame
-                p = tf.paragraphs[0]
-                p.text = "Visualisasi Data Analitik"
-                p.font.size = Pt(28)
-                p.font.bold = True
-                p.font.color.rgb = GREEN
+                    if has_logo:
+                        try:
+                            chart_slide.shapes.add_picture(logo_path, Inches(7.6), Inches(0.12), width=Inches(1.9))
+                        except Exception:
+                            pass
 
-                # Tambahkan subjudul singkat untuk chart
-                p_sub = tf.add_paragraph()
-                p_sub.text = "Insight data otomatis untuk laporan SOC"
-                p_sub.font.size = Pt(14)
-                p_sub.font.bold = False
-                p_sub.font.color.rgb = DARK_TEXT
-                p_sub.space_before = Pt(6)
+                    chart_title_text = c_dict.get("layout", {}).get("title", {}).get("text", f"Visualisasi Data Analitik #{idx+1}")
 
-                # Tambahkan gambar chart
-                chart_slide.shapes.add_picture(img_io, Inches(0.5), Inches(1.2), Inches(9), Inches(5.2))
-            except Exception:
-                add_content_slide("Visualisasi Data", ["Chart tidak dapat dirender. Pastikan kaleido terinstall."])
+                    title_box = chart_slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(7.0), Inches(0.8))
+                    tf = title_box.text_frame
+                    p = tf.paragraphs[0]
+                    p.text = chart_title_text
+                    p.font.size = Pt(22)
+                    p.font.bold = True
+                    p.font.color.rgb = GREEN
+
+                    p_sub = tf.add_paragraph()
+                    p_sub.text = f"Visualisasi Grafik Analitis Keamanan #{idx+1} | PT Petrokimia Gresik"
+                    p_sub.font.size = Pt(11)
+                    p_sub.font.bold = False
+                    p_sub.font.color.rgb = DARK_TEXT
+                    p_sub.space_before = Pt(4)
+
+                    chart_slide.shapes.add_picture(img_io, Inches(0.5), Inches(1.2), Inches(9.0), Inches(5.2))
+                except Exception as chart_err:
+                    print(f"[PPT CHART WARNING] Gagal merender grafik slide #{idx+1}: {chart_err}")
 
         # Slide 4: Analisis Tren & Severity
         add_content_slide("Analisis Tren & Severity", [trend_analysis, severity_analysis])
@@ -240,7 +236,7 @@ class PPTXExporter:
         # Tambahkan logo kecil di pojok kanan atas slide rekomendasi
         if has_logo:
             try:
-                rec_slide.shapes.add_picture(logo_path, Inches(8.6), Inches(0.15), width=Inches(0.95))
+                rec_slide.shapes.add_picture(logo_path, Inches(7.6), Inches(0.12), width=Inches(1.9))
             except Exception:
                 pass
         

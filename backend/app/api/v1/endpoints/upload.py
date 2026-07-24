@@ -12,6 +12,7 @@ from app.crud.report import create_report
 from app.schemas.report import ReportCreate, ReportResponse
 from app.api.v1.endpoints.auth import get_current_user
 from app.services.chart_generator import ChartGenerator
+from app.utils.sanitizer import sanitize_for_json
 
 router = APIRouter()
 
@@ -79,7 +80,8 @@ def detect_period_from_file(
 
         try:
             parser = ParserFactory.get_parser(file.filename)
-            parsed_data = parser.parse(file.file)
+            raw_parsed = parser.parse(file.file)
+            parsed_data = sanitize_for_json(raw_parsed)
         finally:
             file.file.close()
 
@@ -121,9 +123,15 @@ def upload_security_file(
         p_end = None
         
         if period_start and period_start.strip():
-            p_start = datetime.strptime(period_start.strip(), "%Y-%m-%d").date()
+            try:
+                p_start = datetime.strptime(period_start.strip()[:10], "%Y-%m-%d").date()
+            except Exception:
+                p_start = None
         if period_end and period_end.strip():
-            p_end = datetime.strptime(period_end.strip(), "%Y-%m-%d").date()
+            try:
+                p_end = datetime.strptime(period_end.strip()[:10], "%Y-%m-%d").date()
+            except Exception:
+                p_end = None
 
         # Validasi ukuran berkas SEBELUM diproses, sesuai batas di settings (MAX_UPLOAD_SIZE_MB).
         # file.size tersedia dari Starlette tanpa perlu baca seluruh file ke memory dulu.
@@ -137,7 +145,8 @@ def upload_security_file(
         # Membaca file dan memanggil parser yang sesuai dari factory
         try:
             parser = ParserFactory.get_parser(file.filename)
-            parsed_data = parser.parse(file.file)
+            raw_parsed = parser.parse(file.file)
+            parsed_data = sanitize_for_json(raw_parsed)
         finally:
             # Pastikan file stream ditutup dengan aman setelah dibaca oleh parser
             file.file.close()

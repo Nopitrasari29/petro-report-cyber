@@ -257,11 +257,44 @@ export default function ReportDetailPage({
     }
   };
 
-  const handleDownloadPDF = () => {
-    window.open(
-      `http://localhost:8000/api/v1/history/${reportId}/pdf`,
-      "_blank",
-    );
+  const handleDownloadFile = async (format: "pdf" | "pptx") => {
+    if (!reportId) return;
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    if (!token) {
+      alert("Token akses tidak ditemukan. Silakan login ulang.");
+      return;
+    }
+
+    try {
+      const url = `http://localhost:8000/api/v1/history/${reportId}/${format}`;
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        let detail = `Gagal mengunduh file ${format.toUpperCase()}.`;
+        try {
+          const data = await res.json();
+          detail = data.detail || detail;
+        } catch {}
+        alert(detail);
+        return;
+      }
+
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = `soc_report_${reportId}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err: any) {
+      alert(err.message || "Terjadi kesalahan saat mengunduh file.");
+    }
   };
 
   if (loading) {
@@ -442,27 +475,50 @@ export default function ReportDetailPage({
               </div>
             </div>
 
-            {/* Download PDF button */}
-            <button
-              onClick={handleDownloadPDF}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-sm shadow-md transition-colors"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={2.5}
-                stroke="currentColor"
-                className="w-4 h-4"
+            {/* Download PDF & PPTX action buttons */}
+            <div className="flex items-center gap-2.5">
+              <button
+                onClick={() => handleDownloadFile("pdf")}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-xs shadow-md transition-all cursor-pointer"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
-                />
-              </svg>
-              {tx("Download", "Download")}
-            </button>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2.5}
+                  stroke="currentColor"
+                  className="w-4 h-4"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                  />
+                </svg>
+                {tx("Download PDF", "Download PDF")}
+              </button>
+
+              <button
+                onClick={() => handleDownloadFile("pptx")}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs shadow-md transition-all cursor-pointer"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2.5}
+                  stroke="currentColor"
+                  className="w-4 h-4"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                  />
+                </svg>
+                {tx("Download PPTX", "Download PPTX")}
+              </button>
+            </div>
           </div>
 
           {/* 3-Panel Split Layout */}

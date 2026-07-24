@@ -102,21 +102,20 @@ export default function GenerateReportPage() {
     fetchFormDefaults();
   }, []);
 
-  // New Figma Form States
   const [tone, setTone] = useState("Professional");
   const [defaultLevel, setDefaultLevel] = useState("Standard");
   const [sections, setSections] = useState<Record<string, boolean>>({
-    executiveSummary: true,
+    executiveSummary: false,
     threatOverview: false,
-    attackSummary: true,
-    vaptSummary: true,
-    bandwidthMonitoring: true,
-    threatHunting: true,
+    attackSummary: false,
+    vaptSummary: false,
+    bandwidthMonitoring: false,
+    threatHunting: false,
     conclusionRecommendation: false,
   });
   const [exportFormats, setExportFormats] = useState<Record<string, boolean>>({
-    pdf: true,
-    pptx: true,
+    pdf: false,
+    pptx: false,
   });
 
   // Stepper Status (Step 3)
@@ -327,7 +326,29 @@ export default function GenerateReportPage() {
   const handleStartGeneration = async () => {
     if (!periodStart || !periodEnd) {
       setErrorMsg(
-        "Periode laporan belum terisi. Silakan isi Report Period secara manual di Step 2.",
+        "Periode laporan belum terisi. Silakan isi Report Period secara manual di Step 2."
+      );
+      return;
+    }
+
+    const hasExportFormat = exportFormats.pdf || exportFormats.pptx;
+    const hasSection = Object.values(sections).some((val) => val === true);
+
+    if (!hasExportFormat) {
+      alert(
+        tx(
+          "Silakan pilih setidaknya satu format export (PDF atau PowerPoint).",
+          "Silakan pilih setidaknya satu format export (PDF atau PowerPoint).",
+        ),
+      );
+      return;
+    }
+    if (!hasSection) {
+      alert(
+        tx(
+          "Silakan pilih setidaknya satu section laporan untuk dimasukkan.",
+          "Silakan pilih setidaknya satu section laporan untuk dimasukkan.",
+        ),
       );
       return;
     }
@@ -383,9 +404,16 @@ export default function GenerateReportPage() {
       });
 
       if (!uploadRes.ok) {
-        throw new Error(
-          "Gagal mengunggah konfigurasi laporan siber ke server.",
-        );
+        let detail = "Gagal mengunggah konfigurasi laporan siber ke server.";
+        if (uploadRes.status === 401) {
+          detail = "Sesi login Anda telah kedaluwarsa. Silakan login kembali.";
+        } else {
+          try {
+            const errData = await uploadRes.json();
+            detail = errData.detail || detail;
+          } catch {}
+        }
+        throw new Error(detail);
       }
 
       const reportData = await uploadRes.json();
@@ -402,7 +430,12 @@ export default function GenerateReportPage() {
       );
 
       if (!generateRes.ok) {
-        throw new Error("Gagal memicu pemrosesan AI lokal (Ollama).");
+        let detail = "Gagal memicu pemrosesan AI lokal (Ollama).";
+        try {
+          const errData = await generateRes.json();
+          detail = errData.detail || detail;
+        } catch {}
+        throw new Error(detail);
       }
 
       const detailRes = await fetch(

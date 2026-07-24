@@ -13,7 +13,11 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
-  const [loading, setLoading] = useState(false);
+
+  // REVISI: Memisahkan loading form manual dan loading Google OAuth
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+
   const [error, setError] = useState("");
   const [unverifiedEmail, setUnverifiedEmail] = useState("");
   const [resendMessage, setResendMessage] = useState("");
@@ -39,7 +43,7 @@ export default function LoginPage() {
     };
   }, []);
 
-  // Load saved credentials on mount
+  // Memuat kredensial tersimpan saat pertama kali dimuat
   useEffect(() => {
     if (typeof window !== "undefined") {
       const savedEmail = localStorage.getItem("saved_email");
@@ -53,10 +57,10 @@ export default function LoginPage() {
 
   const handleGoogleSuccess = async (googleToken: string) => {
     setError("");
-    setLoading(true);
+    setGoogleLoading(true);
     try {
       const res = await fetch(
-        "http://localhost:8000/api/v1/auth/google-login",
+        "http://127.0.0.1:8000/api/v1/auth/google-login",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -65,11 +69,13 @@ export default function LoginPage() {
       );
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.detail || "Gagal masuk menggunakan akun Google.");
+        setError(data.detail || "Gagal masuk menggunakan akun Google.");
+        setGoogleLoading(false);
+        return;
       }
       localStorage.setItem("token", data.access_token);
 
-      // Decode Google JWT email to save email for autofill
+      // Decode Google JWT email untuk autofill
       try {
         const base64Url = googleToken.split(".")[1];
         let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
@@ -102,9 +108,9 @@ export default function LoginPage() {
       router.push("/generate");
     } catch (err: any) {
       console.error("[GOOGLE AUTH] Exception saat Google login:", err);
-      setError(err.message);
+      setError(err.message || "Gagal melakukan login dengan Google.");
     } finally {
-      setLoading(false);
+      setGoogleLoading(false);
     }
   };
 
@@ -113,21 +119,29 @@ export default function LoginPage() {
     setError("");
     setUnverifiedEmail("");
     setResendMessage("");
-    setLoading(true);
+    setIsSubmitting(true);
+
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
+      // Menggunakan IP 127.0.0.1 secara konsisten
+      const res = await fetch("http://127.0.0.1:8000/api/v1/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
+
       const data = await res.json();
+
       if (!res.ok) {
         const errMsg = data.detail || "Email atau password salah.";
         if (res.status === 403 && errMsg.includes("belum diverifikasi")) {
           setUnverifiedEmail(email);
         }
-        throw new Error(errMsg);
+        setError(errMsg);
+        setIsSubmitting(false);
+        return;
       }
+
+      // Simpan token akses JWT
       localStorage.setItem("token", data.access_token);
 
       // Simpan/hapus email berdasarkan "Remember Me"
@@ -139,12 +153,12 @@ export default function LoginPage() {
         localStorage.removeItem("remember_me");
       }
 
-      router.push("/generate");
+      window.location.href = "/generate";
     } catch (err: any) {
       console.error("[LOGIN] Exception saat login:", err);
-      setError(err.message);
+      setError(err.message || "Gagal terhubung ke server.");
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -153,7 +167,7 @@ export default function LoginPage() {
     setResendMessage("");
     try {
       const res = await fetch(
-        "http://localhost:8000/api/v1/auth/resend-verification",
+        "http://127.0.0.1:8000/api/v1/auth/resend-verification",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -197,7 +211,7 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {/* Form */}
+          {/* Form Manual */}
           <LoginForm
             email={email}
             setEmail={setEmail}
@@ -205,7 +219,7 @@ export default function LoginPage() {
             setPassword={setPassword}
             rememberMe={rememberMe}
             setRememberMe={setRememberMe}
-            loading={loading}
+            loading={isSubmitting} // Hanya menggunakan status loading form manual
             error={error}
             unverifiedEmail={unverifiedEmail}
             resendMessage={resendMessage}
@@ -215,21 +229,21 @@ export default function LoginPage() {
             tx={tx}
           />
 
-          {/* Divider */}
+          {/* Pembatas */}
           <div className="flex items-center gap-3 my-5 animate-fadeIn delay-300">
             <div className="flex-1 h-px bg-stone-200"></div>
             <span className="text-xs text-stone-400 font-medium">or</span>
             <div className="flex-1 h-px bg-stone-200"></div>
           </div>
 
-          {/* Google Button */}
+          {/* Tombol Google */}
           <GoogleSignInButton
             onSuccess={handleGoogleSuccess}
             onError={(msg) => setError(msg)}
-            loading={loading}
+            loading={googleLoading}
           />
 
-          {/* Footer link */}
+          {/* Tautan Pendaftaran */}
           <p className="text-center text-sm text-stone-500 font-medium mt-6">
             {tx("Don't have an account?", "Don't have an account?")}{" "}
             <Link

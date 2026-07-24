@@ -74,14 +74,33 @@ export default function RegisterPage() {
       const data = await res.json();
       if (!res.ok) {
         console.error("[REGISTER] ❌ Pendaftaran gagal. Detail error backend:", data);
-        throw new Error(data.detail || "Pendaftaran gagal. Silakan coba lagi.");
+        setError(data.detail || "Pendaftaran gagal. Silakan coba lagi.");
+        setLoading(false);
+        return;
       }
-      console.log("[REGISTER] ✅ Pendaftaran berhasil! Lanjut ke Step 2.");
+      console.log("[REGISTER] ✅ Pendaftaran berhasil!");
+      
+      // Otomatis login jika akun langsung terverifikasi (mode lokal)
+      try {
+        const loginRes = await fetch("http://localhost:8000/api/v1/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        if (loginRes.ok) {
+          const loginData = await loginRes.json();
+          localStorage.setItem("token", loginData.access_token);
+          window.location.href = "/generate";
+          return;
+        }
+      } catch (e) {
+        console.warn("[REGISTER] Auto-login skipped:", e);
+      }
+
       setStep(2);
     } catch (err: any) {
       console.error("[REGISTER] ❌ Terjadi exception saat registrasi:", err);
       setError(err.message);
-    } finally {
       setLoading(false);
     }
   };

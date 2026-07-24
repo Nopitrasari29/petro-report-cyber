@@ -37,9 +37,9 @@ interface HistoryTableProps {
   indexOfLastRow: number;
   getStatusDetails: (status: string) => { label: string; classes: string };
   formatPeriod: (start: string, end: string) => string;
-  getDataTypeLabel: (type: string) => string;
+  getDataTypeLabel: (item: any) => string;
   formatDateString: (date: string) => string;
-  handleDownloadPDF: (id: number) => void;
+  handleDownloadFile: (id: number, format: "pdf" | "pptx") => void;
   handleDelete: (id: number) => void;
 }
 
@@ -58,7 +58,7 @@ export default function HistoryTable({
   formatPeriod,
   getDataTypeLabel,
   formatDateString,
-  handleDownloadPDF,
+  handleDownloadFile,
   handleDelete,
 }: HistoryTableProps) {
   const [mounted, setMounted] = useState(false);
@@ -167,8 +167,8 @@ export default function HistoryTable({
                     </td>
                     <td className="py-4 px-6 text-left">
                       {tx(
-                        getDataTypeLabel(item.data_type),
-                        getDataTypeLabel(item.data_type),
+                        getDataTypeLabel(item),
+                        getDataTypeLabel(item),
                       )}
                     </td>
                     {/* REVISI: Mengganti nama statis dummy "Rafika" menjadi nama pembuat riil dari DB secara dinamis */}
@@ -217,11 +217,11 @@ export default function HistoryTable({
                         </svg>
                       </Link>
 
-                      {/* Download Action */}
+                      {/* Download PDF Action */}
                       <button
-                        onClick={() => handleDownloadPDF(item.id)}
-                        className="p-1.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-600 hover:text-stone-800 transition-colors shadow-sm cursor-pointer"
-                        title={tx("Download PDF", "Download PDF")}
+                        onClick={() => handleDownloadFile(item.id, "pdf")}
+                        className="px-2 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-extrabold text-[10px] transition-colors shadow-sm cursor-pointer flex items-center gap-1"
+                        title={tx("Download PDF Report", "Download PDF Report")}
                       >
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
@@ -237,6 +237,30 @@ export default function HistoryTable({
                             d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
                           />
                         </svg>
+                        PDF
+                      </button>
+
+                      {/* Download PPTX Action */}
+                      <button
+                        onClick={() => handleDownloadFile(item.id, "pptx")}
+                        className="px-2 py-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 font-extrabold text-[10px] transition-colors shadow-sm cursor-pointer flex items-center gap-1"
+                        title={tx("Download PPTX Presentation", "Download PPTX Presentation")}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          strokeWidth={2.2}
+                          stroke="currentColor"
+                          className="w-3.5 h-3.5"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                          />
+                        </svg>
+                        PPT
                       </button>
 
                       {/* Edit Action */}

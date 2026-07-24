@@ -1,5 +1,6 @@
+# backend/app/core/config.py
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+from typing import List, Set
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -15,24 +16,32 @@ class Settings(BaseSettings):
     # TIDAK ada default — wajib diisi lewat .env, biar app nolak start kalau lupa di-set.
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 60
+    JWT_EXPIRE_MINUTES: int = 1440 # 24 jam untuk kenyamanan pengujian lokal
 
-    # CORS — daftar origin frontend yang diizinkan. Default cuma localhost untuk dev;
-    # isi lewat .env (format JSON array) kalau deploy ke domain lain, misal:
-    # BACKEND_CORS_ORIGINS=["https://reports.petrokimia-gresik.internal"]
-    BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+    # CORS — daftar origin frontend yang diizinkan (Lokal & IP 127.0.0.1)
+    BACKEND_CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+    ]
 
     # AI Engine (Local LLM)
     OLLAMA_HOST: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen3:8b"
 
+    @property
+    def OLLAMA_BASE_URL(self) -> str:
+        """Alias kompatibilitas jika ada modul yang memanggil OLLAMA_BASE_URL"""
+        return self.OLLAMA_HOST
+
     # Storage
     UPLOAD_DIR: str = "storage/uploads"
     EXPORT_DIR: str = "storage/exports"
 
-    # Upload constraints (Tier 1 — CSV, JSON, Excel)
-    ALLOWED_EXTENSIONS: set[str] = {".csv", ".json", ".xlsx", ".xls"}
-    MAX_UPLOAD_SIZE_MB: int = 25
+    # Upload constraints (Mendukung .csv, .json, .xlsx, .xls, dan .pdf)
+    ALLOWED_EXTENSIONS: Set[str] = {".csv", ".json", ".xlsx", ".xls", ".pdf"}
+    MAX_UPLOAD_SIZE_MB: int = 100
 
     # Ambang waktu proses analisis AI (detik) yang dianggap "SLA met" di dashboard/riwayat.
     SLA_THRESHOLD_SECONDS: int = 25

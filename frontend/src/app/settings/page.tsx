@@ -86,6 +86,11 @@ export default function SettingsPage() {
     loadData();
     if (typeof window !== "undefined") {
       window.document.documentElement.classList.remove("dark");
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      if (tabParam === "account" || tabParam === "general") {
+        setActiveTab(tabParam);
+      }
     }
   }, []);
 
@@ -124,9 +129,29 @@ export default function SettingsPage() {
       setLanguage("English");
       setNotifySuccess(true);
       setNotifyFailed(true);
+
+      const token = localStorage.getItem("token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      await fetch("http://localhost:8000/api/v1/settings/profile", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({
+          language: "English",
+          notify_report_success: true,
+          notify_report_failed: true,
+        }),
+      });
+
+      setUiLanguage("English");
+      window.dispatchEvent(new Event("ui_language_changed"));
       setSuccessMsg("Preferensi berhasil diatur ulang ke default.");
-      setTimeout(() => setSuccessMsg(""), 3000);
+      setTimeout(() => setSuccessMsg(""), 3500);
     } catch (e) {
+      console.error(e);
       setErrorMsg("Gagal mengatur ulang preferensi.");
     }
   };

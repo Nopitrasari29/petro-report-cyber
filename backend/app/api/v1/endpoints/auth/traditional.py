@@ -39,7 +39,11 @@ async def register(user_in: UserCreate, db: Session = Depends(get_db)):
     
     # 2. Buat token verifikasi dengan format penulisan tanggal seragam (tz-naive UTC)
     token = secrets.token_urlsafe(32)
-    new_user.is_verified = False
+    from app.core.config import settings
+    if not settings.SMTP_HOST:
+        new_user.is_verified = True
+    else:
+        new_user.is_verified = False
     new_user.verification_token = token
     new_user.verification_token_expiry = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=24)
     

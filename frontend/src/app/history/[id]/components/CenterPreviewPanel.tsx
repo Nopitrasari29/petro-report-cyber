@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { t } from "@/utils/i18n";
+import ReportChartPanel from "@/app/generate/components/ReportChartPanel";
 
 interface ReportDetails {
   id: number;
@@ -48,6 +49,7 @@ export default function CenterPreviewPanel({
   isSaving,
   saveSuccess,
 }: CenterPreviewPanelProps) {
+  const [previewFormat, setPreviewFormat] = useState<"pdf" | "pptx">("pdf");
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
@@ -116,84 +118,229 @@ export default function CenterPreviewPanel({
       <div className="flex-1 overflow-y-auto p-6 bg-[#EFECE5]/60">
         {/* PREVIEW TAB */}
         {activeTab === "preview" && (
-          <div className="max-w-[420px] mx-auto bg-white border border-stone-200/80 rounded-lg shadow p-6 min-h-[580px] text-left relative flex flex-col justify-between">
-            <div>
-              {/* Document Kop */}
-              <div className="flex justify-between items-start border-b border-stone-150 pb-4">
-                <img
-                  src="/soc-logo.png"
-                  alt="Petrokimia Logo"
-                  className="w-20 h-auto object-contain"
-                />
-                <span className="text-[10px] font-black text-amber-500 uppercase tracking-widest mt-1">
-                  {tx("SOC Executive Summary", "SOC Executive Summary")}
-                </span>
+          <div className="space-y-4">
+            {/* Format Preview Toggle (PDF / PPTX) */}
+            <div className="flex justify-center">
+              <div className="inline-flex p-1 bg-white rounded-xl border border-stone-200/80 shadow-sm gap-1">
+                <button
+                  onClick={() => setPreviewFormat("pdf")}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
+                    previewFormat === "pdf"
+                      ? "bg-petro-green text-white shadow-sm"
+                      : "text-stone-500 hover:text-stone-800"
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                  {tx("PDF Document View", "PDF Document View")}
+                </button>
+                <button
+                  onClick={() => setPreviewFormat("pptx")}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
+                    previewFormat === "pptx"
+                      ? "bg-petro-green text-white shadow-sm"
+                      : "text-stone-500 hover:text-stone-800"
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                  {tx("PPTX Slide View", "PPTX Slide View")}
+                </button>
               </div>
+            </div>
 
-              {/* Document Title */}
-              <h4 className="text-lg font-black text-stone-855 mt-6 leading-tight">
-                {tx(
-                  "Monthly Security Operations Summary",
-                  "Monthly Security Operations Summary",
-                )}
-              </h4>
-              <p className="text-[10px] text-amber-605 font-extrabold mt-1">
-                July 2026
-              </p>
+            {/* MODE 1: PDF DOCUMENT VIEW */}
+            {previewFormat === "pdf" && (
+              <div className="max-w-[420px] mx-auto bg-white border border-stone-200/80 rounded-lg shadow p-6 min-h-[580px] text-left relative flex flex-col justify-between animate-fadeIn">
+                <div>
+                  {/* Document Kop */}
+                  <div className="flex justify-between items-center border-b border-stone-150 pb-4">
+                    <img
+                      src="/LOGO_PETRO_DANANTARA.png"
+                      alt="Petrokimia Danantara Logo"
+                      className="h-9 w-auto object-contain"
+                    />
+                    <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest">
+                      {tx("SOC Executive Summary", "SOC Executive Summary")}
+                    </span>
+                  </div>
 
-              {/* Section heading & Narrative content */}
-              <div className="mt-6">
-                <h5 className="text-xs font-black text-stone-855 border-b border-stone-100 pb-1.5 capitalize">
-                  {tx(getPageTitle(activePage), getPageTitle(activePage))}
-                </h5>
-                <p className="text-[10px] text-stone-600 mt-3 font-semibold leading-relaxed whitespace-pre-wrap">
-                  {getPageText(activePage)}
-                </p>
-              </div>
+                  {/* Document Title */}
+                  <h4 className="text-base font-black text-stone-855 mt-5 leading-tight">
+                    {tx(
+                      "Monthly Security Operations Summary",
+                      "Monthly Security Operations Summary",
+                    )}
+                  </h4>
+                  <p className="text-[10px] text-amber-605 font-extrabold mt-1">
+                    {report.period_start || "July 2026"} to {report.period_end || "July 2026"}
+                  </p>
 
-              {/* Key Highlights box on page 01 */}
-              {activePage === "01" && (
-                <div className="mt-6 bg-stone-50/80 border border-stone-200/60 rounded-xl p-4">
-                  <h6 className="text-[10px] font-black text-stone-800 uppercase tracking-wide">
-                    {tx("Key Highlights", "Key Highlights")}
-                  </h6>
-                  <div className="grid grid-cols-2 gap-3 mt-3">
-                    <div className="bg-white border border-stone-150 p-2.5 rounded-lg">
-                      <span className="text-[8px] font-bold text-stone-400 uppercase flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
-                        {tx("Total Reports", "Total Reports")}
-                      </span>
-                      <div className="text-base font-black text-stone-850 mt-1">
-                        {report.total_records_parsed ?? 26}
+                  {/* Section heading & Narrative content */}
+                  <div className="mt-5">
+                    <h5 className="text-xs font-black text-stone-855 border-b border-stone-100 pb-1.5 capitalize">
+                      {tx(getPageTitle(activePage), getPageTitle(activePage))}
+                    </h5>
+                    <p className="text-[10px] text-stone-600 mt-3 font-semibold leading-relaxed whitespace-pre-wrap">
+                      {getPageText(activePage)}
+                    </p>
+                  </div>
+
+                  {/* Key Highlights box on page 01 */}
+                  {activePage === "01" && (
+                    <div className="mt-5 bg-stone-50/80 border border-stone-200/60 rounded-xl p-4">
+                      <h6 className="text-[10px] font-black text-stone-800 uppercase tracking-wide">
+                        {tx("Key Highlights", "Key Highlights")}
+                      </h6>
+                      <div className="grid grid-cols-2 gap-3 mt-3">
+                        <div className="bg-white border border-stone-150 p-2.5 rounded-lg">
+                          <span className="text-[8px] font-bold text-stone-400 uppercase flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+                            {tx("Total Reports", "Total Reports")}
+                          </span>
+                          <div className="text-base font-black text-stone-850 mt-1">
+                            {report.total_records_parsed ?? 0}
+                          </div>
+                        </div>
+                        <div className="bg-white border border-stone-150 p-2.5 rounded-lg">
+                          <span className="text-[8px] font-bold text-stone-400 uppercase flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-600"></span>
+                            {tx("Critical Incidents", "Critical Incidents")}
+                          </span>
+                          <div className="text-base font-black text-stone-850 mt-1">
+                            {report.threat_count_critical ?? 0}
+                          </div>
+                        </div>
                       </div>
-                      <span className="text-[8px] text-emerald-600 font-bold mt-1 block">
-                        18.2% {tx("vs last month", "vs last month")}
+                    </div>
+                  )}
+
+                  {/* Threat Severity Chart in Preview */}
+                  {(activePage === "02" || activePage === "03" || activePage === "04" || activePage === "05") && (
+                    <div className="mt-5 bg-stone-50/80 border border-stone-200/60 rounded-xl p-4">
+                      <h6 className="text-[10px] font-black text-stone-800 uppercase tracking-wide border-b border-stone-200/60 pb-2">
+                        {tx("Severity Threat Incidents Breakdown", "Severity Threat Incidents Breakdown")}
+                      </h6>
+                      <div className="mt-4 flex items-end justify-around h-28 border-b border-stone-200 pb-2">
+                        <div className="flex flex-col items-center">
+                          <span className="text-[9px] font-black text-red-600 mb-1">{report.threat_count_critical ?? 0}</span>
+                          <div style={{ height: `${Math.min((report.threat_count_critical ?? 0) * 2.5, 70)}px` }} className="w-6 bg-red-500 rounded-t shadow-sm"></div>
+                          <span className="text-[8px] font-bold text-stone-500 mt-1">Crit</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[9px] font-black text-amber-600 mb-1">{report.threat_count_high ?? 0}</span>
+                          <div style={{ height: `${Math.min((report.threat_count_high ?? 0) * 1.2, 70)}px` }} className="w-6 bg-amber-500 rounded-t shadow-sm"></div>
+                          <span className="text-[8px] font-bold text-stone-500 mt-1">High</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[9px] font-black text-yellow-600 mb-1">{report.threat_count_medium ?? 0}</span>
+                          <div style={{ height: `${Math.min((report.threat_count_medium ?? 0) * 0.6, 70)}px` }} className="w-6 bg-yellow-400 rounded-t shadow-sm"></div>
+                          <span className="text-[8px] font-bold text-stone-500 mt-1">Med</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[9px] font-black text-emerald-600 mb-1">{report.threat_count_low ?? 0}</span>
+                          <div style={{ height: `${Math.min((report.threat_count_low ?? 0) * 0.3, 70)}px` }} className="w-6 bg-emerald-500 rounded-t shadow-sm"></div>
+                          <span className="text-[8px] font-bold text-stone-500 mt-1">Low</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer Kop */}
+                <div className="flex justify-between items-center text-[8px] font-bold text-stone-400 border-t border-stone-100 pt-4 mt-6">
+                  <span>{tx("PT Petrokimia Gresik • SOC Security Reports", "PT Petrokimia Gresik • SOC Security Reports")}</span>
+                  <span>
+                    {tx("Page", "Page")} {activePage}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* MODE 2: PPTX SLIDE VIEW */}
+            {previewFormat === "pptx" && (
+              <div className="max-w-[420px] mx-auto border-2 border-stone-300 rounded-xl shadow-lg bg-white overflow-hidden aspect-[16/9] flex flex-col justify-between text-left relative animate-fadeIn">
+                {activePage === "01" ? (
+                  /* Cover Slide */
+                  <div className="h-full bg-gradient-to-br from-[#004D25] via-[#047857] to-[#013219] p-5 text-white flex flex-col justify-between relative">
+                    <div className="flex justify-between items-start">
+                      <div className="bg-white/95 backdrop-blur px-2 py-0.5 rounded shadow-sm">
+                        <img
+                          src="/LOGO_PETRO_DANANTARA.png"
+                          alt="Petrokimia Danantara Logo"
+                          className="h-6 w-auto object-contain"
+                        />
+                      </div>
+                      <span className="px-2 py-0.5 bg-amber-400/20 text-amber-300 text-[8px] font-black uppercase tracking-widest rounded-full">
+                        PPTX SLIDE
                       </span>
                     </div>
-                    <div className="bg-white border border-stone-150 p-2.5 rounded-lg">
-                      <span className="text-[8px] font-bold text-stone-400 uppercase flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-600"></span>
-                        {tx("Critical Incidents", "Critical Incidents")}
-                      </span>
-                      <div className="text-base font-black text-stone-850 mt-1">
-                        {report.threat_count_critical ?? 18}
-                      </div>
-                      <span className="text-[8px] text-red-650/80 font-bold mt-1 block">
-                        12.0% {tx("vs last month", "vs last month")}
-                      </span>
+
+                    <div className="my-auto space-y-1">
+                      <h2 className="text-sm font-black text-white leading-snug tracking-wide">
+                        MONTHLY SECURITY OPERATIONS SUMMARY
+                      </h2>
+                      <p className="text-[9px] text-stone-200 font-semibold">
+                        PT Petrokimia Gresik • SOC Security Operations
+                      </p>
+                      <p className="text-[8px] text-amber-300 font-bold">
+                        Period: {report.period_start || "July 2026"} to {report.period_end || "July 2026"}
+                      </p>
+                    </div>
+
+                    <div className="flex justify-between items-center border-t border-white/20 pt-1.5 text-[7px] text-stone-300">
+                      <span>Internal SOC Use Only</span>
+                      <span className="font-bold">Slide 01 of 07</span>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
+                ) : (
+                  /* Content Slide */
+                  <div className="h-full flex flex-col justify-between bg-stone-50">
+                    <div className="bg-[#004D25] text-white px-4 py-2 flex items-center justify-between">
+                      <h3 className="text-[11px] font-black tracking-wide uppercase truncate">
+                        {activePage} {getPageTitle(activePage)}
+                      </h3>
+                      <div className="bg-white px-1.5 py-0.5 rounded shrink-0">
+                        <img
+                          src="/LOGO_PETRO_DANANTARA.png"
+                          alt="Petrokimia Danantara Logo"
+                          className="h-4 w-auto object-contain"
+                        />
+                      </div>
+                    </div>
 
-            {/* Footer Kop */}
-            <div className="flex justify-between items-center text-[8px] font-bold text-stone-400 border-t border-stone-100 pt-4 mt-8">
-              <span>{tx("AI Security Reports", "AI Security Reports")}</span>
-              <span>
-                {tx("Page", "Page")} {activePage}
-              </span>
-            </div>
+                    <div className="p-4 flex-1 overflow-y-auto space-y-2">
+                      <p className="text-[9px] text-stone-700 font-semibold leading-relaxed whitespace-pre-wrap">
+                        {getPageText(activePage)}
+                      </p>
+
+                      <div className="bg-white border border-stone-200 p-2 rounded-lg">
+                        <span className="text-[8px] font-black text-stone-800 uppercase tracking-wide block mb-1">
+                          Threat Severity Breakdown
+                        </span>
+                        <div className="grid grid-cols-4 gap-1 text-center text-[7px] font-bold">
+                          <div className="bg-red-50 text-red-700 p-1 rounded">
+                            <span className="block text-[9px] font-black">{report.threat_count_critical ?? 18}</span> Crit
+                          </div>
+                          <div className="bg-amber-50 text-amber-700 p-1 rounded">
+                            <span className="block text-[9px] font-black">{report.threat_count_high ?? 56}</span> High
+                          </div>
+                          <div className="bg-yellow-50 text-yellow-700 p-1 rounded">
+                            <span className="block text-[9px] font-black">{report.threat_count_medium ?? 102}</span> Med
+                          </div>
+                          <div className="bg-emerald-50 text-emerald-700 p-1 rounded">
+                            <span className="block text-[9px] font-black">{report.threat_count_low ?? 210}</span> Low
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="px-4 py-1.5 border-t border-stone-200 bg-white flex items-center justify-between text-[7px] text-stone-500 font-semibold">
+                      <span>PT Petrokimia Gresik • SOC Operations</span>
+                      <span className="font-bold text-stone-800">Slide {activePage} of 07</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -266,111 +413,11 @@ export default function CenterPreviewPanel({
 
         {/* CHARTS TAB */}
         {activeTab === "charts" && (
-          <div className="w-full max-w-[450px] mx-auto bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm text-left">
-            <h5 className="font-extrabold text-stone-855 text-xs border-b border-stone-100 pb-3 uppercase tracking-wide">
-              {tx(
-                "Severity Threat Incidents Distribution",
-                "Severity Threat Incidents Distribution",
-              )}
+          <div className="w-full text-left">
+            <h5 className="font-extrabold text-stone-855 text-xs mb-3 uppercase tracking-wide">
+              {tx("Chart Visualization", "Chart Visualization")}
             </h5>
-
-            {/* Beautiful SVG charts representation */}
-            <div className="mt-6 flex flex-col items-center">
-              <div className="w-full h-48 flex items-end justify-around border-b border-l border-stone-200/80 pb-2 pl-2">
-                {/* Critical bar */}
-                <div className="flex flex-col items-center w-12 group">
-                  <span className="text-[10px] font-black text-red-600 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {report.threat_count_critical ?? 18}
-                  </span>
-                  <div
-                    style={{
-                      height: `${Math.min((report.threat_count_critical ?? 18) * 3, 130)}px`,
-                    }}
-                    className="w-7 bg-red-500 rounded-t-md hover:bg-red-600 transition-all cursor-pointer shadow-sm"
-                  ></div>
-                  <span className="text-[9px] font-bold text-stone-500 mt-2">
-                    {tx("Critical", "Critical")}
-                  </span>
-                </div>
-
-                {/* High bar */}
-                <div className="flex flex-col items-center w-12 group">
-                  <span className="text-[10px] font-black text-amber-600 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {report.threat_count_high ?? 56}
-                  </span>
-                  <div
-                    style={{
-                      height: `${Math.min((report.threat_count_high ?? 56) * 1.5, 130)}px`,
-                    }}
-                    className="w-7 bg-amber-500 rounded-t-md hover:bg-amber-600 transition-all cursor-pointer shadow-sm"
-                  ></div>
-                  <span className="text-[9px] font-bold text-stone-500 mt-2">
-                    {tx("High", "High")}
-                  </span>
-                </div>
-
-                {/* Medium bar */}
-                <div className="flex flex-col items-center w-12 group">
-                  <span className="text-[10px] font-black text-yellow-600 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {report.threat_count_medium ?? 102}
-                  </span>
-                  <div
-                    style={{
-                      height: `${Math.min((report.threat_count_medium ?? 102) * 0.8, 130)}px`,
-                    }}
-                    className="w-7 bg-yellow-400 rounded-t-md hover:bg-yellow-500 transition-all cursor-pointer shadow-sm"
-                  ></div>
-                  <span className="text-[9px] font-bold text-stone-500 mt-2">
-                    {tx("Medium", "Medium")}
-                  </span>
-                </div>
-
-                {/* Low bar */}
-                <div className="flex flex-col items-center w-12 group">
-                  <span className="text-[10px] font-black text-emerald-600 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {report.threat_count_low ?? 210}
-                  </span>
-                  <div
-                    style={{
-                      height: `${Math.min((report.threat_count_low ?? 210) * 0.4, 130)}px`,
-                    }}
-                    className="w-7 bg-emerald-500 rounded-t-md hover:bg-emerald-600 transition-all cursor-pointer shadow-sm"
-                  ></div>
-                  <span className="text-[9px] font-bold text-stone-500 mt-2">
-                    {tx("Low", "Low")}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Chart legends */}
-            <div className="grid grid-cols-2 gap-4 mt-6 text-[10px] font-bold text-stone-600 border-t border-stone-100 pt-4">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></span>
-                <span>
-                  {tx("Critical", "Critical")}:{" "}
-                  {report.threat_count_critical ?? 18}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0"></span>
-                <span>
-                  {tx("High", "High")}: {report.threat_count_high ?? 56}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-yellow-400 shrink-0"></span>
-                <span>
-                  {tx("Medium", "Medium")}: {report.threat_count_medium ?? 102}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-50 shrink-0"></span>
-                <span>
-                  {tx("Low", "Low")}: {report.threat_count_low ?? 210}
-                </span>
-              </div>
-            </div>
+            <ReportChartPanel reportId={report.id} tx={tx} />
           </div>
         )}
       </div>
