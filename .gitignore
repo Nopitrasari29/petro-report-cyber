@@ -32,4 +32,8 @@ backend/sql_app.db
 .idea/
 .DS_Store
 Thumbs.db
-C:\Users\HP\.gemini\antigravity-ide\brain\**
+
+# AI coding assistant instruction/notes files — local-only, not part of the project
+AGENTS.md
+CLAUDE.md
+backend_audit*.md

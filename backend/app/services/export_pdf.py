@@ -6,10 +6,10 @@ from typing import Any, Dict
 import io
 import os
 from app.models.report import Report
+from app.services.chart_generator import ChartGenerator
 
 try:
-    import plotly.io as pio
-    import plotly.graph_objects as go
+    import plotly  # noqa: F401 — cuma dipakai untuk cek ketersediaan; render sungguhan lewat ChartGenerator.render_png
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
@@ -75,12 +75,16 @@ class PDFExporter:
         if PLOTLY_AVAILABLE and charts_list:
             for idx, c_dict in enumerate(charts_list):
                 try:
-                    fig = go.Figure(c_dict)
-                    png_bytes = pio.to_image(fig, format="png", width=750, height=360, scale=2)
+                    png_bytes = ChartGenerator.render_png(c_dict, width=750, height=360, scale=2)
                     c_b64 = base64.b64encode(png_bytes).decode("utf-8")
+                    # width dalam piksel tetap (BUKAN "width:100%"): xhtml2pdf (fallback engine
+                    # kalau WeasyPrint tidak tersedia, kondisi umum di Windows lokal tanpa
+                    # GTK/Pango) gagal parsing "width:100%" pada <img> di sini ("getSize: Not a
+                    # float '100%'"), yang bikin gambar chart gagal ikut layout container dan
+                    # lompat terpisah dari heading-nya. Nilai px tetap aman di WeasyPrint juga.
                     chart_imgs_html.append(
                         f'<div style="margin-bottom: 22px; text-align: center;">'
-                        f'<img src="data:image/png;base64,{c_b64}" style="width:100%;max-width:700px;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);" alt="Grafik Analisis #{idx+1}" />'
+                        f'<img src="data:image/png;base64,{c_b64}" width="620" style="width:620px;margin:0 auto;display:block;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);" alt="Grafik Analisis #{idx+1}" />'
                         f'</div>'
                     )
                 except Exception as chart_err:
@@ -102,6 +106,36 @@ class PDFExporter:
             rec_html += f"<li style='margin-bottom: 8px; font-weight: 500;'>{rec}</li>"
         if not rec_html:
             rec_html = "<li style='color:#718096; font-style:italic;'>Rekomendasi tidak tersedia saat ini.</li>"
+
+        # Section mana yang ditampilkan, sesuai pilihan "Include Sections" user di Report
+        # Settings. included_sections None/kosong berarti semua ditampilkan (laporan lama
+        # sebelum fitur ini ada, atau user tidak menyentuh pilihan defaultnya).
+        included = report.included_sections or {}
+
+        def is_included(key: str) -> bool:
+            return included.get(key, True)
+
+        # Chart selalu ditampilkan (bukan bagian dari 6 section yang bisa di-toggle), tapi
+        # nomornya tetap ikut urutan section lain yang benar-benar tampil, bukan hardcode "2.".
+        report_items = []
+        if is_included("executive_summary"):
+            report_items.append(("Ringkasan Eksekutif (Executive Summary)", f"<p>{exec_summary}</p>"))
+        report_items.append(("Visualisasi Data Analitik", chart_img_html))
+        if is_included("trend_analysis"):
+            report_items.append(("Analisis Tren Ancaman (Trend Analysis)", f"<p>{trend_analysis}</p>"))
+        if is_included("severity_analysis"):
+            report_items.append(("Analisis Tingkat Keparahan (Severity Analysis)", f"<p>{severity_analysis}</p>"))
+        if is_included("risk_assessment"):
+            report_items.append(("Penilaian Risiko (Risk Assessment)", f"<p>{risk_assessment}</p>"))
+        if is_included("recommendations"):
+            report_items.append(("Rekomendasi Tindakan Keamanan Siber", f"<ul>{rec_html}</ul>"))
+        if is_included("conclusion"):
+            report_items.append(("Kesimpulan (Conclusion)", f"<p>{conclusion}</p>"))
+
+        narrative_sections_html = "\n".join(
+            f"<h2>{idx + 1}. {title}</h2>\n{content}\n"
+            for idx, (title, content) in enumerate(report_items)
+        )
 
         # Bentuk tabel data log terlampir
         table_headers = ""
@@ -342,29 +376,8 @@ class PDFExporter:
                 Dilarang keras menyebarluaskan isi laporan ini di luar otoritas SOC atau pihak berwenang tanpa izin tertulis dari manajemen TI.
             </div>
 
-            <h2>1. Ringkasan Eksekutif (Executive Summary)</h2>
-            <p>{exec_summary}</p>
+            {narrative_sections_html}
 
-            <h2>2. Visualisasi Data Analitik</h2>
-            {chart_img_html if chart_img_html else '<p style="color:#718096;font-style:italic;">Visualisasi grafik belum tersedia. Jalankan "Generate Chart" terlebih dahulu.</p>'}
-
-            <h2>3. Analisis Tren Ancaman (Trend Analysis)</h2>
-            <p>{trend_analysis}</p>
-
-            <h2>4. Analisis Tingkat Keparahan (Severity Analysis)</h2>
-            <p>{severity_analysis}</p>
-
-            <h2>5. Penilaian Risiko (Risk Assessment)</h2>
-            <p>{risk_assessment}</p>
-
-            <h2>6. Rekomendasi Tindakan Keamanan siber</h2>
-            <ul>
-                {rec_html}
-            </ul>
-
-            <h2>7. Kesimpulan (Conclusion)</h2>
-            <p>{conclusion}</p>
-            
             {f'''
             <!-- REVISI: Pembungkusan dengan kelas appendix-section agar otomatis tercetak mendatar (Landscape) -->
             <div class="appendix-section">

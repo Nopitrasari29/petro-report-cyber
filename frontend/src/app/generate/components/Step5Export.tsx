@@ -6,6 +6,7 @@ import ScrollReveal from "@/components/ScrollReveal";
 
 interface Step5ExportProps {
   reportId: number | null;
+  exportFormats: Record<string, boolean>;
   onReset: () => void;
   tx: (key: string, fallback: string) => string;
 }
@@ -55,9 +56,14 @@ async function downloadAuthorizedFile(
 
 export default function Step5Export({
   reportId,
+  exportFormats,
   onReset,
   tx,
 }: Step5ExportProps) {
+  // Kalau dua-duanya gak kepilih (mestinya gak mungkin, sudah divalidasi di Report Settings),
+  // tetap tampilkan keduanya sebagai fallback biar user gak macet tanpa tombol download sama sekali.
+  const showPdf = exportFormats?.pdf || !exportFormats?.pptx;
+  const showPptx = exportFormats?.pptx || !exportFormats?.pdf;
   return (
     <ScrollReveal animation="scaleIn" className="space-y-6 max-w-xl mx-auto">
       {/* Success Checkmark Circle */}
@@ -91,43 +97,45 @@ export default function Step5Export({
         </p>
       </div>
 
-      {/* Big Cards for Download */}
+      {/* Big Cards for Download — cuma tampil sesuai format yang dicentang di Report Settings */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
-        {/* PDF Download */}
-        <button
-          onClick={() => downloadAuthorizedFile(reportId, "pdf")}
-          className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors"
-        >
-          <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-655 font-black text-xs">
-            PDF
-          </div>
-          <div className="space-y-1">
-            <div className="text-xs font-extrabold text-stone-800">
-              {tx("Download PDF", "Download PDF")}
+        {showPdf && (
+          <button
+            onClick={() => downloadAuthorizedFile(reportId, "pdf")}
+            className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors"
+          >
+            <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-655 font-black text-xs">
+              PDF
             </div>
-            <div className="text-[9px] text-stone-400 font-bold">
-              {tx("Standard Document Format", "Standard Document Format")}
+            <div className="space-y-1">
+              <div className="text-xs font-extrabold text-stone-800">
+                {tx("Download PDF", "Download PDF")}
+              </div>
+              <div className="text-[9px] text-stone-400 font-bold">
+                {tx("Standard Document Format", "Standard Document Format")}
+              </div>
             </div>
-          </div>
-        </button>
+          </button>
+        )}
 
-        {/* PPTX Download */}
-        <button
-          onClick={() => downloadAuthorizedFile(reportId, "pptx")}
-          className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors"
-        >
-          <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 font-black text-xs">
-            PPTX
-          </div>
-          <div className="space-y-1">
-            <div className="text-xs font-extrabold text-stone-800">
-              {tx("Download PPTX", "Download PPTX")}
+        {showPptx && (
+          <button
+            onClick={() => downloadAuthorizedFile(reportId, "pptx")}
+            className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors"
+          >
+            <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 font-black text-xs">
+              PPTX
             </div>
-            <div className="text-[9px] text-stone-400 font-bold">
-              {tx("Presentation Slide Deck", "Presentation Slide Deck")}
+            <div className="space-y-1">
+              <div className="text-xs font-extrabold text-stone-800">
+                {tx("Download PPTX", "Download PPTX")}
+              </div>
+              <div className="text-[9px] text-stone-400 font-bold">
+                {tx("Presentation Slide Deck", "Presentation Slide Deck")}
+              </div>
             </div>
-          </div>
-        </button>
+          </button>
+        )}
       </div>
 
       {/* Reset button to start over */}

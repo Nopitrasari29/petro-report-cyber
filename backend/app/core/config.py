@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # AI Engine (Local LLM)
     OLLAMA_HOST: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen3:8b"
+    # Batas waktu tunggu respon Ollama (detik). Tanpa ini, request bisa nge-hang tanpa batas
+    # kalau Ollama macet/kelamaan — analysis.py tidak punya proteksi timeout-nya sendiri.
+    # Dikonfirmasi lewat tes langsung: generate laporan 6-section lengkap di hardware ini
+    # genuinely butuh beberapa menit (bukan cuma masalah prompt/model) — 180s kepotong
+    # sebelum selesai, jadi dinaikkan supaya proses yang sebenarnya SUKSES tidak dianggap gagal.
+    OLLAMA_TIMEOUT_SECONDS: int = 600
 
     @property
     def OLLAMA_BASE_URL(self) -> str:

@@ -6,6 +6,7 @@ import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import { t, getLanguage } from "@/utils/i18n";
+import { getSectionTitle, getSectionContentKey } from "@/utils/reportSections";
 import PagesSidebar from "./components/PagesSidebar";
 import CenterPreviewPanel from "./components/CenterPreviewPanel";
 import PropertiesPanel from "./components/PropertiesPanel";
@@ -136,47 +137,8 @@ export default function ReportDetailPage({
   };
 
   // Sections navigation mapping
-  const getPageTitle = (page: string) => {
-    switch (page) {
-      case "01":
-        return "Executive Summary";
-      case "02":
-        return "Threat Overview";
-      case "03":
-        return "Attack Summary";
-      case "04":
-        return "VAPT Summary";
-      case "05":
-        return "Bandwidth Summary";
-      case "06":
-        return "Threat Hunting";
-      case "07":
-        return "Conclusion & Recommendation";
-      default:
-        return "Executive Summary";
-    }
-  };
-
-  const getPageContentKey = (page: string) => {
-    switch (page) {
-      case "01":
-        return "executive_summary";
-      case "02":
-        return "threat_overview";
-      case "03":
-        return "attack_summary";
-      case "04":
-        return "vapt_summary";
-      case "05":
-        return "bandwidth_monitoring";
-      case "06":
-        return "threat_hunting";
-      case "07":
-        return "conclusion_recommendation";
-      default:
-        return "executive_summary";
-    }
-  };
+  const getPageTitle = getSectionTitle;
+  const getPageContentKey = getSectionContentKey;
 
   // Get active text
   const getPageText = (page: string) => {
@@ -185,25 +147,12 @@ export default function ReportDetailPage({
     if (Array.isArray(text)) return text.join("\n");
     if (text) return text;
 
-    // Fallbacks
-    switch (page) {
-      case "01":
-        return "Executive Summary:\n\nDuring this monthly operational cycle, the security posture of Petrokimia Gresik has been monitored continuously. Overall security alert levels remained within stable parameters, with a small increase in traffic volume matching seasonal operations. Threat mitigation filters blocked multiple scanning attempts automatically, maintaining corporate uptime.";
-      case "02":
-        return "Threat Overview:\n\nThe most prevalent threat vectors observed were brute force login attempts and automated port scanning. Most security sensors operated within SLA, successfully blocking unauthorized probes on external interfaces.";
-      case "03":
-        return "Attack Summary:\n\nSeverity analysis shows a concentration of Low to Medium threats. Critical issues were restricted to known testing ranges and external scans which were mitigated by standard perimeter firewalls.";
-      case "04":
-        return "VAPT Summary:\n\nThe regular vulnerability scan showed no critical unpatched network vulnerabilities. A few high-level web service exposures were flagged and scheduled for remediation.";
-      case "05":
-        return "Bandwidth Summary:\n\nDaily bandwidth monitoring shows normal business traffic peaks. Security bandwidth consumption by tunnels and SIEM log forwarding was optimized within acceptable limits.";
-      case "06":
-        return "Threat Hunting:\n\nProactive threat hunting focused on outdated SSL/TLS handshakes and internal segment anomalous queries. No active compromises or lateral movements were detected.";
-      case "07":
-        return "Conclusion & Recommendation:\n\nWe recommend updating firewall filtering rules for known malicious scanning subnets and proceeding with patch deployment for external staging environments.";
-      default:
-        return "Content not available.";
-    }
+    // Belum ada konten AI untuk section ini — placeholder jujur, bukan narasi karangan
+    // yang dulu sama persis untuk semua laporan apapun isi datanya.
+    return tx(
+      "Content not yet available for this section.",
+      "Content not yet available for this section.",
+    );
   };
 
   const handleTextChange = (newVal: string) => {

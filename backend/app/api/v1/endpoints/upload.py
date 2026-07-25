@@ -1,8 +1,9 @@
 # app/api/v1/endpoints/upload.py
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
+import json
 
 from app.db.session import get_db
 from app.core.config import settings
@@ -102,7 +103,7 @@ def detect_period_from_file(
 def upload_security_file(
     title: str = Form(...),
     data_type: str = Form(...),  # firewall, email_security, ids_ips, vapt, dll.
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
     period_start: Optional[str] = Form(None),  # Format YYYY-MM-DD
     period_end: Optional[str] = Form(None),    # Format YYYY-MM-DD
     template_type: Optional[str] = Form("SOC Executive Summary (Monthly)"),
@@ -110,6 +111,7 @@ def upload_security_file(
     language: Optional[str] = Form("Indonesian"),
     include_ai_insights: bool = Form(True),
     include_raw_data_summary: bool = Form(True),
+    included_sections: Optional[str] = Form(None),  # JSON string {"executive_summary": true, ...}
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -133,33 +135,59 @@ def upload_security_file(
             except Exception:
                 p_end = None
 
-        # Validasi ukuran berkas SEBELUM diproses, sesuai batas di settings (MAX_UPLOAD_SIZE_MB).
-        # file.size tersedia dari Starlette tanpa perlu baca seluruh file ke memory dulu.
-        max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-        if file.size is not None and file.size > max_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Ukuran berkas melebihi batas maksimum {settings.MAX_UPLOAD_SIZE_MB}MB."
-            )
+        if not files:
+            raise HTTPException(status_code=400, detail="Tidak ada berkas yang diunggah.")
 
-        # Membaca file dan memanggil parser yang sesuai dari factory
-        try:
-            parser = ParserFactory.get_parser(file.filename)
-            raw_parsed = parser.parse(file.file)
-            parsed_data = sanitize_for_json(raw_parsed)
-        finally:
-            # Pastikan file stream ditutup dengan aman setelah dibaca oleh parser
-            file.file.close()
-        
-        # Hitung statistik ancaman dari log siber yang diunggah
+        # Baca & parse SEMUA file yang diunggah, gabungkan hasilnya jadi satu daftar data
+        # (baris dari tiap file digabung apa adanya — kalau strukturnya beda antar file,
+        # kolom yang tidak ada di salah satu file otomatis kosong saat diproses ke DataFrame
+        # di chart_generator.py/count_threats, bukan error).
+        max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        parsed_data = []
+        file_names = []
+        for f in files:
+            # Validasi ukuran berkas SEBELUM diproses, sesuai batas di settings (MAX_UPLOAD_SIZE_MB).
+            # f.size tersedia dari Starlette tanpa perlu baca seluruh file ke memory dulu.
+            if f.size is not None and f.size > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Ukuran berkas '{f.filename}' melebihi batas maksimum {settings.MAX_UPLOAD_SIZE_MB}MB."
+                )
+
+            try:
+                parser = ParserFactory.get_parser(f.filename)
+                raw_parsed = parser.parse(f.file)
+            except ValueError as file_err:
+                # Kasih tau berkas MANA yang bermasalah, bukan cuma "gagal" generik —
+                # penting kalau user upload beberapa file sekaligus.
+                raise ValueError(f"Berkas '{f.filename}': {str(file_err)}")
+            finally:
+                # Pastikan file stream ditutup dengan aman setelah dibaca oleh parser
+                f.file.close()
+
+            parsed_data.extend(sanitize_for_json(raw_parsed))
+            file_names.append(f.filename)
+
+        # Hitung statistik ancaman dari log siber yang diunggah (gabungan semua file)
         threat_metrics = count_threats(parsed_data)
         total_records = len(parsed_data) if parsed_data else 0
-        
+
+        # Parse pilihan section dari frontend. Kalau gagal/kosong, biarkan None (backward
+        # compat: export_pdf.py/export_ppt.py menampilkan semua section kalau ini None).
+        parsed_sections = None
+        if included_sections:
+            try:
+                parsed_sections = json.loads(included_sections)
+                if not isinstance(parsed_sections, dict):
+                    parsed_sections = None
+            except (json.JSONDecodeError, TypeError):
+                parsed_sections = None
+
         # Buat instansiasi schema ReportCreate
         report_in = ReportCreate(
             title=title,
             data_type=data_type,
-            input_file_name=file.filename,
+            input_file_name=", ".join(file_names),
             parsed_data=parsed_data,
             period_start=p_start,
             period_end=p_end,
@@ -174,7 +202,8 @@ def upload_security_file(
             threat_count_medium=threat_metrics["medium"],
             threat_count_low=threat_metrics["low"],
             threat_count_info=threat_metrics["informational"],
-            total_records_parsed=total_records
+            total_records_parsed=total_records,
+            included_sections=parsed_sections
         )
         
         db_report = create_report(db, report_in, user_id=current_user.id)

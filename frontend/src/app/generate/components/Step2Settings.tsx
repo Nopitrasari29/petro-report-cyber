@@ -1,5 +1,6 @@
 import React from "react";
 import ScrollReveal from "@/components/ScrollReveal";
+import { REPORT_SECTIONS } from "@/utils/reportSections";
 
 interface Step2SettingsProps {
   periodStart: string;
@@ -217,18 +218,7 @@ export default function Step2Settings({
           </h3>
 
           <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
-            {[
-              { key: "executiveSummary", label: "Executive Summary" },
-              { key: "threatOverview", label: "Threat Overview" },
-              { key: "attackSummary", label: "Attack Summary" },
-              { key: "vaptSummary", label: "VAPT Summary" },
-              { key: "bandwidthMonitoring", label: "Bandwidth Monitoring" },
-              { key: "threatHunting", label: "Threat Hunting" },
-              {
-                key: "conclusionRecommendation",
-                label: "Conclusion & Recommendation",
-              },
-            ].map((sec) => (
+            {REPORT_SECTIONS.map((sec) => (
               <label
                 key={sec.key}
                 className="flex items-center gap-2.5 cursor-pointer py-0.5 select-none"
@@ -245,7 +235,7 @@ export default function Step2Settings({
                   className="w-4 h-4 rounded text-petro-green focus:ring-petro-green border-stone-300"
                 />
                 <span className="text-xs font-semibold text-stone-700">
-                  {tx(sec.label, sec.label)}
+                  {tx(sec.title, sec.title)}
                 </span>
               </label>
             ))}

@@ -1,5 +1,9 @@
 import { useState, useEffect } from "react";
 import { t } from "@/utils/i18n";
+import { REPORT_SECTIONS } from "@/utils/reportSections";
+
+const TOTAL_PAGES = REPORT_SECTIONS.length;
+const LAST_PAGE = REPORT_SECTIONS[TOTAL_PAGES - 1].page;
 
 interface PagesSidebarProps {
   activePage: string;
@@ -38,21 +42,21 @@ export default function PagesSidebar({
         </h3>
 
         <div className="mt-4 space-y-2">
-          {["01", "02", "03", "04", "05", "06", "07"].map((page) => (
+          {REPORT_SECTIONS.map((sec) => (
             <button
-              key={page}
-              onClick={() => setActivePage(page)}
+              key={sec.page}
+              onClick={() => setActivePage(sec.page)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${
-                activePage === page
+                activePage === sec.page
                   ? "bg-stone-50 border-stone-200 text-stone-900 font-extrabold shadow-sm"
                   : "border-transparent text-stone-500 hover:bg-stone-50/50 hover:text-stone-700 font-bold"
               }`}
             >
               <span className="text-[10px] uppercase font-black text-stone-400">
-                {page}
+                {sec.page}
               </span>
               <span className="text-[11px] truncate">
-                {tx(getPageTitle(page), getPageTitle(page))}
+                {tx(getPageTitle(sec.page), getPageTitle(sec.page))}
               </span>
             </button>
           ))}
@@ -84,15 +88,15 @@ export default function PagesSidebar({
           </svg>
         </button>
         <span className="text-[10px] font-black text-stone-500">
-          {tx("Page", "Page")} {Number(activePage)} {tx("of", "of")} 7
+          {tx("Page", "Page")} {Number(activePage)} {tx("of", "of")} {TOTAL_PAGES}
         </span>
         <button
           onClick={() =>
             setActivePage((prev) =>
-              String(Math.min(Number(prev) + 1, 7)).padStart(2, "0"),
+              String(Math.min(Number(prev) + 1, TOTAL_PAGES)).padStart(2, "0"),
             )
           }
-          disabled={activePage === "07"}
+          disabled={activePage === LAST_PAGE}
           className="p-2 rounded-xl border border-stone-200 hover:bg-stone-50 disabled:opacity-40 transition-colors bg-white shadow-sm"
         >
           <svg

@@ -39,6 +39,17 @@ class Report(Base):
     threat_count_low = Column(Integer, nullable=True, default=0)
     threat_count_info = Column(Integer, nullable=True, default=0)
     total_records_parsed = Column(Integer, nullable=True, default=0)
-    
+
+    # Dict {section_key: bool} — section mana yang user pilih untuk dimasukkan ke PDF/PPTX
+    # (mis. {"executive_summary": true, "recommendations": false, ...}). NULL/kosong berarti
+    # semua section ditampilkan (kompatibel dengan laporan lama sebelum fitur ini ada).
+    included_sections = Column(JSON, nullable=True)
+
+    # Jumlah token yang sudah dihasilkan Ollama sejauh ini selama status="processing" (di-update
+    # live oleh background job lewat streaming /api/chat), dan jadi angka final (eval_count) begitu
+    # selesai. Dipakai untuk menghitung estimasi sisa waktu yang genuinely bereaksi ke kecepatan
+    # generate token asli — bukan animasi/tebakan — mirip ETA download yang dihitung dari bytes/s.
+    tokens_generated = Column(Integer, nullable=True, default=0)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

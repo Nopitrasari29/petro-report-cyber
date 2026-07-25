@@ -76,6 +76,11 @@ export default function RichTextEditor({
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },
+        // Link & Underline sudah ikut bawaan StarterKit di TipTap v3 — dimatikan di sini
+        // supaya versi custom di bawah (Underline polos, Link dengan openOnClick/autolink)
+        // yang dipakai, bukan didaftarkan dua kali (nyebabin warning "Duplicate extension").
+        link: false,
+        underline: false,
       }),
       Underline,
       TextStyle,

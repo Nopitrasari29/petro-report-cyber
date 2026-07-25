@@ -1,8 +1,15 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import ScrollReveal from "@/components/ScrollReveal";
+
+type ProcessingStep = "idle" | "uploading" | "analyzing" | "fetching" | "done";
 
 interface Step3AIProcessingProps {
   aiStatus: "pending" | "processing" | "completed";
+  processingStep: ProcessingStep;
+  processingStartedAt: number | null;
+  estimatedSeconds: number | null;
+  tokensGenerated: number | null;
+  expectedTotalTokens: number | null;
   reportDetails: any;
   errorMsg: string;
   onBack: () => void;
@@ -10,14 +17,140 @@ interface Step3AIProcessingProps {
   tx: (key: string, fallback: string) => string;
 }
 
+// Urutan tahap ASYNC NYATA yang bisa diamati dari frontend (masing-masing 1 network request
+// terpisah) — dulu ada 6 item checklist dan progress bar "68%" yang statis, gak berhubungan
+// sama sekali dengan proses yang sebenarnya berjalan. 3 tahap ini yang benar-benar bisa
+// dibedakan; upload.py sendiri melakukan baca-file + parsing + hitung ancaman dalam SATU
+// panggilan sinkron, jadi tidak bisa dipecah lebih detail lagi dari sisi frontend.
+const STEP_ORDER: ProcessingStep[] = ["uploading", "analyzing", "fetching", "done"];
+
+function stepIndex(step: ProcessingStep): number {
+  return STEP_ORDER.indexOf(step);
+}
+
+// Bobot persentase disengaja tidak rata — tahap "analyzing" (Ollama menghasilkan narasi AI)
+// biasanya paling lama, jadi diberi rentang persentase paling lebar supaya progress bar
+// tidak "macet" kelamaan di satu angka.
+const STEP_PROGRESS: Record<ProcessingStep, number> = {
+  idle: 0,
+  uploading: 10,
+  analyzing: 35,
+  fetching: 90,
+  done: 100,
+};
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  if (m === 0) return `${s}s`;
+  return `${m}m ${s}s`;
+}
+
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// Sisa waktu dihitung dari KECEPATAN GENERATE TOKEN ASLI (tokens_generated / elapsedSeconds),
+// persis seperti ETA download dihitung dari bytes/detik yang benar-benar terukur — bukan
+// animasi. expectedTotalTokens (rata-rata riwayat laporan user) berperan sebagai "ukuran file"-
+// nya; begitu model ternyata lebih cepat/lambat dari biasanya, angka ini otomatis naik/turun
+// sendiri di setiap tick karena elapsedSeconds & tokensGenerated terus berubah.
+function computeLiveRemainingSeconds(
+  tokensGenerated: number | null,
+  expectedTotalTokens: number | null,
+  elapsedSeconds: number,
+): number | null {
+  if (!tokensGenerated || tokensGenerated <= 0 || elapsedSeconds <= 0) return null;
+  if (!expectedTotalTokens || expectedTotalTokens <= 0) return null;
+  const tokensPerSecond = tokensGenerated / elapsedSeconds;
+  if (tokensPerSecond <= 0) return null;
+  const remainingTokens = expectedTotalTokens - tokensGenerated;
+  if (remainingTokens <= 0) return 0;
+  return remainingTokens / tokensPerSecond;
+}
+
 export default function Step3AIProcessing({
   aiStatus,
+  processingStep,
+  processingStartedAt,
+  estimatedSeconds,
+  tokensGenerated,
+  expectedTotalTokens,
   reportDetails,
   errorMsg,
   onBack,
   onProceed,
   tx,
 }: Step3AIProcessingProps) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // Elapsed tetap dihitung (dipakai sebagai fallback kalau belum ada riwayat buat estimasi,
+  // dan sebagai info kecil di sebelah estimasi) — tapi yang ditonjolkan ke user sekarang
+  // ESTIMASI dari riwayat laporan sebelumnya, sesuai yang diminta, bukan cuma "sudah berapa
+  // lama jalan".
+  useEffect(() => {
+    if (!processingStartedAt || aiStatus === "completed") return;
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - processingStartedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [processingStartedAt, aiStatus]);
+
+  const progressPct = aiStatus === "completed" ? 100 : STEP_PROGRESS[processingStep];
+  const currentIdx = stepIndex(processingStep);
+
+  // Live, self-correcting (bisa naik/turun sendiri kalau kecepatan model berubah) — dipakai
+  // sebagai prioritas utama begitu token pertama sudah datang; sebelum itu (atau kalau user
+  // belum punya riwayat token sama sekali) fallback ke estimatedSeconds (rata-rata riwayat).
+  const liveRemainingSeconds = computeLiveRemainingSeconds(
+    tokensGenerated,
+    expectedTotalTokens,
+    elapsedSeconds,
+  );
+  const tokensPerSecond =
+    tokensGenerated && elapsedSeconds > 0 ? tokensGenerated / elapsedSeconds : null;
+
+  // Deskripsi per-tahap lebih detail — dikonfirmasi lewat pengetesan langsung bahwa tahap
+  // analisis AI (Ollama, model qwen3:8b "thinking") genuinely butuh beberapa menit untuk
+  // menghasilkan 6 bagian narasi laporan, bukan cuma beberapa detik seperti kesan progress
+  // bar lama yang statis "68%".
+  const checklistItems: { label: string; detail: string; stepAt: ProcessingStep }[] = [
+    {
+      label: tx("Uploading & parsing file", "Uploading & parsing file"),
+      detail: tx(
+        "Membaca isi berkas dan mengekstrak baris data log.",
+        "Membaca isi berkas dan mengekstrak baris data log.",
+      ),
+      stepAt: "uploading",
+    },
+    {
+      label: tx("Running AI analysis (Ollama)", "Running AI analysis (Ollama)"),
+      // Begitu token pertama sudah datang dari background job, tampilkan progress ASLI
+      // (jumlah token + kecepatan token/detik) — sebelum itu, tampilkan deskripsi umum.
+      detail:
+        tokensGenerated && tokensGenerated > 0
+          ? tx(
+              `~${tokensGenerated} token dihasilkan${tokensPerSecond ? ` (~${tokensPerSecond.toFixed(1)} token/detik)` : ""}.`,
+              `~${tokensGenerated} tokens generated${tokensPerSecond ? ` (~${tokensPerSecond.toFixed(1)} tokens/sec)` : ""}.`,
+            )
+          : tx(
+              "Model AI lokal (qwen3:8b) menyusun 6 bagian narasi laporan — biasanya beberapa menit tergantung ukuran data.",
+              "Model AI lokal (qwen3:8b) menyusun 6 bagian narasi laporan — biasanya beberapa menit tergantung ukuran data.",
+            ),
+      stepAt: "analyzing",
+    },
+    {
+      label: tx("Fetching final report", "Fetching final report"),
+      detail: tx(
+        "Mengambil hasil akhir laporan dari server untuk ditampilkan.",
+        "Mengambil hasil akhir laporan dari server untuk ditampilkan.",
+      ),
+      stepAt: "fetching",
+    },
+  ];
+
   return (
     <ScrollReveal animation="fadeInUp" className="space-y-6">
       <div className="text-left">
@@ -33,118 +166,63 @@ export default function Step3AIProcessing({
           <div>
             <div className="flex justify-between items-center mb-2">
               <h3 className="font-extrabold text-stone-855 text-sm">{tx("Processing Progress", "Processing Progress")}</h3>
-              <span className="text-xs font-bold text-petro-green">
-                {aiStatus === "completed" ? "100%" : "68%"}
-              </span>
+              <span className="text-xs font-bold text-petro-green">{progressPct}%</span>
             </div>
             {/* Progress Bar */}
             <div className="w-full h-3 bg-stone-100 rounded-full overflow-hidden">
               <div
                 className="h-full bg-petro-green transition-all duration-500"
-                style={{ width: aiStatus === "completed" ? "100%" : "68%" }}
+                style={{ width: `${progressPct}%` }}
               ></div>
             </div>
           </div>
 
-          {/* Checklist */}
+          {/* Checklist — 3 tahap nyata, statusnya diturunkan dari processingStep sungguhan */}
           <div className="space-y-4">
-            {/* Item 1 */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="w-5 h-5 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-600">
-                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                  </svg>
-                </span>
-                <span className="text-xs font-bold text-stone-700">{tx("Reading uploaded files", "Reading uploaded files")}</span>
-              </div>
-              <span className="text-[10px] text-emerald-600 font-bold">{tx("Completed", "Completed")}</span>
-            </div>
+            {checklistItems.map((item) => {
+              const itemIdx = stepIndex(item.stepAt);
+              const isDone = aiStatus === "completed" || currentIdx > itemIdx;
+              const isActive = !isDone && currentIdx === itemIdx;
 
-            {/* Item 2 */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="w-5 h-5 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-600">
-                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                  </svg>
-                </span>
-                <span className="text-xs font-bold text-stone-700">{tx("Extracting and structuring data", "Extracting and structuring data")}</span>
-              </div>
-              <span className="text-[10px] text-emerald-600 font-bold">{tx("Completed", "Completed")}</span>
-            </div>
-
-            {/* Item 3 */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="w-5 h-5 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-600">
-                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                  </svg>
-                </span>
-                <span className="text-xs font-bold text-stone-700">{tx("Detecting security threats", "Detecting security threats")}</span>
-              </div>
-              <span className="text-[10px] text-emerald-600 font-bold">{tx("Completed", "Completed")}</span>
-            </div>
-
-            {/* Item 4 */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {aiStatus === "completed" ? (
-                  <span className="w-5 h-5 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-600">
-                      <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                    </svg>
+              return (
+                <div key={item.stepAt} className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    {isDone ? (
+                      <span className="w-5 h-5 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-600">
+                          <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+                        </svg>
+                      </span>
+                    ) : isActive ? (
+                      <span className="w-5 h-5 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0">
+                        <div className="w-2.5 h-2.5 border-2 border-stone-200 border-t-amber-500 rounded-full animate-spin"></div>
+                      </span>
+                    ) : (
+                      <span className="w-5 h-5 rounded-full bg-stone-50 border border-stone-200 flex items-center justify-center shrink-0"></span>
+                    )}
+                    <div className="flex flex-col">
+                      <span className={`text-xs font-bold ${isDone || isActive ? "text-stone-700" : "text-stone-400"}`}>
+                        {item.label}
+                      </span>
+                      {/* Detail cuma ditampilkan buat tahap yang lagi AKTIF — supaya jelas
+                          "AI-nya lagi ngapain" tanpa bikin daftar ini penuh teks sekaligus. */}
+                      {isActive && (
+                        <span className="text-[10px] text-stone-500 font-medium mt-0.5 max-w-xs">
+                          {item.detail}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span className={`text-[10px] font-bold shrink-0 ${isDone ? "text-emerald-600" : isActive ? "text-amber-600" : "text-stone-400"}`}>
+                    {isDone
+                      ? tx("Completed", "Completed")
+                      : isActive
+                        ? tx("In Progress", "In Progress")
+                        : tx("Waiting", "Waiting")}
                   </span>
-                ) : (
-                  <span className="w-5 h-5 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center">
-                    <div className="w-2.5 h-2.5 border-2 border-stone-200 border-t-amber-500 rounded-full animate-spin"></div>
-                  </span>
-                )}
-                <span className="text-xs font-bold text-stone-700">{tx("Generating executive summary", "Generating executive summary")}</span>
-              </div>
-              <span className={`text-[10px] font-bold ${aiStatus === "completed" ? "text-emerald-600" : "text-amber-600"}`}>
-                {aiStatus === "completed" ? tx("Completed", "Completed") : tx("In Progress", "In Progress")}
-              </span>
-            </div>
-
-            {/* Item 5 */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {aiStatus === "completed" ? (
-                  <span className="w-5 h-5 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-600">
-                      <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                    </svg>
-                  </span>
-                ) : (
-                  <span className="w-5 h-5 rounded-full bg-stone-50 border border-stone-200 flex items-center justify-center"></span>
-                )}
-                <span className={`text-xs font-bold ${aiStatus === "completed" ? "text-stone-700" : "text-stone-400"}`}>{tx("Creating charts and visualizations", "Creating charts and visualizations")}</span>
-              </div>
-              <span className={`text-[10px] font-bold ${aiStatus === "completed" ? "text-emerald-600" : "text-stone-400"}`}>
-                {aiStatus === "completed" ? tx("Completed", "Completed") : tx("Waiting", "Waiting")}
-              </span>
-            </div>
-
-            {/* Item 6 */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {aiStatus === "completed" ? (
-                  <span className="w-5 h-5 rounded-full bg-emerald-50 border border-emerald-250 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-600">
-                      <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                    </svg>
-                  </span>
-                ) : (
-                  <span className="w-5 h-5 rounded-full bg-stone-50 border border-stone-200 flex items-center justify-center"></span>
-                )}
-                <span className={`text-xs font-bold ${aiStatus === "completed" ? "text-stone-700" : "text-stone-400"}`}>{tx("Preparing report content", "Preparing report content")}</span>
-              </div>
-              <span className={`text-[10px] font-bold ${aiStatus === "completed" ? "text-emerald-600" : "text-stone-400"}`}>
-                {aiStatus === "completed" ? tx("Completed", "Completed") : tx("Waiting", "Waiting")}
-              </span>
-            </div>
+                </div>
+              );
+            })}
           </div>
 
           {/* Warning Alert */}
@@ -163,60 +241,62 @@ export default function Step3AIProcessing({
         <div className="lg:col-span-5 bg-white rounded-2xl border border-stone-200/80 p-6 shadow-sm space-y-4 premium-card-hover transition-colors">
           <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2">{tx("AI Insights Preview", "AI Insights Preview")}</h3>
 
-          <div className="space-y-3">
-            {/* Critical */}
-            <div className="flex items-center justify-between p-3.5 bg-red-50/50 border border-red-100 rounded-xl">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-pulse"></span>
-                <span className="text-xs font-bold text-stone-750">Critical</span>
-              </div>
-              <div className="text-right">
-                <div className="text-sm font-black text-red-600">{reportDetails?.threat_count_critical ?? 18}</div>
-                <div className="text-[9px] text-red-650/80 font-bold mt-0.5">+12% vs last month</div>
-              </div>
+          {!reportDetails ? (
+            // Belum ada hasil sungguhan — dulu di sini nongol angka karangan (Critical 18,
+            // High 56, dst dengan "+12% vs last month" yang juga karangan) SELAMA proses
+            // masih berjalan, seolah-olah itu data asli. Sekarang jujur: kosong dulu sampai
+            // hasil beneran datang dari backend.
+            <div className="flex flex-col items-center justify-center py-10 text-center gap-3">
+              <div className="w-8 h-8 border-4 border-stone-100 border-t-petro-green rounded-full animate-spin"></div>
+              <p className="text-xs font-bold text-stone-500">
+                {tx("Waiting for AI analysis to finish...", "Waiting for AI analysis to finish...")}
+              </p>
             </div>
+          ) : (
+            <>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3.5 bg-red-50/50 border border-red-100 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-600"></span>
+                    <span className="text-xs font-bold text-stone-750">Critical</span>
+                  </div>
+                  <div className="text-sm font-black text-red-600">{reportDetails.threat_count_critical ?? 0}</div>
+                </div>
 
-            {/* High */}
-            <div className="flex items-center justify-between p-3.5 bg-amber-50/40 border border-amber-100 rounded-xl">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-                <span className="text-xs font-bold text-stone-750">High</span>
-              </div>
-              <div className="text-right">
-                <div className="text-sm font-black text-amber-600">{reportDetails?.threat_count_high ?? 56}</div>
-                <div className="text-[9px] text-amber-600/80 font-bold mt-0.5">+9% vs last month</div>
-              </div>
-            </div>
+                <div className="flex items-center justify-between p-3.5 bg-amber-50/40 border border-amber-100 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                    <span className="text-xs font-bold text-stone-750">High</span>
+                  </div>
+                  <div className="text-sm font-black text-amber-600">{reportDetails.threat_count_high ?? 0}</div>
+                </div>
 
-            {/* Medium */}
-            <div className="flex items-center justify-between p-3.5 bg-yellow-50/30 border border-yellow-100 rounded-xl">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-yellow-400"></span>
-                <span className="text-xs font-bold text-stone-750">Medium</span>
+                <div className="flex items-center justify-between p-3.5 bg-yellow-50/30 border border-yellow-100 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-400"></span>
+                    <span className="text-xs font-bold text-stone-750">Medium</span>
+                  </div>
+                  <div className="text-sm font-black text-yellow-600">{reportDetails.threat_count_medium ?? 0}</div>
+                </div>
               </div>
-              <div className="text-right">
-                <div className="text-sm font-black text-yellow-600">{reportDetails?.threat_count_medium ?? 103}</div>
-                <div className="text-[9px] text-yellow-650/80 font-bold mt-0.5">+5% vs last month</div>
-              </div>
-            </div>
-          </div>
 
-          {/* Summary Grid stats */}
-          <div className="grid grid-cols-2 gap-4 border-t border-stone-100 pt-4 text-center">
-            <div className="p-3 bg-stone-50 border border-stone-150 rounded-xl">
-              <div className="text-[9px] text-stone-400 font-bold uppercase tracking-wider">{tx("Total Alerts", "Total Alerts")}</div>
-              <div className="text-base font-black text-stone-800 mt-1">{reportDetails?.total_records_parsed ?? 177}</div>
-            </div>
-            <div className="p-3 bg-stone-50 border border-stone-150 rounded-xl">
-              <div className="text-[9px] text-stone-400 font-bold uppercase tracking-wider">{tx("Total Incidents", "Total Incidents")}</div>
-              <div className="text-base font-black text-stone-800 mt-1">
-                {reportDetails
-                  ? (reportDetails.threat_count_critical + reportDetails.threat_count_high + reportDetails.threat_count_medium)
-                  : 26
-                }
+              {/* Summary Grid stats */}
+              <div className="grid grid-cols-2 gap-4 border-t border-stone-100 pt-4 text-center">
+                <div className="p-3 bg-stone-50 border border-stone-150 rounded-xl">
+                  <div className="text-[9px] text-stone-400 font-bold uppercase tracking-wider">{tx("Total Records", "Total Records")}</div>
+                  <div className="text-base font-black text-stone-800 mt-1">{reportDetails.total_records_parsed ?? 0}</div>
+                </div>
+                <div className="p-3 bg-stone-50 border border-stone-150 rounded-xl">
+                  <div className="text-[9px] text-stone-400 font-bold uppercase tracking-wider">{tx("Total Incidents", "Total Incidents")}</div>
+                  <div className="text-base font-black text-stone-800 mt-1">
+                    {(reportDetails.threat_count_critical ?? 0) +
+                      (reportDetails.threat_count_high ?? 0) +
+                      (reportDetails.threat_count_medium ?? 0)}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -229,7 +309,53 @@ export default function Step3AIProcessing({
 
       {/* Bottom Nav Bar */}
       <div className="pt-6 border-t border-stone-200/60 mt-8 flex flex-col items-end gap-2">
-        <p className="text-[10px] text-stone-500 font-bold">Estimated time: 2 - 5 minutes</p>
+        <p className="text-[10px] text-stone-500 font-bold">
+          {aiStatus === "completed" ? (
+            `${tx("Completed in", "Completed in")} ${formatElapsed(elapsedSeconds)}`
+          ) : liveRemainingSeconds !== null ? (
+            // Sisa waktu LIVE dari kecepatan generate token asli — dihitung ulang tiap detik,
+            // jadi wajar naik/turun kalau model tiba-tiba lebih lambat/cepat dari rata-rata
+            // riwayat. Ini yang bikin dia beda dari "estimatedSeconds" di bawah (angka tetap).
+            <>
+              {liveRemainingSeconds > 0 ? (
+                <>
+                  {tx("Estimated remaining", "Estimated remaining")}: ~
+                  {formatDuration(liveRemainingSeconds)}
+                </>
+              ) : (
+                tx("Finishing up...", "Finishing up...")
+              )}
+              <span className="text-stone-400 font-semibold">
+                {" "}
+                ({tx("elapsed", "elapsed")} {formatElapsed(elapsedSeconds)}
+                {tokensPerSecond ? `, ~${tokensPerSecond.toFixed(1)} token/s` : ""})
+              </span>
+            </>
+          ) : estimatedSeconds ? (
+            // Belum ada cukup data token live (baru mulai / user belum punya riwayat token) —
+            // fallback ke estimasi dari rata-rata processing_time_sec laporan sebelumnya.
+            <>
+              {tx("Estimated", "Estimated")}: ~{formatDuration(estimatedSeconds)}
+              <span className="text-stone-400 font-semibold">
+                {" "}
+                ({tx("elapsed", "elapsed")} {formatElapsed(elapsedSeconds)})
+              </span>
+            </>
+          ) : (
+            <>
+              {tx("Elapsed", "Elapsed")}: {formatElapsed(elapsedSeconds)}
+              <span className="text-stone-400 font-semibold">
+                {" "}
+                (
+                {tx(
+                  "estimate available after your first report",
+                  "estimate available after your first report",
+                )}
+                )
+              </span>
+            </>
+          )}
+        </p>
 
         <div className="flex justify-between items-center w-full">
           <button

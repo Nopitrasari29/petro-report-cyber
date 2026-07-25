@@ -2,6 +2,9 @@ import React from "react";
 import ScrollReveal from "@/components/ScrollReveal";
 import ReportChartPanel from "./ReportChartPanel";
 import RichTextEditor from "./RichTextEditor";
+import { REPORT_SECTIONS } from "@/utils/reportSections";
+
+const LAST_PAGE = REPORT_SECTIONS[REPORT_SECTIONS.length - 1].page;
 
 // Mendeteksi apakah suatu string konten itu HTML (hasil rich text editor) atau teks polos
 // (AI-generated asli / laporan lama sebelum editor ini ada). Dipakai biar tab Preview bisa
@@ -73,27 +76,17 @@ export default function Step4PreviewEdit({
           </h3>
 
           <div className="space-y-1.5">
-            {[
-              { id: "01", label: "01 Executive Summary" },
-              { id: "02", label: "02 Threat Overview" },
-              { id: "03", label: "03 Attack Summary" },
-              { id: "04", label: "04 VAPT Summary" },
-              { id: "05", label: "05 Bandwidth Summary" },
-              { id: "06", label: "06 Threat Hunting" },
-              { id: "07", label: "07 Conclusion & Rec." },
-            ].map((pg) => (
+            {REPORT_SECTIONS.map((sec) => (
               <button
-                key={pg.id}
-                onClick={() => setActivePage(pg.id)}
+                key={sec.page}
+                onClick={() => setActivePage(sec.page)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activePage === pg.id
+                  activePage === sec.page
                     ? "bg-petro-green/10 text-petro-green border border-petro-green/20"
                     : "bg-transparent text-stone-600 hover:bg-stone-50 border border-transparent"
                 }`}
               >
-                <span className="truncate">
-                  {tx(pg.label.substring(3), pg.label.substring(3))}
-                </span>
+                <span className="truncate">{tx(sec.title, sec.title)}</span>
               </button>
             ))}
           </div>
@@ -111,10 +104,10 @@ export default function Step4PreviewEdit({
               &lt; {tx("Prev", "Prev")}
             </button>
             <span>
-              {tx("Page", "Page")} {activePage} {tx("of", "of")} 07
+              {tx("Page", "Page")} {activePage} {tx("of", "of")} {LAST_PAGE}
             </span>
             <button
-              disabled={activePage === "07"}
+              disabled={activePage === LAST_PAGE}
               onClick={() => {
                 const next = String(Number(activePage) + 1).padStart(2, "0");
                 setActivePage(next);
@@ -303,7 +296,7 @@ export default function Step4PreviewEdit({
                         {tx("PT Petrokimia Gresik • SOC Security Reports", "PT Petrokimia Gresik • SOC Security Reports")}
                       </span>
                       <span className="font-black text-stone-700">
-                        Page {activePage} of 07
+                        Page {activePage} of {LAST_PAGE}
                       </span>
                     </div>
                   </div>
@@ -342,7 +335,7 @@ export default function Step4PreviewEdit({
 
                         <div className="flex justify-between items-center border-t border-white/20 pt-2 text-[8px] text-stone-300">
                           <span>Confidential • Internal SOC Use Only</span>
-                          <span className="font-bold">Slide 01 of 07</span>
+                          <span className="font-bold">Slide 01 of {LAST_PAGE}</span>
                         </div>
                       </div>
                     ) : (
@@ -415,7 +408,7 @@ export default function Step4PreviewEdit({
                         <div className="px-5 py-2 border-t border-stone-200 bg-white flex items-center justify-between text-[8px] text-stone-500 font-semibold">
                           <span>PT Petrokimia Gresik • SOC Security Operations</span>
                           <span className="font-bold text-stone-800">
-                            Slide {activePage} of 07
+                            Slide {activePage} of {LAST_PAGE}
                           </span>
                         </div>
                       </div>

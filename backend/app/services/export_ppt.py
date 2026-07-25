@@ -177,8 +177,17 @@ class PPTXExporter:
         recommendations = ai_summary.get("recommendations", [])
         conclusion = ai_summary.get("conclusion", "Kesimpulan tidak tersedia.")
 
+        # Section mana yang ditampilkan, sesuai pilihan "Include Sections" user di Report
+        # Settings. included_sections None/kosong berarti semua ditampilkan (laporan lama
+        # sebelum fitur ini ada, atau user tidak menyentuh pilihan defaultnya).
+        included = report.included_sections or {}
+
+        def is_included(key: str) -> bool:
+            return included.get(key, True)
+
         # Slide 2: Ringkasan Eksekutif
-        add_content_slide("Ringkasan Eksekutif", [exec_summary])
+        if is_included("executive_summary"):
+            add_content_slide("Ringkasan Eksekutif", [exec_summary])
 
         # Slide 3+: Visualisasi Chart (Render SEMUA chart yang ada)
         charts_list = []
@@ -223,58 +232,68 @@ class PPTXExporter:
                 except Exception as chart_err:
                     print(f"[PPT CHART WARNING] Gagal merender grafik slide #{idx+1}: {chart_err}")
 
-        # Slide 4: Analisis Tren & Severity
-        add_content_slide("Analisis Tren & Severity", [trend_analysis, severity_analysis])
+        # Slide 4: Analisis Tren & Severity (satu slide gabungan — cuma dimasukkan bagiannya
+        # yang beneran dipilih user; skip seluruh slide kalau dua-duanya di-exclude)
+        trend_severity_content = []
+        if is_included("trend_analysis"):
+            trend_severity_content.append(trend_analysis)
+        if is_included("severity_analysis"):
+            trend_severity_content.append(severity_analysis)
+        if trend_severity_content:
+            add_content_slide("Analisis Tren & Severity", trend_severity_content)
 
         # Slide 4: Penilaian Risiko
-        add_content_slide("Penilaian Risiko Keamanan", [risk_assessment])
+        if is_included("risk_assessment"):
+            add_content_slide("Penilaian Risiko Keamanan", [risk_assessment])
 
         # Slide 5: Rekomendasi Mitigasi (Bulleted List)
-        rec_slide_layout = prs.slide_layouts[5]
-        rec_slide = prs.slides.add_slide(rec_slide_layout)
-        
-        # Tambahkan logo kecil di pojok kanan atas slide rekomendasi
-        if has_logo:
-            try:
-                rec_slide.shapes.add_picture(logo_path, Inches(7.6), Inches(0.12), width=Inches(1.9))
-            except Exception:
-                pass
-        
-        title_shape = rec_slide.shapes.title
-        title_shape.text = "Rekomendasi Keamanan Siber"
-        title_shape.text_frame.paragraphs[0].font.size = Pt(28)
-        title_shape.text_frame.paragraphs[0].font.bold = True
-        title_shape.text_frame.paragraphs[0].font.color.rgb = GREEN
-        add_title_rule(rec_slide)
+        if is_included("recommendations"):
+            rec_slide_layout = prs.slide_layouts[5]
+            rec_slide = prs.slides.add_slide(rec_slide_layout)
 
-        rec_body_top, rec_body_height = Inches(1.7), Inches(4.4)
-        add_left_accent(rec_slide, rec_body_top, rec_body_height)
-        body_box = rec_slide.shapes.add_textbox(Inches(0.9), rec_body_top, Inches(8.35), rec_body_height)
-        btf = body_box.text_frame
-        btf.word_wrap = True
-        btf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            # Tambahkan logo kecil di pojok kanan atas slide rekomendasi
+            if has_logo:
+                try:
+                    rec_slide.shapes.add_picture(logo_path, Inches(7.6), Inches(0.12), width=Inches(1.9))
+                except Exception:
+                    pass
 
-        rec_blocks = []
-        for rec in recommendations:
-            item_blocks = parse_html_to_blocks(rec)
-            if not item_blocks:
-                continue
-            # Paksa tiap rekomendasi tampil sebagai satu bullet, apapun struktur HTML aslinya
-            # (rekomendasi disimpan sebagai array per-item, bukan satu blok list panjang).
-            item_blocks[0]["list"] = "bullet"
-            rec_blocks.extend(item_blocks)
+            title_shape = rec_slide.shapes.title
+            title_shape.text = "Rekomendasi Keamanan Siber"
+            title_shape.text_frame.paragraphs[0].font.size = Pt(28)
+            title_shape.text_frame.paragraphs[0].font.bold = True
+            title_shape.text_frame.paragraphs[0].font.color.rgb = GREEN
+            add_title_rule(rec_slide)
 
-        pending_tables = render_blocks_to_textframe(btf, rec_blocks, base_size=Pt(15), base_color=DARK_TEXT)
-        if pending_tables:
-            render_tables_to_slide(rec_slide, pending_tables, Inches(0.9), Inches(5.6), Inches(8.35))
+            rec_body_top, rec_body_height = Inches(1.7), Inches(4.4)
+            add_left_accent(rec_slide, rec_body_top, rec_body_height)
+            body_box = rec_slide.shapes.add_textbox(Inches(0.9), rec_body_top, Inches(8.35), rec_body_height)
+            btf = body_box.text_frame
+            btf.word_wrap = True
+            btf.vertical_anchor = MSO_ANCHOR.MIDDLE
 
-        if not recommendations:
-            p = btf.paragraphs[0]
-            p.text = "Tidak ada rekomendasi yang tersedia."
-            p.font.size = Pt(14)
+            rec_blocks = []
+            for rec in recommendations:
+                item_blocks = parse_html_to_blocks(rec)
+                if not item_blocks:
+                    continue
+                # Paksa tiap rekomendasi tampil sebagai satu bullet, apapun struktur HTML aslinya
+                # (rekomendasi disimpan sebagai array per-item, bukan satu blok list panjang).
+                item_blocks[0]["list"] = "bullet"
+                rec_blocks.extend(item_blocks)
+
+            pending_tables = render_blocks_to_textframe(btf, rec_blocks, base_size=Pt(15), base_color=DARK_TEXT)
+            if pending_tables:
+                render_tables_to_slide(rec_slide, pending_tables, Inches(0.9), Inches(5.6), Inches(8.35))
+
+            if not recommendations:
+                p = btf.paragraphs[0]
+                p.text = "Tidak ada rekomendasi yang tersedia."
+                p.font.size = Pt(14)
 
         # Slide 6: Kesimpulan
-        add_content_slide("Kesimpulan Akhir", [conclusion])
+        if is_included("conclusion"):
+            add_content_slide("Kesimpulan Akhir", [conclusion])
 
         # -------------------------------------------------------------
         # Footer halaman: nomor halaman + nama perusahaan, ditambahkan di akhir

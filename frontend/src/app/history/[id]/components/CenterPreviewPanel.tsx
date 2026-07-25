@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import { t } from "@/utils/i18n";
+import { REPORT_SECTIONS } from "@/utils/reportSections";
 import ReportChartPanel from "@/app/generate/components/ReportChartPanel";
+
+const LAST_PAGE = REPORT_SECTIONS[REPORT_SECTIONS.length - 1].page;
 
 interface ReportDetails {
   id: number;
@@ -288,7 +291,7 @@ export default function CenterPreviewPanel({
 
                     <div className="flex justify-between items-center border-t border-white/20 pt-1.5 text-[7px] text-stone-300">
                       <span>Internal SOC Use Only</span>
-                      <span className="font-bold">Slide 01 of 07</span>
+                      <span className="font-bold">Slide 01 of {LAST_PAGE}</span>
                     </div>
                   </div>
                 ) : (
@@ -335,7 +338,7 @@ export default function CenterPreviewPanel({
 
                     <div className="px-4 py-1.5 border-t border-stone-200 bg-white flex items-center justify-between text-[7px] text-stone-500 font-semibold">
                       <span>PT Petrokimia Gresik • SOC Operations</span>
-                      <span className="font-bold text-stone-800">Slide {activePage} of 07</span>
+                      <span className="font-bold text-stone-800">Slide {activePage} of {LAST_PAGE}</span>
                     </div>
                   </div>
                 )}

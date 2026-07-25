@@ -26,6 +26,7 @@ class ReportCreate(ReportBase):
     threat_count_low: Optional[int] = 0
     threat_count_info: Optional[int] = 0
     total_records_parsed: Optional[int] = 0
+    included_sections: Optional[Dict[str, bool]] = None
 
 class ReportUpdate(BaseModel):
     title: Optional[str] = None
@@ -51,6 +52,8 @@ class ReportUpdate(BaseModel):
     threat_count_low: Optional[int] = None
     threat_count_info: Optional[int] = None
     total_records_parsed: Optional[int] = None
+    included_sections: Optional[Dict[str, bool]] = None
+    tokens_generated: Optional[int] = None
 
 class ReportResponse(ReportBase):
     id: int
@@ -72,8 +75,21 @@ class ReportResponse(ReportBase):
     threat_count_low: Optional[int]
     threat_count_info: Optional[int]
     total_records_parsed: Optional[int]
+    included_sections: Optional[Dict[str, bool]]
+    tokens_generated: Optional[int]
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class AnalysisProgress(BaseModel):
+    """
+    Payload ringan buat di-poll tiap beberapa detik selama status="processing" — sengaja TIDAK
+    memakai ReportResponse penuh supaya tidak berulang kali mengirim ulang parsed_data/ai_summary
+    yang bisa besar tiap polling tick.
+    """
+    status: str
+    tokens_generated: int
+    expected_total_tokens: Optional[int] = None

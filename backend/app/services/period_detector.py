@@ -31,10 +31,14 @@ def _parse_dates(values: List[Any]) -> "pd.Series":
         return pd.to_datetime(pd.Series(values), errors="coerce")
 
 
-def detect_period(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
+def find_date_column(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], Optional["pd.Series"]]:
     """
-    Mencoba mendeteksi rentang tanggal (period_start, period_end) secara otomatis dari data
-    yang sudah di-parse.
+    Cari kolom tanggal terbaik di parsed_data. Dipakai BARENG oleh detect_period() (auto-isi
+    periode laporan) dan ChartGenerator (sumbu waktu chart tren) — supaya keduanya konsisten
+    kena fix yang sama kalau ada masalah deteksi, bukan dua implementasi terpisah dengan
+    kualitas berbeda (dulu chart_generator.py punya deteksi tanggalnya sendiri yang cuma
+    cocokkan nama kolom tanpa fallback berbasis isi, jadi gampang gagal total kalau nama
+    kolom tanggal di file tidak persis seperti yang di-hardcode).
 
     Strategi 2 tahap:
     1. Cari kolom yang namanya cocok/mirip kandidat kolom tanggal (cepat, presisi tinggi
@@ -49,9 +53,9 @@ def detect_period(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], Opt
     Kolom numerik murni (int/float, misal kolom hitungan seperti "jumlah_temuan") sengaja
     dilewati di tahap fallback, supaya tidak salah dikira epoch timestamp oleh pandas.
 
-    Mengembalikan (None, None) kalau tidak ada kolom tanggal yang bisa dideteksi/diparse secara
-    valid — di kondisi ini frontend harus minta user isi periode secara manual (contoh kasus:
-    data yang cuma punya kolom "bulan": "Januari" tanpa tahun, seperti email_data.json).
+    Return (nama_kolom, pandas Series hasil parse — urutan index-nya sama dengan parsed_data
+    asli, nilai gagal parse jadi NaT) kalau ketemu kolom valid, atau (None, None) kalau tidak
+    ada kolom tanggal yang bisa dideteksi/diparse secara valid sama sekali.
     """
     if not parsed_data:
         return None, None
@@ -87,11 +91,13 @@ def detect_period(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], Opt
         parsed = _parse_dates(raw_values)
         valid = parsed.dropna()
         if len(raw_values) > 0 and len(valid) / len(raw_values) >= MIN_VALID_RATIO:
-            return valid.min().strftime("%Y-%m-%d"), valid.max().strftime("%Y-%m-%d")
+            return date_col, parsed
 
     # 4. Fallback berbasis isi: coba tiap kolom bertipe teks/tanggal (bukan angka murni),
     #    ambil yang proporsi berhasil-parse-nya paling tinggi.
-    best_col_valid: Optional["pd.Series"] = None
+    best_col: Optional[str] = None
+    best_parsed: Optional["pd.Series"] = None
+    best_valid_count = -1
     for key in sample_row.keys():
         sample_value = sample_row.get(key)
         # Lewati kolom numerik murni supaya angka hitungan tidak disalahartikan jadi epoch time.
@@ -105,10 +111,32 @@ def detect_period(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], Opt
         parsed = _parse_dates(raw_values)
         valid = parsed.dropna()
         ratio = len(valid) / len(raw_values)
-        if ratio >= MIN_VALID_RATIO and (best_col_valid is None or len(valid) > len(best_col_valid)):
-            best_col_valid = valid
+        if ratio >= MIN_VALID_RATIO and len(valid) > best_valid_count:
+            best_col = key
+            best_parsed = parsed
+            best_valid_count = len(valid)
 
-    if best_col_valid is None or best_col_valid.empty:
+    if best_col is None:
         return None, None
 
-    return best_col_valid.min().strftime("%Y-%m-%d"), best_col_valid.max().strftime("%Y-%m-%d")
+    return best_col, best_parsed
+
+
+def detect_period(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Mendeteksi rentang tanggal (period_start, period_end) secara otomatis dari data yang
+    sudah di-parse, dengan mendelegasikan pencarian kolom tanggal ke find_date_column().
+
+    Mengembalikan (None, None) kalau tidak ada kolom tanggal yang bisa dideteksi/diparse secara
+    valid — di kondisi ini frontend harus minta user isi periode secara manual (contoh kasus:
+    data yang cuma punya kolom "bulan": "Januari" tanpa tahun, seperti email_data.json).
+    """
+    _, parsed = find_date_column(parsed_data)
+    if parsed is None:
+        return None, None
+
+    valid = parsed.dropna()
+    if valid.empty:
+        return None, None
+
+    return valid.min().strftime("%Y-%m-%d"), valid.max().strftime("%Y-%m-%d")

@@ -44,24 +44,82 @@ class OllamaClient:
             except Exception:
                 return False
 
-    def generate(self, prompt: str, system_prompt: str | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        json_mode: bool = False,
+        on_progress=None,
+    ) -> str:
         """
         Mengirimkan pesan prompt ke Ollama lokal dengan parameter dinamis.
+
+        CATATAN PENTING (dikonfirmasi lewat debugging langsung): qwen3:8b yang dipakai di sini
+        adalah model "thinking" (lihat capabilities di `ollama list` / API tags) — secara default
+        dia menghasilkan penalaran step-by-step yang PANJANG sebelum jawaban akhir, di LUAR tag
+        <think> yang sudah ditangani _extract_json_robust. Ini dua masalah sekaligus: (1) sangat
+        lambat (satu request bisa >3 menit untuk data kecil sekalipun), dan (2) jawaban akhirnya
+        kadang berupa narasi penalaran biasa, bukan JSON, sehingga parsing gagal total.
+
+        Dipanggil lewat HTTP langsung (bukan lewat ollama.Client().chat()) karena versi paket
+        `ollama` yang terinstall belum mengekspos parameter `think` sebagai argumen — padahal
+        Ollama SERVER (dicek: v0.32.3) sudah mendukungnya di endpoint /api/chat. `think: false`
+        mematikan mode penalaran itu (jawaban langsung, jauh lebih cepat), dan `format: "json"`
+        memaksa constrained-decoding supaya keluarannya PASTI JSON valid secara sintaks — jauh
+        lebih andal daripada cuma mengandalkan instruksi di system prompt.
+
+        `stream: True` dipakai (bukan `False` seperti sebelumnya) supaya token generation bisa
+        diamati SAAT terjadi — tiap baris NDJSON yang dikembalikan Ollama berisi satu potongan
+        `message.content` (kira-kira 1 token). `on_progress(tokens_so_far, done)` dipanggil tiap
+        potongan datang, dipakai backend buat mencatat progress asli (bukan animasi) ke DB supaya
+        estimasi sisa waktu di frontend bisa dihitung dari kecepatan generate token yang genuinely
+        terukur — sama seperti ETA download dihitung dari bytes/detik yang benar-benar diukur.
         """
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-        
+
         # Load settings secara dinamis dari DB / config
         ai_cfg = get_ai_settings()
-        
-        response = self.client.chat(
-            model=ai_cfg["model"],
-            messages=messages,
-            options={"temperature": ai_cfg["temperature"]}
-        )
-        return response["message"]["content"]
+
+        payload = {
+            "model": ai_cfg["model"],
+            "messages": messages,
+            "stream": True,
+            "think": False,
+            "options": {"temperature": ai_cfg["temperature"]},
+        }
+        if json_mode:
+            payload["format"] = "json"
+
+        content_parts: list[str] = []
+        token_count = 0
+        with requests.post(
+            f"{settings.OLLAMA_HOST}/api/chat",
+            json=payload,
+            timeout=settings.OLLAMA_TIMEOUT_SECONDS,
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                piece = (chunk.get("message") or {}).get("content", "")
+                if piece:
+                    content_parts.append(piece)
+                    token_count += 1
+                is_done = bool(chunk.get("done"))
+                if on_progress and (piece or is_done):
+                    # eval_count (jumlah token final dari Ollama sendiri) dipakai sebagai angka
+                    # otoritatif begitu selesai — lebih akurat daripada hitungan baris NDJSON kita.
+                    reported_count = chunk.get("eval_count", token_count) if is_done else token_count
+                    on_progress(reported_count, done=is_done)
+                if is_done:
+                    break
+
+        return "".join(content_parts)
 
     def _normalize_json_keys(self, data: dict) -> dict:
         """
@@ -161,13 +219,14 @@ class OllamaClient:
         return first + middle + last
 
     def analyze_security_data(
-        self, 
-        data_type: str, 
+        self,
+        data_type: str,
         parsed_data: list,
         period_start: str | None = None,
         period_end: str | None = None,
         template_type: str | None = None,
-        language: str | None = None
+        language: str | None = None,
+        on_progress=None,
     ) -> dict:
         """
         Mengonversi log parsed siber ke string, memicu Ollama Qwen,
@@ -217,7 +276,9 @@ class OllamaClient:
 
         raw_response = None
         try:
-            raw_response = self.generate(prompt, system_prompt=SYSTEM_PROMPT)
+            raw_response = self.generate(
+                prompt, system_prompt=SYSTEM_PROMPT, json_mode=True, on_progress=on_progress
+            )
             return self._extract_json_robust(raw_response)
         except Exception as e:
             preview = raw_response[:300] if raw_response else "Tidak ada respon"

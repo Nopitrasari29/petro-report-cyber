@@ -7,6 +7,11 @@ import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import ScrollReveal from "@/components/ScrollReveal";
 import { t, getLanguage } from "@/utils/i18n";
+import {
+  REPORT_SECTIONS,
+  getSectionTitle,
+  getSectionContentKey,
+} from "@/utils/reportSections";
 import Step0Overview from "./components/Step0Overview";
 import Step1Upload from "./components/Step1Upload";
 import Step2Settings from "./components/Step2Settings";
@@ -104,15 +109,13 @@ export default function GenerateReportPage() {
 
   const [tone, setTone] = useState("Professional");
   const [defaultLevel, setDefaultLevel] = useState("Standard");
-  const [sections, setSections] = useState<Record<string, boolean>>({
-    executiveSummary: false,
-    threatOverview: false,
-    attackSummary: false,
-    vaptSummary: false,
-    bandwidthMonitoring: false,
-    threatHunting: false,
-    conclusionRecommendation: false,
-  });
+  // Key di sini HARUS sama persis dengan key di REPORT_SECTIONS/ai_summary backend
+  // (executive_summary, trend_analysis, dst) — bukan nama dekoratif seperti sebelumnya
+  // ("vaptSummary", "bandwidthMonitoring") yang tidak berhubungan dengan section sungguhan
+  // apapun, dan gara-gara itu checkbox ini dulu gak pernah benar-benar dikirim/dipakai.
+  const [sections, setSections] = useState<Record<string, boolean>>(
+    Object.fromEntries(REPORT_SECTIONS.map((s) => [s.key, true])),
+  );
   const [exportFormats, setExportFormats] = useState<Record<string, boolean>>({
     pdf: false,
     pptx: false,
@@ -122,6 +125,29 @@ export default function GenerateReportPage() {
   const [aiStatus, setAiStatus] = useState<
     "pending" | "processing" | "completed"
   >("pending");
+  // Progress "68%" & checklist yang selalu "Completed" dulu ternyata statis — gak mencerminkan
+  // proses beneran sama sekali. processingStep melacak 3 tahap ASYNC NYATA yang benar-benar
+  // bisa diamati dari frontend (upload+parse, analisis AI, ambil hasil akhir) — bukan 6 langkah
+  // karangan yang gak bisa dibedakan satu sama lain dari sisi frontend.
+  const [processingStep, setProcessingStep] = useState<
+    "idle" | "uploading" | "analyzing" | "fetching" | "done"
+  >("idle");
+  const [processingStartedAt, setProcessingStartedAt] = useState<number | null>(
+    null,
+  );
+  // Estimasi waktu dari RIWAYAT laporan milik user sendiri (rata-rata processing_time_sec
+  // laporan yang sudah pernah selesai) — bukan angka "2-5 menit" yang di-hardcode tanpa
+  // dasar apapun. null berarti belum ada riwayat sama sekali (user belum pernah generate
+  // laporan sebelumnya) — di kondisi ini UI fallback ke pesan generik, bukan angka palsu.
+  const [estimatedSeconds, setEstimatedSeconds] = useState<number | null>(null);
+
+  // Progress token LIVE dari background job Ollama (di-poll dari GET /analysis/{id}/progress
+  // tiap 2 detik selama status="processing") + perkiraan total token dari riwayat laporan user
+  // (rata-rata tokens_generated laporan yang sudah selesai). Dua angka ini dipakai Step3 buat
+  // menghitung kecepatan generate token asli dan sisa waktu yang genuinely bereaksi terhadapnya
+  // — mirip ETA download yang dihitung dari bytes/detik yang benar-benar terukur, bukan animasi.
+  const [tokensGenerated, setTokensGenerated] = useState<number | null>(null);
+  const [expectedTotalTokens, setExpectedTotalTokens] = useState<number | null>(null);
 
   // Report details state (Step 4 & 5)
   const [reportDetails, setReportDetails] = useState<any>(null);
@@ -133,47 +159,8 @@ export default function GenerateReportPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const getPageTitle = (page: string) => {
-    switch (page) {
-      case "01":
-        return "Executive Summary";
-      case "02":
-        return "Threat Overview";
-      case "03":
-        return "Attack Summary";
-      case "04":
-        return "VAPT Summary";
-      case "05":
-        return "Bandwidth Summary";
-      case "06":
-        return "Threat Hunting";
-      case "07":
-        return "Conclusion & Recommendation";
-      default:
-        return "Executive Summary";
-    }
-  };
-
-  const getPageContentKey = (page: string) => {
-    switch (page) {
-      case "01":
-        return "executive_summary";
-      case "02":
-        return "trend_analysis";
-      case "03":
-        return "severity_analysis";
-      case "04":
-        return "risk_assessment";
-      case "05":
-        return "bandwidth_summary";
-      case "06":
-        return "recommendations";
-      case "07":
-        return "conclusion";
-      default:
-        return "executive_summary";
-    }
-  };
+  const getPageTitle = getSectionTitle;
+  const getPageContentKey = getSectionContentKey;
 
   // Field "recommendations" di ai_summary itu array of string (bukan satu blok teks), sementara
   // rich text editor kerjanya selalu pakai HTML. Dua fungsi ini menjembatani konversi dua arah:
@@ -211,25 +198,13 @@ export default function GenerateReportPage() {
     }
     if (text) return text;
 
-    // Fallbacks
-    switch (page) {
-      case "01":
-        return "Executive Summary:\n\nDuring this monthly operational cycle, the security posture of Petrokimia Gresik has been monitored continuously. Overall security alert levels remained within stable parameters, with a small increase in traffic volume matching seasonal operations. Threat mitigation filters blocked multiple scanning attempts automatically, maintaining corporate uptime.";
-      case "02":
-        return "Threat Overview:\n\nThe most prevalent threat vectors observed were brute force login attempts and automated port scanning. Most security sensors operated within SLA, successfully blocking unauthorized probes on external interfaces.";
-      case "03":
-        return "Attack Summary:\n\nSeverity analysis shows a concentration of Low to Medium threats. Critical issues were restricted to known testing ranges and external scans which were mitigated by standard perimeter firewalls.";
-      case "04":
-        return "VAPT Summary:\n\nThe regular vulnerability scan showed no critical unpatched network vulnerabilities. A few high-level web service exposures were flagged and scheduled for remediation.";
-      case "05":
-        return "Bandwidth Summary:\n\nDaily bandwidth monitoring shows normal business traffic peaks. Security bandwidth consumption by tunnels and SIEM log forwarding was optimized within acceptable limits.";
-      case "06":
-        return "Threat Hunting:\n\nProactive threat hunting focused on outdated SSL/TLS handshakes and internal segment anomalous queries. No active compromises or lateral movements were detected.";
-      case "07":
-        return "Conclusion & Recommendation:\n\nWe recommend updating firewall filtering rules for known malicious scanning subnets and proceeding with patch deployment for external staging environments.";
-      default:
-        return "Content not available.";
-    }
+    // Belum ada konten AI untuk section ini (mis. field itu belum di-generate atau report
+    // masih diproses) — tampilkan placeholder jujur, BUKAN narasi karangan yang kelihatan
+    // seperti hasil analisis sungguhan padahal isinya sama untuk semua laporan.
+    return tx(
+      "Content not yet available for this section.",
+      "Content not yet available for this section.",
+    );
   };
 
   const handleTextChange = (newVal: string) => {
@@ -290,35 +265,80 @@ export default function GenerateReportPage() {
     }
   };
 
-  // Handle local file adding
-  const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      setRawFiles((prev) => [...prev, file]);
-      const newFile: UploadedFile = {
+  // Handle local file adding — backend sekarang menerima BEBERAPA file sekaligus (digabung
+  // jadi satu daftar data di server), jadi file baru ditambahkan ke daftar, bukan mengganti.
+  const acceptNewFiles = (fileList: FileList) => {
+    const newFiles = Array.from(fileList);
+    if (newFiles.length === 0) return;
+
+    const isFirstBatch = rawFiles.length === 0;
+
+    setRawFiles((prev) => [...prev, ...newFiles]);
+    setFiles((prev) => [
+      ...prev,
+      ...newFiles.map((file) => ({
         name: file.name,
         type: file.name.split(".").pop()?.toUpperCase() || "LOG",
         size: (file.size / (1024 * 1024)).toFixed(2) + " MB",
-        status: "success",
-      };
-      setFiles((prev) => [...prev, newFile]);
-      detectPeriodFromFile(file);
+        status: "success" as const,
+      })),
+    ]);
+
+    // Auto-deteksi periode cuma dari batch PERTAMA — kalau sudah ada file lain sebelumnya,
+    // membiarkan deteksi otomatis menimpa periode yang mungkin sudah disesuaikan user secara
+    // manual bisa lebih membingungkan daripada membantu. User tetap bisa edit manual di Step 2.
+    if (isFirstBatch) {
+      detectPeriodFromFile(newFiles[0]);
+    }
+  };
+
+  const handleRemoveFile = (index: number) => {
+    setRawFiles((prev) => prev.filter((_, i) => i !== index));
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      acceptNewFiles(e.dataTransfer.files);
     }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setRawFiles((prev) => [...prev, file]);
-      const newFile: UploadedFile = {
-        name: file.name,
-        type: file.name.split(".").pop()?.toUpperCase() || "LOG",
-        size: (file.size / (1024 * 1024)).toFixed(2) + " MB",
-        status: "success",
-      };
-      setFiles((prev) => [...prev, newFile]);
-      detectPeriodFromFile(file);
+    if (e.target.files && e.target.files.length > 0) {
+      acceptNewFiles(e.target.files);
+    }
+    // Reset supaya user bisa pilih file yang sama lagi kalau perlu (browser tidak nge-trigger
+    // onChange kalau value input tidak berubah dari sebelumnya).
+    e.target.value = "";
+  };
+
+  // Ambil rata-rata processing_time_sec dari laporan-laporan user yang sudah pernah selesai,
+  // buat dasar estimasi waktu yang genuinely berdasar data — bukan tebakan statis. Gagal/tidak
+  // ada riwayat sama sekali dianggap wajar (user baru), bukan error yang perlu ditampilkan.
+  const fetchEstimatedSeconds = async (): Promise<number | null> => {
+    try {
+      const token = localStorage.getItem("token");
+      const authHeaders: Record<string, string> = {};
+      if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(
+        "http://localhost:8000/api/v1/history/?limit=10&status=analyzed",
+        { headers: authHeaders },
+      );
+      if (!res.ok) return null;
+
+      const reports = await res.json();
+      const durations: number[] = (Array.isArray(reports) ? reports : [])
+        .map((r: any) => r.processing_time_sec)
+        .filter((v: any) => typeof v === "number" && v > 0);
+
+      if (durations.length === 0) return null;
+      return Math.round(
+        durations.reduce((sum, v) => sum + v, 0) / durations.length,
+      );
+    } catch {
+      return null;
     }
   };
 
@@ -357,6 +377,12 @@ export default function GenerateReportPage() {
     setLoading(true);
     setErrorMsg("");
     setAiStatus("processing");
+    setProcessingStep("uploading");
+    setProcessingStartedAt(Date.now());
+    setEstimatedSeconds(null);
+    setTokensGenerated(null);
+    setExpectedTotalTokens(null);
+    fetchEstimatedSeconds().then(setEstimatedSeconds);
 
     try {
       const token = localStorage.getItem("token");
@@ -382,20 +408,33 @@ export default function GenerateReportPage() {
       formData.append("period_start", periodStart);
       formData.append("period_end", periodEnd);
       formData.append("template_type", templateType);
-      formData.append("output_format", outputFormat);
+      // outputFormat lama selalu "PDF" statis (gak pernah diubah UI manapun) — sekarang
+      // dihitung dari checkbox Export Format yang beneran dipilih user di Report Settings.
+      const selectedFormats = [
+        exportFormats.pdf && "PDF",
+        exportFormats.pptx && "PPTX",
+      ].filter(Boolean);
+      formData.append(
+        "output_format",
+        selectedFormats.length > 0 ? selectedFormats.join("+") : outputFormat,
+      );
       formData.append("language", language);
       formData.append("include_ai_insights", String(includeAI));
       formData.append("include_raw_data_summary", String(includeRaw));
+      formData.append("included_sections", JSON.stringify(sections));
 
-      // Kirim file asli jika diunggah oleh user, jika tidak gunakan file dummy csv
-      if (rawFiles.length > 0) {
-        formData.append("file", rawFiles[rawFiles.length - 1]);
-      } else {
-        const csvContent =
-          "tanggal,blocked_traffic\n2026-07-01,1200\n2026-07-02,1500\n2026-07-03,950\n2026-07-04,2100\n2026-07-05,1800\n2026-07-06,1300\n2026-07-07,2400";
-        const blob = new Blob([csvContent], { type: "text/csv" });
-        formData.append("file", blob, "firewall_data.csv");
+      // Step1Upload menonaktifkan tombol Next selama belum ada file, jadi ini seharusnya
+      // tidak pernah kejadian lewat alur normal — tapi kalau sampai kejadian (state gak
+      // sinkron dsb.), lebih baik gagal jelas daripada diam-diam kirim data CSV karangan
+      // seolah-olah itu file asli milik user.
+      if (rawFiles.length === 0) {
+        throw new Error(
+          "Tidak ada file yang diupload. Silakan kembali ke Step 1 dan upload file terlebih dahulu.",
+        );
       }
+      // Kirim SEMUA file (backend menggabungkan datanya jadi satu) — FormData mendukung
+      // banyak entri dengan nama field yang sama, FastAPI mem-parsingnya sebagai List[UploadFile].
+      rawFiles.forEach((file) => formData.append("files", file));
 
       const uploadRes = await fetch("http://localhost:8000/api/v1/upload/", {
         method: "POST",
@@ -419,8 +458,12 @@ export default function GenerateReportPage() {
       const reportData = await uploadRes.json();
       const generatedId = reportData.id;
       setReportId(generatedId);
+      setProcessingStep("analyzing");
 
       // 2. Trigger AI Engine Analysis: POST /api/v1/analysis/generate/{report_id}
+      // Endpoint ini sekarang langsung kembali (job Ollama jalan di background), jadi lanjut
+      // polling progress token-nya secara live di bawah — bukan lagi 1 fetch yang nge-block
+      // browser selama 3-10 menit.
       const generateRes = await fetch(
         `http://localhost:8000/api/v1/analysis/generate/${generatedId}`,
         {
@@ -438,6 +481,38 @@ export default function GenerateReportPage() {
         throw new Error(detail);
       }
 
+      // 2b. Poll progress asli tiap 2 detik sampai job selesai (analyzed) atau gagal (failed).
+      // tokens_generated & expected_total_tokens dipakai Step3 buat menghitung sisa waktu yang
+      // genuinely bereaksi ke kecepatan generate token — bukan cuma angka tetap dari riwayat.
+      let finalStatus = "processing";
+      // Jaring pengaman sisi frontend — backend sendiri sudah punya OLLAMA_TIMEOUT_SECONDS=600,
+      // ditambah buffer supaya tidak polling selamanya kalau ada yang benar-benar macet.
+      const pollDeadline = Date.now() + 900 * 1000;
+      while (finalStatus === "processing") {
+        if (Date.now() > pollDeadline) {
+          throw new Error(
+            "Proses analisis AI melebihi batas waktu yang wajar. Silakan cek status Ollama dan coba lagi.",
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const progRes = await fetch(
+          `http://localhost:8000/api/v1/analysis/${generatedId}/progress`,
+          { headers: authHeaders },
+        );
+        if (!progRes.ok) continue; // hiccup jaringan sesaat — coba lagi tick berikutnya
+        const prog = await progRes.json();
+        finalStatus = prog.status;
+        setTokensGenerated(prog.tokens_generated ?? 0);
+        setExpectedTotalTokens(prog.expected_total_tokens ?? null);
+      }
+
+      if (finalStatus === "failed") {
+        throw new Error(
+          "Proses analisis AI gagal karena kesalahan tak terduga di server. Silakan coba lagi.",
+        );
+      }
+
+      setProcessingStep("fetching");
       const detailRes = await fetch(
         `http://localhost:8000/api/v1/history/${generatedId}`,
         {
@@ -449,12 +524,14 @@ export default function GenerateReportPage() {
         setReportDetails(details);
         setEditedSummary(details.ai_summary || {});
       }
+      setProcessingStep("done");
       setAiStatus("completed");
       setLoading(false);
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.message || "Terjadi kesalahan tidak terduga.");
       setAiStatus("pending");
+      setProcessingStep("idle");
       setLoading(false);
     }
   };
@@ -751,8 +828,10 @@ export default function GenerateReportPage() {
           {currentStep === 1 && (
             <Step1Upload
               files={files}
+              rawFiles={rawFiles}
               onFileDrop={handleFileDrop}
               onFileSelect={handleFileSelect}
+              onFileRemove={handleRemoveFile}
               onNext={handleNextStep}
               onBack={handleBackStep}
               tx={tx}
@@ -789,6 +868,11 @@ export default function GenerateReportPage() {
           {currentStep === 3 && (
             <Step3AIProcessing
               aiStatus={aiStatus}
+              processingStep={processingStep}
+              processingStartedAt={processingStartedAt}
+              estimatedSeconds={estimatedSeconds}
+              tokensGenerated={tokensGenerated}
+              expectedTotalTokens={expectedTotalTokens}
               reportDetails={reportDetails}
               errorMsg={errorMsg}
               onBack={handleBackStep}
@@ -825,12 +909,15 @@ export default function GenerateReportPage() {
           {currentStep === 5 && (
             <Step5Export
               reportId={reportId}
+              exportFormats={exportFormats}
               onReset={() => {
                 setCurrentStep(0);
                 setReportId(null);
                 setReportDetails(null);
                 setEditedSummary({});
                 setAiStatus("pending");
+                setProcessingStep("idle");
+                setProcessingStartedAt(null);
               }}
               tx={tx}
             />

@@ -2,8 +2,75 @@ from typing import Any, Dict, List, Optional
 import plotly.express as px
 import plotly.utils
 import json
+import os
+import tempfile
 import pandas as pd
 import concurrent.futures
+from app.services.period_detector import find_date_column
+
+# CATATAN PENTING SOAL VERSI KALEIDO (dikonfirmasi lewat debugging langsung, termasuk baca
+# chrome_debug.log):
+#
+# Kaleido 0.2.1 (versi lama) membawa Chromium bawaan sendiri yang di banyak mesin Windows
+# gagal start dengan error "Cannot create Pref Service with no user data dir" — dan gagalnya
+# BUKAN sekadar butuh --user-data-dir tambahan: sudah dicoba paksa argumen itu ke folder temp
+# yang valid & writable, errornya tetap sama persis. Chromium child process-nya crash dalam
+# hitungan milidetik, tapi sisi Python kaleido 0.2.1 tetap menunggu tanpa batas waktu (blocking
+# readline() di pipe yang tidak akan pernah menerima apa pun lagi) — jadi dari luar kelihatan
+# seperti hang. Ini bug arsitektur lama kaleido 0.2.1 di Windows, sudah banyak dilaporkan
+# komunitas plotly/kaleido, tidak bisa diperbaiki hanya dari argumen command line.
+#
+# Solusi yang terbukti berhasil: upgrade ke kaleido>=1.0.0 (rewrite total oleh tim Plotly,
+# pakai library `choreographer` untuk mengendalikan Chrome ASLI yang terinstall di sistem,
+# bukan Chromium custom bawaan). Kalau Chrome belum terdeteksi, kaleido>=1.0 gagal CEPAT
+# (<1 detik) dengan pesan jelas ("Kaleido requires Google Chrome to be installed... jalankan
+# `plotly_get_chrome`"), bukan hang tanpa akhir. requirements.txt sudah diupdate ke
+# plotly>=6.1.1 + kaleido>=1.0.0 untuk ini.
+#
+# Kode di bawah tetap mendukung kaleido 0.2.1 sebagai fallback best-effort (kalau environment
+# belum ter-upgrade), tapi tidak mengandalkan fix --user-data-dir lagi karena terbukti tidak
+# selalu cukup — perbaikan sesungguhnya ada di versi kaleido yang dipakai.
+_KALEIDO_USER_DATA_DIR = os.path.join(tempfile.gettempdir(), "petro_soc_kaleido_profile")
+_kaleido_configured = False
+
+
+def _get_kaleido_major_version() -> int:
+    try:
+        import kaleido
+        ver = getattr(kaleido, "__version__", None)
+        if ver is None:
+            # kaleido>=1.0 tidak selalu punya __version__ di modul utamanya; cek lewat metadata.
+            from importlib.metadata import version as _pkg_version
+            ver = _pkg_version("kaleido")
+        return int(str(ver).split(".")[0])
+    except Exception:
+        return 0
+
+
+def _ensure_kaleido_configured() -> None:
+    global _kaleido_configured
+    if _kaleido_configured:
+        return
+    if _get_kaleido_major_version() >= 1:
+        # kaleido>=1.0 tidak pakai scope.chromium_args (API lama) sama sekali — dia
+        # mengurus Chrome & profil sementaranya sendiri lewat choreographer. Tidak ada
+        # yang perlu dikonfigurasi manual di sini.
+        _kaleido_configured = True
+        return
+    try:
+        os.makedirs(_KALEIDO_USER_DATA_DIR, exist_ok=True)
+        import plotly.io as pio
+        scope = pio.kaleido.scope
+        existing = tuple(a for a in scope.chromium_args if not a.startswith("--user-data-dir"))
+        extra = [f"--user-data-dir={_KALEIDO_USER_DATA_DIR}"]
+        if "--no-sandbox" not in existing:
+            extra.append("--no-sandbox")
+        scope.chromium_args = existing + tuple(extra)
+    except Exception as cfg_err:
+        # Kalau gagal konfigurasi (mis. versi kaleido beda API), jangan hentikan render —
+        # biarkan lanjut dengan default bawaan kaleido, cuma catat ke log server.
+        print(f"[KALEIDO WARNING] Gagal mengatur user-data-dir kustom: {cfg_err}")
+    _kaleido_configured = True
 
 
 def _find_col(df: pd.DataFrame, keywords: List[str]) -> Optional[str]:
@@ -33,9 +100,44 @@ def _find_categorical_col(df: pd.DataFrame, exclude: List[str] = None) -> Option
     return None
 
 
-def _coerce_datetime_series(series: pd.Series) -> Optional[pd.Series]:
-    converted = pd.to_datetime(series, errors="coerce", utc=False)
-    return converted if converted.notna().any() else None
+def _rank_categorical_candidates(
+    df: pd.DataFrame, exclude: List[str] = None, max_unique: int = 30, max_unique_ratio: float = 0.7
+) -> List[str]:
+    """
+    Fallback BERBASIS ISI (bukan nama kolom) untuk deteksi kolom kategorikal (severity/status/
+    lokasi/apapun) — dipakai kalau nama kolomnya tidak match daftar kata kunci di _find_col.
+
+    Nama kolom di file nyata sangat bervariasi antar sumber data ("Status" vs "Severity" vs
+    "Tingkat_Bahaya" vs "Kondisi", dst) — mengandalkan daftar kata kunci yang di-hardcode
+    berarti terus main tebak-tebakan tiap ada nama kolom baru. Sebagai gantinya, cari kolom
+    TEKS yang nilainya BERULANG di banyak baris (kardinalitas rendah relatif terhadap jumlah
+    baris) — itu ciri khas kolom kategorikal apapun namanya, sementara kolom teks bebas
+    (deskripsi, nama unik per baris, dst) akan hampir semua nilainya unik sehingga tidak lolos.
+
+    Dikembalikan terurut dari kardinalitas PALING RENDAH (paling "kategorikal") ke paling
+    tinggi, supaya pemanggil bisa ambil kandidat berikutnya kalau kandidat pertama sudah
+    dipakai kolom lain (mis. severity & top-kategori tidak boleh pakai kolom yang sama).
+    """
+    exclude_lower = [c.lower() for c in (exclude or []) if c]
+    candidates = []
+    for col in df.columns:
+        if col.lower() in exclude_lower:
+            continue
+        if not (pd.api.types.is_string_dtype(df[col]) or pd.api.types.is_object_dtype(df[col])):
+            continue
+        series = df[col].dropna()
+        n_total = len(series)
+        if n_total == 0:
+            continue
+        n_unique = series.nunique()
+        if n_unique < 2 or n_unique > max_unique:
+            continue
+        if n_unique / n_total > max_unique_ratio:
+            continue
+        candidates.append((col, n_unique))
+
+    candidates.sort(key=lambda c: c[1])
+    return [c[0] for c in candidates]
 
 
 def _build_layout(fig: Any, title: str, x_label: str = "", y_label: str = "") -> Any:
@@ -66,16 +168,16 @@ class ChartGenerator:
 
         charts = []
         try:
-            # 1. Deteksi Kolom Tanggal/Waktu
-            date_col = _find_col(df, ["tanggal", "date", "datetime", "timestamp", "time", "day", "bulan", "month"])
-            if date_col and date_col in df.columns:
-                date_series = _coerce_datetime_series(df[date_col])
-                if date_series is not None:
-                    df = df.assign(_chart_date=date_series)
-                    df = df.sort_values("_chart_date")
-                    date_col = "_chart_date"
-                else:
-                    date_col = None
+            # 1. Deteksi Kolom Tanggal/Waktu — pakai find_date_column dari period_detector.py
+            # (bukan pencocokan nama kolom sendiri di sini) supaya chart tren dan auto-deteksi
+            # periode laporan sama-sama dapat fallback berbasis ISI data yang sama, bukan dua
+            # implementasi terpisah dengan kualitas beda (chart sebelumnya cuma cocokkan nama
+            # kolom tanpa fallback, jadi gagal total kalau nama kolom tanggalnya tidak lazim).
+            detected_date_col, parsed_date_series = find_date_column(parsed_data)
+            if detected_date_col and parsed_date_series is not None:
+                df = df.assign(_chart_date=parsed_date_series.values)
+                df = df.sort_values("_chart_date")
+                date_col = "_chart_date"
             else:
                 date_col = None
 
@@ -100,7 +202,18 @@ class ChartGenerator:
                 charts.append(json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_trend)))
 
             # --- GRAFIK 2: Distribusi Severity / Level Ancaman ---
-            sev_col = _find_col(df, ["severity", "level", "priority", "tingkat", "threat_level", "risk"])
+            # Tahap 1: cocokkan nama kolom ke kata kunci umum dulu (cepat & presisi kalau
+            # namanya memang lazim seperti "severity"/"status").
+            sev_col = _find_col(df, ["severity", "level", "priority", "tingkat", "threat_level", "risk", "status"])
+            # Tahap 2: kalau nama kolom sama sekali tidak dikenali, fallback ke deteksi berbasis
+            # ISI data (_rank_categorical_candidates) — supaya tetap kedeteksi walau nama kolomnya
+            # apapun (mis. "Kondisi", "Tingkat_Bahaya", dst), bukan cuma daftar nama yang di-hardcode
+            # yang tidak mungkin mencakup semua variasi penamaan file dari berbagai sumber.
+            if not sev_col:
+                sev_candidates = _rank_categorical_candidates(df, exclude=[date_col] if date_col else [], max_unique=8)
+                if sev_candidates:
+                    sev_col = sev_candidates[0]
+
             if sev_col and sev_col in df.columns:
                 sev_counts = df[sev_col].value_counts().reset_index()
                 sev_counts.columns = [sev_col, "count"]
@@ -112,8 +225,16 @@ class ChartGenerator:
                 fig_sev = _build_layout(fig_sev, "Distribusi Level Severity Ancaman")
                 charts.append(json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_sev)))
 
-            # --- GRAFIK 3: Top 10 Kategori / Event Types / Actions / Ports ---
-            cat_col = _find_col(df, ["kategori_alert", "kategori", "category", "alert_type", "type", "event_type", "action", "destination_port", "source_ip", "protocol"])
+            # --- GRAFIK 3: Top 10 Kategori / Event Types / Actions / Ports / Lokasi ---
+            cat_col = _find_col(df, ["kategori_alert", "kategori", "category", "alert_type", "type", "event_type", "action", "destination_port", "source_ip", "protocol", "lokasi", "location"])
+            if not cat_col:
+                # Kardinalitas maksimum lebih longgar daripada severity (40 vs 8) karena ini
+                # chart "top 10" — total kategori boleh banyak, yang ditampilkan cuma teratas.
+                exclude_cols = [c for c in [date_col, sev_col] if c]
+                cat_candidates = [c for c in _rank_categorical_candidates(df, exclude=exclude_cols, max_unique=40) if c != sev_col]
+                if cat_candidates:
+                    cat_col = cat_candidates[0]
+
             if cat_col and cat_col in df.columns and cat_col != sev_col:
                 top_cats = df[cat_col].value_counts().head(10).reset_index()
                 top_cats.columns = [cat_col, "count"]
@@ -152,9 +273,24 @@ class ChartGenerator:
             return {"error": f"Gagal membuat visualisasi grafik: {str(e)}"}
 
     @classmethod
-    def render_png(cls, chart_data: Dict[str, Any], width: int, height: int, scale: float = 1.0, timeout_seconds: int = 12) -> bytes:
+    def render_png(cls, chart_data: Dict[str, Any], width: int, height: int, scale: float = 1.0, timeout_seconds: int = 45) -> bytes:
+        """
+        Render config chart Plotly jadi PNG bytes, dipakai saat embed grafik ke PDF/PPTX
+        (bukan tampilan web interaktif, yang render di browser via plotly.js dan tidak
+        melewati fungsi ini sama sekali).
+
+        Dibatasi timeout KERAS via thread terpisah. Kaleido memanggil Chrome/Chromium
+        eksternal — kalau gagal start, ini memastikan pemanggil (export_pdf/export_ppt)
+        selalu dapat balasan (baik PNG asli, TimeoutError, atau error lain yang jelas)
+        dalam waktu terbatas, bukan macet tanpa batas waktu. 45 detik dipilih karena
+        kaleido sendiri punya default internal timeout ~90 detik — 12 detik yang dipakai
+        sebelumnya terlalu ketat dan bisa memutus render yang sebenarnya masih jalan normal
+        (terutama panggilan pertama di proses backend yang baru start).
+        """
         import plotly.io as pio
         import plotly.graph_objects as go
+
+        _ensure_kaleido_configured()
 
         def _do_render():
             # Jika memuat list "charts", gunakan chart pertama untuk ekspor gambar PDF/PPTX
@@ -162,9 +298,24 @@ class ChartGenerator:
             fig = go.Figure(c_dict)
             return pio.to_image(fig, format="png", width=width, height=height, scale=scale)
 
+        # SENGAJA tidak pakai executor sebagai context manager. ThreadPoolExecutor.__exit__
+        # memanggil shutdown(wait=True) yang menunggu thread selesai — kalau thread itu
+        # sendiri yang macet (kaleido hang), itu memindahkan hang-nya ke sini alih-alih
+        # benar-benar membatasinya. shutdown(wait=False) melepas thread yang macet di
+        # background tanpa menahan pemanggil.
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         future = executor.submit(_do_render)
         try:
             return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError as timeout_err:
+            msg = (
+                f"Render chart timeout setelah {timeout_seconds}s — proses Chrome/Kaleido "
+                "kemungkinan gagal start di mesin ini (cek log server untuk detail)."
+            )
+            print(f"[KALEIDO TIMEOUT] {msg}")
+            raise TimeoutError(msg) from timeout_err
+        except Exception as render_err:
+            print(f"[KALEIDO ERROR] Gagal render chart ke PNG: {render_err}")
+            raise
         finally:
             executor.shutdown(wait=False)
