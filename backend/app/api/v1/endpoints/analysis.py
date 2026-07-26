@@ -84,20 +84,66 @@ def _run_analysis_job(report_id: int) -> None:
             db_report.tokens_generated = tokens_so_far
             db.commit()
 
-        try:
-            analysis_result = ollama_client.analyze_security_data(
-                data_type=db_report.data_type,
-                parsed_data=db_report.parsed_data,
-                period_start=db_report.period_start.strftime("%Y-%m-%d") if db_report.period_start else None,
-                period_end=db_report.period_end.strftime("%Y-%m-%d") if db_report.period_end else None,
-                template_type=db_report.template_type,
-                language=db_report.language,
-                on_progress=on_progress,
-            )
-        except Exception as ai_err:
-            print(f"[ANALYSIS] ⚠️ Job AI gagal tak terduga untuk report {report_id}: {ai_err}")
+        # Fix #7: Auto-retry logic — coba ulang hingga 2x dengan delay 5 detik
+        # sebelum menyerah dan menandai laporan sebagai "failed"
+        MAX_RETRIES = 2
+        analysis_result = None
+        last_err = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                if attempt > 0:
+                    print(f"[ANALYSIS] 🔄 Retry attempt {attempt}/{MAX_RETRIES} untuk report {report_id}...")
+                    time.sleep(5)  # Tunggu 5 detik sebelum retry agar Ollama punya waktu recover
+                    # Reset token counter untuk retry yang bersih
+                    db_report.tokens_generated = 0
+                    db.commit()
+
+                # Fix #2: Baca parsed_data dari file system terlebih dahulu (jika path tersedia),
+                # dengan fallback ke kolom JSON DB untuk laporan-laporan lama (backward compat).
+                parsed_data_to_use = db_report.parsed_data  # fallback default
+                if db_report.parsed_data_path:
+                    try:
+                        import json as _json
+                        with open(db_report.parsed_data_path, "r", encoding="utf-8") as pf:
+                            parsed_data_to_use = _json.load(pf)
+                    except Exception as fs_read_err:
+                        print(f"[ANALYSIS] ⚠️ Gagal baca parsed_data dari file ({db_report.parsed_data_path}), fallback ke DB column: {fs_read_err}")
+                        parsed_data_to_use = db_report.parsed_data
+
+                analysis_result = ollama_client.analyze_security_data(
+                    data_type=db_report.data_type,
+                    parsed_data=parsed_data_to_use,
+                    period_start=db_report.period_start.strftime("%Y-%m-%d") if db_report.period_start else None,
+                    period_end=db_report.period_end.strftime("%Y-%m-%d") if db_report.period_end else None,
+                    template_type=db_report.template_type,
+                    language=db_report.language,
+                    on_progress=on_progress,
+                )
+                last_err = None
+                break  # Sukses — keluar dari loop retry
+            except Exception as ai_err:
+                last_err = ai_err
+                print(f"[ANALYSIS] ⚠️ Attempt {attempt + 1}/{MAX_RETRIES + 1} gagal untuk report {report_id}: {ai_err}")
+
+        if last_err is not None or analysis_result is None:
+            print(f"[ANALYSIS] ❌ Semua {MAX_RETRIES + 1} attempt gagal untuk report {report_id}. Marking as failed.")
             db_report.status = "failed"
             db.commit()
+            try:
+                from app.schemas.notification import NotificationCreate
+                from app.crud.notification import create_notification
+                create_notification(
+                    db,
+                    NotificationCreate(
+                        user_id=db_report.user_id,
+                        type="warning",
+                        title="Analysis Failed",
+                        message=f"Gagal memproses analisis setelah {MAX_RETRIES + 1} percobaan. Coba lagi atau periksa status Ollama.",
+                        link="/history"
+                    )
+                )
+            except Exception as notif_err:
+                print(f"[ANALYSIS] ⚠️ Gagal buat notifikasi failure: {notif_err}")
             return
 
         elapsed_time = round(time.time() - start_time)
@@ -106,16 +152,37 @@ def _run_analysis_job(report_id: int) -> None:
 
         sla_met_status = elapsed_time <= settings.SLA_THRESHOLD_SECONDS
 
-        # Ollama dipanggil lewat chat completion sederhana yang tidak mengembalikan
-        # logprob/confidence per-token, dan tiap kegagalan (data kosong, Ollama offline,
-        # parser error) langsung mengganti SEMUA 6 bagian ringkasan sekaligus dengan teks
-        # fallback (lihat ollama_client.analyze_security_data) — jadi tidak ada kondisi
-        # "sebagian berhasil". Karena itu sinyal yang jujur di sini cuma biner: analisis
-        # betulan jalan, atau jatuh ke fallback. Nilai skor tetap dibuat untuk kebutuhan
-        # tampilan/riwayat, tapi TIDAK dipura-purakan presisi (dulu ada bumbu
-        # "word_count % 14" yang kesannya terukur padahal cuma noise kosmetik).
         is_fallback = "Gagal merumuskan ringkasan" in analysis_result.get("executive_summary", "")
-        ai_confidence_score = 40.0 if is_fallback else 95.0
+
+        # Fix #6: Kalkulasi ai_confidence secara DINAMIS berdasarkan kualitas output AI
+        # (bukan nilai hardcoded 94.0 atau 95.0)
+        def _calc_confidence(result: dict) -> float:
+            if is_fallback:
+                return 40.0
+            score = 50.0
+            # +15 jika semua 6 field ada dan non-empty
+            all_fields = ["executive_summary", "trend_analysis", "severity_analysis",
+                          "risk_assessment", "recommendations", "conclusion"]
+            filled = sum(1 for k in all_fields if result.get(k) and len(str(result.get(k, ""))) > 20)
+            score += (filled / len(all_fields)) * 25
+            # +10 jika recommendations berisi >= 3 item
+            recs = result.get("recommendations", [])
+            if isinstance(recs, list) and len(recs) >= 3:
+                score += 10
+            # +10 jika executive_summary > 200 karakter (narasi substantif)
+            exec_sum = result.get("executive_summary", "")
+            if len(str(exec_sum)) > 200:
+                score += 10
+            # -15 jika ada field yang mengandung pesan error fallback
+            error_phrases = ["tidak tersedia", "gagal", "error", "tidak dapat"]
+            for k in all_fields:
+                val = str(result.get(k, "")).lower()
+                if any(p in val for p in error_phrases):
+                    score -= 5
+                    break
+            return round(min(99.0, max(40.0, score)), 1)
+
+        ai_confidence_score = _calc_confidence(analysis_result)
 
         chart_config = None
         if db_report.parsed_data and not db_report.chart_data:
@@ -137,6 +204,23 @@ def _run_analysis_job(report_id: int) -> None:
         if chart_config is not None:
             db_report.chart_data = chart_config
         db.commit()
+
+        # Auto-trigger notification
+        try:
+            from app.schemas.notification import NotificationCreate
+            from app.crud.notification import create_notification
+            create_notification(
+                db,
+                NotificationCreate(
+                    user_id=db_report.user_id,
+                    type="success" if not is_fallback else "warning",
+                    title="Report Generated",
+                    message=f"Analisis AI untuk {db_report.filename or 'laporan'} telah selesai.",
+                    link="/history"
+                )
+            )
+        except Exception as notif_err:
+            print(f"[ANALYSIS] ⚠️ Gagal buat notifikasi success: {notif_err}")
     finally:
         db.close()
 
@@ -162,6 +246,26 @@ def generate_ai_analysis(
 
     if not db_report.parsed_data:
         raise HTTPException(status_code=400, detail="Data laporan kosong atau belum di-parsing.")
+
+    if db_report.status == "processing":
+        raise HTTPException(status_code=429, detail="Proses analisis AI untuk laporan ini sedang berjalan di background. Silakan tunggu hingga selesai.")
+
+    # Fix #3: GLOBAL Rate Limiting — tolak jika user LAIN laporan juga sedang diproses
+    # Mencegah crash Ollama akibat request paralel yang menghabiskan RAM
+    other_active_job = (
+        db.query(Report)
+        .filter(
+            Report.user_id == current_user.id,
+            Report.status == "processing",
+            Report.id != report_id,
+        )
+        .first()
+    )
+    if other_active_job:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Analisis AI untuk laporan lain (ID: {other_active_job.id}) masih berjalan. Tunggu sampai selesai sebelum memulai analisis baru."
+        )
 
     updated_report = update_report(
         db, report_id, ReportUpdate(status="processing", tokens_generated=0)

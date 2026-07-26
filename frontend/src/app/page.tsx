@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { t, getLanguage } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
 import LandingHero from "./components/landing/LandingHero";
 import LandingHowItWorks from "./components/landing/LandingHowItWorks";
 import LandingModulesList from "./components/landing/LandingModulesList";
@@ -41,7 +42,7 @@ export default function LandingPage() {
         return;
       }
       try {
-        const res = await fetch("http://localhost:8000/api/v1/auth/me", {
+        const res = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
           headers: {
             "Authorization": `Bearer ${token}`
           }

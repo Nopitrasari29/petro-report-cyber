@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import AuthLeftPanel from "./components/AuthLeftPanel";
 import Step1AccountDetails from "./components/Step1AccountDetails";
 import Step2EmailVerification from "./components/Step2EmailVerification";
+import { API_BASE_URL } from "@/utils/api";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -23,7 +24,7 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       const res = await fetch(
-        "http://localhost:8000/api/v1/auth/google-login",
+        `${API_BASE_URL}/api/v1/auth/google-login`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -66,7 +67,7 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/register", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ full_name: fullName, email, password }),
@@ -82,7 +83,7 @@ export default function RegisterPage() {
       
       // Otomatis login jika akun langsung terverifikasi (mode lokal)
       try {
-        const loginRes = await fetch("http://localhost:8000/api/v1/auth/login", {
+        const loginRes = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, password }),

@@ -7,9 +7,11 @@ import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import ScrollReveal from "@/components/ScrollReveal";
 import { t, getLanguage } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
 import HistoryStatsCards from "./components/HistoryStatsCards";
 import HistoryFilterBar from "./components/HistoryFilterBar";
 import HistoryTable from "./components/HistoryTable";
+import { ToastContainer } from "@/components/ToastModal";
 
 interface ReportItem {
   id: number;
@@ -59,9 +61,8 @@ export default function ReportHistoryPage() {
   // Filters & Search State
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All Statuses");
-  const [typeFilter, setTypeFilter] = useState("All Types");
   const [periodFilter, setPeriodFilter] = useState("Select Periods");
-  const [userFilter, setUserFilter] = useState("All Users");
+  const [sortOrder, setSortOrder] = useState("newest");
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -78,12 +79,26 @@ export default function ReportHistoryPage() {
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      // Fetch all reports to calculate stats and perform flexible filtering
+      // Fix #10: Server-side filtering — kirim parameter ke backend, bukan filter semua di client
+      // Backend sudah mendukung ?search=&status=&skip=&limit= secara native
+      const params = new URLSearchParams();
+      params.set("limit", "500"); // Ambil semua untuk stats cards, pagination dilakukan di client
+      if (searchQuery) params.set("search", searchQuery);
+      if (statusFilter && statusFilter !== "All Statuses") {
+        // Map UI label ke backend status value
+        const statusMap: Record<string, string> = {
+          "Completed": "analyzed",
+          "In Review": "processing",
+          "Draft": "draft",
+          "Failed": "failed",
+        };
+        const backendStatus = statusMap[statusFilter];
+        if (backendStatus) params.set("status", backendStatus);
+      }
+
       const res = await fetch(
-        "http://localhost:8000/api/v1/history/?limit=200",
-        {
-          headers,
-        },
+        `${API_BASE_URL}/api/v1/history/?${params.toString()}`,
+        { headers },
       );
 
       if (res.status === 401 || res.status === 403) {
@@ -105,6 +120,15 @@ export default function ReportHistoryPage() {
     }
   };
 
+  // Fix #10: Re-fetch dari server setiap kali search query atau status filter berubah
+  // Debounce 300ms untuk search supaya tidak hit API tiap keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchReports();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, statusFilter]);
+
   useEffect(() => {
     fetchReports();
     if (typeof window !== "undefined") {
@@ -116,13 +140,21 @@ export default function ReportHistoryPage() {
     }
   }, []);
 
+  // Toast notification state
+  const [toasts, setToasts] = useState<Array<{ id: string; type: "success" | "error" | "info" | "warning"; message: string }>>([]);
+  const addToast = (message: string, type: "success" | "error" | "info" | "warning" = "info") => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
   // Delete Action handler
   const handleDelete = async (id: number) => {
-    if (
-      !confirm("Apakah Anda yakin ingin menghapus laporan ini dari riwayat?")
-    ) {
-      return;
-    }
     try {
       const token = localStorage.getItem("token");
       const headers: Record<string, string> = {};
@@ -130,7 +162,7 @@ export default function ReportHistoryPage() {
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const res = await fetch(`http://localhost:8000/api/v1/history/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/history/${id}`, {
         method: "DELETE",
         headers,
       });
@@ -139,10 +171,63 @@ export default function ReportHistoryPage() {
         throw new Error("Gagal menghapus laporan.");
       }
 
-      // Refresh list
+      addToast("Laporan berhasil dihapus dari riwayat.", "success");
       fetchReports();
     } catch (err: any) {
-      alert(err.message || "Gagal menghapus laporan.");
+      addToast(err.message || "Gagal menghapus laporan.", "error");
+    }
+  };
+
+  // Bulk Delete Action handler
+  const handleBulkDelete = async (ids: number[]) => {
+    try {
+      const token = localStorage.getItem("token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/v1/history/bulk-delete`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(ids),
+      });
+
+      if (!res.ok) {
+        throw new Error("Gagal menghapus beberapa laporan.");
+      }
+
+      addToast(`${ids.length} laporan berhasil dihapus.`, "success");
+      fetchReports();
+    } catch (err: any) {
+      addToast(err.message || "Gagal menghapus beberapa laporan.", "error");
+    }
+  };
+
+  // Retry AI Action handler
+  const handleRetry = async (id: number) => {
+    try {
+      const token = localStorage.getItem("token");
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/v1/history/${id}/retry`, {
+        method: "POST",
+        headers,
+      });
+
+      if (!res.ok) {
+        throw new Error("Gagal memicu ulang analisis AI.");
+      }
+
+      addToast("Analisis AI berhasil dipicu ulang di background.", "info");
+      fetchReports();
+    } catch (err: any) {
+      addToast(err.message || "Gagal memicu ulang analisis AI.", "error");
     }
   };
 
@@ -270,6 +355,15 @@ export default function ReportHistoryPage() {
     ? ((exportedCount / totalCount) * 100).toFixed(1)
     : "0.0";
 
+  // Dynamic Period options extracted directly from user's report data
+  const periodOptions = Array.from(
+    new Set(
+      reports
+        .map((r) => formatPeriod(r.period_start, r.period_end))
+        .filter((p) => p && p !== "N/A")
+    )
+  );
+
   // Filtered reports
   const filteredReports = reports.filter((item) => {
     // Search filter
@@ -280,7 +374,6 @@ export default function ReportHistoryPage() {
       getDataTypeLabel(item).toLowerCase().includes(searchLower) ||
       (item.template_type && item.template_type.toLowerCase().includes(searchLower)) ||
       (item.data_type && item.data_type.toLowerCase().includes(searchLower)) ||
-      (item.created_by_name && item.created_by_name.toLowerCase().includes(searchLower)) ||
       (item.status && item.status.toLowerCase().includes(searchLower)) ||
       getStatusDetails(item.status).label.toLowerCase().includes(searchLower) ||
       formatPeriod(item.period_start, item.period_end).toLowerCase().includes(searchLower) ||
@@ -294,43 +387,37 @@ export default function ReportHistoryPage() {
         statusDetails.label.toLowerCase() === statusFilter.toLowerCase();
     }
 
-    // Type filter
-    let matchesType = true;
-    if (typeFilter !== "All Types") {
-      matchesType =
-        getDataTypeLabel(item).toLowerCase() === typeFilter.toLowerCase();
-    }
-
     // Period filter
     let matchesPeriod = true;
     if (periodFilter && periodFilter !== "Select Periods" && periodFilter !== "All Periods") {
       const pFormatted = formatPeriod(item.period_start, item.period_end).toLowerCase();
       const pTarget = periodFilter.toLowerCase();
-      const createdAtFormatted = item.created_at
-        ? new Date(item.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" }).toLowerCase()
-        : "";
-      matchesPeriod = pFormatted.includes(pTarget) || createdAtFormatted.includes(pTarget);
+      matchesPeriod = pFormatted.includes(pTarget) || pTarget.includes(pFormatted);
     }
 
-    // User filter
-    let matchesUser = true;
-    if (userFilter !== "All Users") {
-      matchesUser = item.created_by_name === userFilter;
-    }
-
-    return matchesSearch && matchesStatus && matchesType && matchesPeriod && matchesUser;
+    return matchesSearch && matchesStatus && matchesPeriod;
   });
 
-  // Unique list of creators for filter dropdown
-  const creators = Array.from(
-    new Set(reports.map((r) => r.created_by_name).filter(Boolean)),
-  );
+  // Sorting reports based on sortOrder
+  const sortedReports = [...filteredReports].sort((a, b) => {
+    if (sortOrder === "oldest") {
+      return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+    }
+    if (sortOrder === "title_asc") {
+      return (a.title || "").localeCompare(b.title || "");
+    }
+    if (sortOrder === "title_desc") {
+      return (b.title || "").localeCompare(a.title || "");
+    }
+    // Default: newest
+    return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+  });
 
   // Pagination logic
   const indexOfLastRow = currentPage * rowsPerPage;
   const indexOfFirstRow = indexOfLastRow - rowsPerPage;
-  const currentRows = filteredReports.slice(indexOfFirstRow, indexOfLastRow);
-  const totalPages = Math.ceil(filteredReports.length / rowsPerPage) || 1;
+  const currentRows = sortedReports.slice(indexOfFirstRow, indexOfLastRow);
+  const totalPages = Math.ceil(sortedReports.length / rowsPerPage) || 1;
 
   const handleExportList = () => {
     // Mock export list as CSV
@@ -366,7 +453,7 @@ export default function ReportHistoryPage() {
     }
 
     try {
-      const url = `http://localhost:8000/api/v1/history/${id}/${format}`;
+      const url = `${API_BASE_URL}/api/v1/history/${id}/${format}`;
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -403,11 +490,11 @@ export default function ReportHistoryPage() {
       <Sidebar />
 
       {/* Main Content Area */}
-      <div className="flex-1 pl-64 flex flex-col min-h-screen">
+      <div className="flex-1 pl-0 md:pl-64 flex flex-col min-h-screen">
         <Navbar />
 
         {/* Header Title Bar */}
-        <main className="flex-1 p-8 max-w-7xl mx-auto w-full space-y-6">
+        <main className="flex-1 p-4 sm:p-6 md:p-8 max-w-7xl mx-auto w-full space-y-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="text-left">
               <h1 className="text-2xl font-extrabold text-stone-900 tracking-tight">
@@ -489,13 +576,11 @@ export default function ReportHistoryPage() {
                 setSearchQuery={setSearchQuery}
                 statusFilter={statusFilter}
                 setStatusFilter={setStatusFilter}
-                typeFilter={typeFilter}
-                setTypeFilter={setTypeFilter}
                 periodFilter={periodFilter}
                 setPeriodFilter={setPeriodFilter}
-                userFilter={userFilter}
-                setUserFilter={setUserFilter}
-                creators={creators}
+                periodOptions={periodOptions}
+                sortOrder={sortOrder}
+                setSortOrder={setSortOrder}
                 setCurrentPage={setCurrentPage}
               />
 
@@ -516,11 +601,14 @@ export default function ReportHistoryPage() {
                 formatDateString={formatDateString}
                 handleDownloadFile={handleDownloadFile}
                 handleDelete={handleDelete}
+                handleBulkDelete={handleBulkDelete}
+                handleRetry={handleRetry}
               />
             </div>
           </ScrollReveal>
         </main>
       </div>
+      <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   );
 }

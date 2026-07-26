@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.db.session import get_db
+from app.api.v1.endpoints.auth import get_current_user
 from app.models.report import Report
 from app.models.datasource import DataSource
 import datetime
@@ -11,24 +12,31 @@ import json
 router = APIRouter()
 
 @router.get("/stats")
-def get_analytics_stats(db: Session = Depends(get_db)):
+def get_analytics_stats(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Mendapatkan statistik analitik SOC bulanan lengkap secara riil dari database.
     Mendukung tracking persentase perubahan (trends) dan ringkasan AI Insight secara dinamis.
+    Seluruh data di-scope khusus milik user yang sedang login.
     """
+    user_filter = Report.user_id == current_user.id
+    base_query = db.query(Report).filter(user_filter)
+
     # 1. Hitung total reports & status SLA
-    total_reports = db.query(Report).count()
-    sla_met_count = db.query(Report).filter(Report.sla_met == True).count()
+    total_reports = base_query.count()
+    sla_met_count = base_query.filter(Report.sla_met == True).count()
     
     sla_percentage = round((sla_met_count / total_reports * 100)) if total_reports > 0 else 0
     
     # 2. Hitung averages & totals
-    avg_confidence = db.query(func.avg(Report.ai_confidence)).scalar() or 0.0
-    crit_incidents = db.query(func.sum(Report.threat_count_critical)).scalar() or 0
-    high_alerts = db.query(func.sum(Report.threat_count_high)).scalar() or 0
-    sum_med = db.query(func.sum(Report.threat_count_medium)).scalar() or 0
-    sum_low = db.query(func.sum(Report.threat_count_low)).scalar() or 0
-    sum_info = int((sum_low + sum_med) * 0.05) if (sum_low + sum_med) > 0 else 0
+    avg_confidence = db.query(func.avg(Report.ai_confidence)).filter(user_filter).scalar() or 0.0
+    crit_incidents = db.query(func.sum(Report.threat_count_critical)).filter(user_filter).scalar() or 0
+    high_alerts = db.query(func.sum(Report.threat_count_high)).filter(user_filter).scalar() or 0
+    sum_med = db.query(func.sum(Report.threat_count_medium)).filter(user_filter).scalar() or 0
+    sum_low = db.query(func.sum(Report.threat_count_low)).filter(user_filter).scalar() or 0
+    sum_info = db.query(func.sum(Report.threat_count_info)).filter(user_filter).scalar() or 0
 
     # 3. Hitung kualitas sumber data (Source Quality) secara riil dari tabel datasources
     sources = db.query(DataSource).all()
@@ -42,37 +50,36 @@ def get_analytics_stats(db: Session = Depends(get_db)):
     avg_source_quality = round(total_quality_score / len(sources)) if sources else 0
 
     # 4. Hitung persentase perubahan secara dinamis (30 hari terakhir vs 30 s/d 60 hari yang lalu)
-    # Menggunakan datetime timezone-aware yang ramah Python 3.11 s.d 3.12+ (Future proof)
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     last_30_days = now - datetime.timedelta(days=30)
     prev_30_to_60_days = now - datetime.timedelta(days=60)
 
     # total_reports % change
-    reports_last_30 = db.query(Report).filter(Report.created_at >= last_30_days).count()
-    reports_prev_30 = db.query(Report).filter(Report.created_at >= prev_30_to_60_days).filter(Report.created_at < last_30_days).count()
+    reports_last_30 = base_query.filter(Report.created_at >= last_30_days).count()
+    reports_prev_30 = base_query.filter(Report.created_at >= prev_30_to_60_days).filter(Report.created_at < last_30_days).count()
     pct_reports = round(((reports_last_30 - reports_prev_30) / reports_prev_30) * 100, 1) if reports_prev_30 > 0 else (100.0 if reports_last_30 > 0 else 0.0)
 
     # sla_met % change
-    sla_last_30 = db.query(Report).filter(Report.created_at >= last_30_days, Report.sla_met == True).count()
-    sla_prev_30 = db.query(Report).filter(Report.created_at >= prev_30_to_60_days, Report.created_at < last_30_days, Report.sla_met == True).count()
+    sla_last_30 = base_query.filter(Report.created_at >= last_30_days, Report.sla_met == True).count()
+    sla_prev_30 = base_query.filter(Report.created_at >= prev_30_to_60_days, Report.created_at < last_30_days, Report.sla_met == True).count()
     pct_sla = round(
         ((sla_last_30 / reports_last_30 * 100) if reports_last_30 > 0 else 0) -
         ((sla_prev_30 / reports_prev_30 * 100) if reports_prev_30 > 0 else 0), 1
     )
 
     # ai_confidence % change
-    conf_last_30 = db.query(func.avg(Report.ai_confidence)).filter(Report.created_at >= last_30_days).scalar() or 0.0
-    conf_prev_30 = db.query(func.avg(Report.ai_confidence)).filter(Report.created_at >= prev_30_to_60_days).filter(Report.created_at < last_30_days).scalar() or 0.0
+    conf_last_30 = db.query(func.avg(Report.ai_confidence)).filter(user_filter, Report.created_at >= last_30_days).scalar() or 0.0
+    conf_prev_30 = db.query(func.avg(Report.ai_confidence)).filter(user_filter, Report.created_at >= prev_30_to_60_days, Report.created_at < last_30_days).scalar() or 0.0
     pct_conf = round(conf_last_30 - conf_prev_30, 1)
 
     # critical % change
-    crit_last_30 = db.query(func.sum(Report.threat_count_critical)).filter(Report.created_at >= last_30_days).scalar() or 0
-    crit_prev_30 = db.query(func.sum(Report.threat_count_critical)).filter(Report.created_at >= prev_30_to_60_days).filter(Report.created_at < last_30_days).scalar() or 0
+    crit_last_30 = db.query(func.sum(Report.threat_count_critical)).filter(user_filter, Report.created_at >= last_30_days).scalar() or 0
+    crit_prev_30 = db.query(func.sum(Report.threat_count_critical)).filter(user_filter, Report.created_at >= prev_30_to_60_days, Report.created_at < last_30_days).scalar() or 0
     pct_crit = round(((crit_last_30 - crit_prev_30) / crit_prev_30) * 100, 1) if crit_prev_30 > 0 else (100.0 if crit_last_30 > 0 else 0.0)
 
     # high alerts % change
-    high_last_30 = db.query(func.sum(Report.threat_count_high)).filter(Report.created_at >= last_30_days).scalar() or 0
-    high_prev_30 = db.query(func.sum(Report.threat_count_high)).filter(Report.created_at >= prev_30_to_60_days).filter(Report.created_at < last_30_days).scalar() or 0
+    high_last_30 = db.query(func.sum(Report.threat_count_high)).filter(user_filter, Report.created_at >= last_30_days).scalar() or 0
+    high_prev_30 = db.query(func.sum(Report.threat_count_high)).filter(user_filter, Report.created_at >= prev_30_to_60_days, Report.created_at < last_30_days).scalar() or 0
     pct_high = round(((high_last_30 - high_prev_30) / high_prev_30) * 100, 1) if high_prev_30 > 0 else (100.0 if high_last_30 > 0 else 0.0)
 
     # 5. Severity breakdown
@@ -85,8 +92,8 @@ def get_analytics_stats(db: Session = Depends(get_db)):
     ]
 
     # 6. Estimasi penggunaan ruang penyimpanan (Storage Usage)
-    pdf_count = db.query(Report).filter(Report.file_pdf_path != None).count()
-    ppt_count = db.query(Report).filter(Report.file_ppt_path != None).count()
+    pdf_count = base_query.filter(Report.file_pdf_path != None).count()
+    ppt_count = base_query.filter(Report.file_ppt_path != None).count()
     
     pdf_size_mb = (pdf_count * 0.25) + (total_reports * 0.05)
     ppt_size_mb = (ppt_count * 1.2)
@@ -95,7 +102,7 @@ def get_analytics_stats(db: Session = Depends(get_db)):
     used_gb = round(((pdf_size_mb + ppt_size_mb + attachments_mb) / 1024), 3)
 
     # 7. Kategori ancaman teratas dari tipe data report yang ada
-    data_type_counts = db.query(Report.data_type, func.count(Report.id)).group_by(Report.data_type).all()
+    data_type_counts = db.query(Report.data_type, func.count(Report.id)).filter(user_filter).group_by(Report.data_type).all()
     total_types = sum([c[1] for c in data_type_counts])
     
     top_threat_categories = []
@@ -107,7 +114,7 @@ def get_analytics_stats(db: Session = Depends(get_db)):
     top_threat_categories = sorted(top_threat_categories, key=lambda x: x["percentage"], reverse=True)
 
     # 8. Ringkasan AI Insight Narasi secara riil
-    latest_report = db.query(Report).filter(Report.status.in_(["analyzed", "completed"])).order_by(Report.created_at.desc()).first()
+    latest_report = base_query.filter(Report.status.in_(["analyzed", "completed"])).order_by(Report.created_at.desc()).first()
     
     summary_text = "Belum ada laporan keamanan siber yang diproses oleh AI untuk menghasilkan ringkasan otomatis."
     top_recs = []

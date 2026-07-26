@@ -7,6 +7,7 @@ import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import { t, getLanguage } from "@/utils/i18n";
 import { getSectionTitle, getSectionContentKey } from "@/utils/reportSections";
+import { API_BASE_URL } from "@/utils/api";
 import PagesSidebar from "./components/PagesSidebar";
 import CenterPreviewPanel from "./components/CenterPreviewPanel";
 import PropertiesPanel from "./components/PropertiesPanel";
@@ -96,7 +97,7 @@ export default function ReportDetailPage({
         }
 
         const res = await fetch(
-          `http://localhost:8000/api/v1/history/${reportId}`,
+          `${API_BASE_URL}/api/v1/history/${reportId}`,
           {
             headers,
           },
@@ -186,7 +187,7 @@ export default function ReportDetailPage({
       }
 
       const res = await fetch(
-        `http://localhost:8000/api/v1/analysis/${reportId}`,
+        `${API_BASE_URL}/api/v1/analysis/${reportId}`,
         {
           method: "PUT",
           headers: authHeaders,
@@ -206,16 +207,19 @@ export default function ReportDetailPage({
     }
   };
 
+  const [downloadingFormat, setDownloadingFormat] = useState<"pdf" | "pptx" | null>(null);
+
   const handleDownloadFile = async (format: "pdf" | "pptx") => {
-    if (!reportId) return;
+    if (!reportId || downloadingFormat) return;
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     if (!token) {
-      alert("Token akses tidak ditemukan. Silakan login ulang.");
+      setErrorMsg("Token akses tidak ditemukan. Silakan login ulang.");
       return;
     }
 
+    setDownloadingFormat(format);
     try {
-      const url = `http://localhost:8000/api/v1/history/${reportId}/${format}`;
+      const url = `${API_BASE_URL}/api/v1/history/${reportId}/${format}`;
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -228,7 +232,7 @@ export default function ReportDetailPage({
           const data = await res.json();
           detail = data.detail || detail;
         } catch {}
-        alert(detail);
+        setErrorMsg(detail);
         return;
       }
 
@@ -242,7 +246,9 @@ export default function ReportDetailPage({
       a.remove();
       window.URL.revokeObjectURL(downloadUrl);
     } catch (err: any) {
-      alert(err.message || "Terjadi kesalahan saat mengunduh file.");
+      setErrorMsg(err.message || "Terjadi kesalahan saat mengunduh file.");
+    } finally {
+      setDownloadingFormat(null);
     }
   };
 
@@ -310,11 +316,11 @@ export default function ReportDetailPage({
       <Sidebar />
 
       {/* Main Content Area */}
-      <div className="flex-1 pl-64 flex flex-col min-h-screen">
+      <div className="flex-1 pl-0 md:pl-64 flex flex-col min-h-screen">
         <Navbar />
 
         {/* Main Body */}
-        <main className="flex-1 p-8 max-w-6xl mx-auto w-full space-y-6">
+        <main className="flex-1 p-4 sm:p-6 md:p-8 max-w-6xl mx-auto w-full space-y-6">
           {/* Breadcrumb back navigation */}
           <div className="text-left">
             <Link
@@ -428,44 +434,70 @@ export default function ReportDetailPage({
             <div className="flex items-center gap-2.5">
               <button
                 onClick={() => handleDownloadFile("pdf")}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-xs shadow-md transition-all cursor-pointer"
+                disabled={downloadingFormat !== null}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-xs shadow-md transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={2.5}
-                  stroke="currentColor"
-                  className="w-4 h-4"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
-                  />
-                </svg>
-                {tx("Download PDF", "Download PDF")}
+                {downloadingFormat === "pdf" ? (
+                  <svg
+                    className="animate-spin h-4 w-4 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={2.5}
+                    stroke="currentColor"
+                    className="w-4 h-4"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                    />
+                  </svg>
+                )}
+                {downloadingFormat === "pdf" ? tx("Exporting PDF...", "Exporting PDF...") : tx("Download PDF", "Download PDF")}
               </button>
 
               <button
                 onClick={() => handleDownloadFile("pptx")}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs shadow-md transition-all cursor-pointer"
+                disabled={downloadingFormat !== null}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs shadow-md transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={2.5}
-                  stroke="currentColor"
-                  className="w-4 h-4"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
-                  />
-                </svg>
-                {tx("Download PPTX", "Download PPTX")}
+                {downloadingFormat === "pptx" ? (
+                  <svg
+                    className="animate-spin h-4 w-4 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={2.5}
+                    stroke="currentColor"
+                    className="w-4 h-4"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                    />
+                  </svg>
+                )}
+                {downloadingFormat === "pptx" ? tx("Exporting PPTX...", "Exporting PPTX...") : tx("Download PPTX", "Download PPTX")}
               </button>
             </div>
           </div>

@@ -1,7 +1,13 @@
 from typing import Any, BinaryIO, Dict, List, Optional
-import pdfplumber
 import pandas as pd
 from app.services.parser.base import BaseParser
+
+try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    pdfplumber = None
+    PDFPLUMBER_AVAILABLE = False
 
 
 class PDFParser(BaseParser):
@@ -41,6 +47,12 @@ class PDFParser(BaseParser):
         return df
 
     def parse(self, file_content: BinaryIO) -> List[Dict[str, Any]]:
+        if not PDFPLUMBER_AVAILABLE:
+            raise ValueError(
+                "Modul 'pdfplumber' belum terinstal di lingkungan virtualenv Python backend. "
+                "Silakan jalankan 'pip install pdfplumber' atau 'pip install -r requirements.txt'."
+            )
+
         file_content.seek(0)
         header: Optional[List[str]] = None
         rows: List[Dict[str, Any]] = []

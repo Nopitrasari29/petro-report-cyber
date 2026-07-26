@@ -189,10 +189,16 @@ class PPTXExporter:
         if is_included("executive_summary"):
             add_content_slide("Ringkasan Eksekutif", [exec_summary])
 
-        # Slide 3+: Visualisasi Chart (Render SEMUA chart yang ada)
+        # Slide 3+: Visualisasi Chart (Render SEMUA 3 chart yang ada)
         charts_list = []
-        if isinstance(chart_data.get("charts"), list) and len(chart_data["charts"]) > 0:
+        if isinstance(chart_data.get("charts"), list) and len(chart_data["charts"]) >= 2:
             charts_list = chart_data["charts"]
+        elif report.parsed_data:
+            fresh_config = ChartGenerator.generate_chart_config(report.data_type, report.parsed_data)
+            if isinstance(fresh_config.get("charts"), list) and len(fresh_config["charts"]) > 0:
+                charts_list = fresh_config["charts"]
+            elif "data" in fresh_config:
+                charts_list = [fresh_config]
         elif "data" in chart_data:
             charts_list = [chart_data]
 

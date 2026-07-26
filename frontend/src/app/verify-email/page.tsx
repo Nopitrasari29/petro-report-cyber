@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { t, getLanguage } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
 
 function VerifyEmailContent() {
   const [mounted, setMounted] = useState(false);
@@ -47,7 +48,7 @@ function VerifyEmailContent() {
     const verifyToken = async () => {
       try {
         const res = await fetch(
-          `http://localhost:8000/api/v1/auth/verify-email?token=${token}`,
+          `${API_BASE_URL}/api/v1/auth/verify-email?token=${token}`,
           {
             method: "GET",
           },
@@ -75,7 +76,7 @@ function VerifyEmailContent() {
     setResendError("");
     try {
       const res = await fetch(
-        "http://localhost:8000/api/v1/auth/resend-verification",
+        `${API_BASE_URL}/api/v1/auth/resend-verification`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

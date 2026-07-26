@@ -104,7 +104,7 @@ export default function Step2Settings({
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="date"
-                  value={periodStart}
+                  value={periodStart || ""}
                   onChange={(e) => {
                     setPeriodStart(e.target.value);
                     onPeriodManualEdit();
@@ -113,7 +113,7 @@ export default function Step2Settings({
                 />
                 <input
                   type="date"
-                  value={periodEnd}
+                  value={periodEnd || ""}
                   onChange={(e) => {
                     setPeriodEnd(e.target.value);
                     onPeriodManualEdit();

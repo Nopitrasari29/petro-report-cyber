@@ -42,6 +42,7 @@ const generalItems = [
 export default function Sidebar() {
   const pathname = usePathname();
   const [lang, setLang] = useState("English");
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   // ==========================================
   // EFFECT 1: Pengaman Hidrasi (Hydration Guard)
@@ -59,16 +60,48 @@ export default function Sidebar() {
     const handleLangChange = () => {
       setLang(getLanguage());
     };
+    const handleToggleMobile = () => {
+      setMobileOpen((prev) => !prev);
+    };
+    const handleCloseMobile = () => {
+      setMobileOpen(false);
+    };
+
     window.addEventListener("ui_language_changed", handleLangChange);
+    window.addEventListener("toggle_mobile_sidebar", handleToggleMobile);
+    window.addEventListener("close_mobile_sidebar", handleCloseMobile);
     return () => {
       window.removeEventListener("ui_language_changed", handleLangChange);
+      window.removeEventListener("toggle_mobile_sidebar", handleToggleMobile);
+      window.removeEventListener("close_mobile_sidebar", handleCloseMobile);
     };
   }, []);
 
-  const checkActive = (path: string) => pathname === path || pathname?.startsWith(path);
+  // Tutup sidebar mobile otomatis saat pindah halaman
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  const checkActive = (path: string) => {
+    const basePath = path.split("?")[0];
+    return pathname === basePath || pathname?.startsWith(basePath);
+  };
 
   return (
-    <aside className="w-64 h-screen bg-petro-green text-white flex flex-col fixed left-0 top-0 border-r border-white/10 z-30 shrink-0 shadow-xl">
+    <>
+      {/* Mobile Dark Backdrop Overlay */}
+      {mobileOpen && (
+        <div
+          onClick={() => setMobileOpen(false)}
+          className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-40 md:hidden animate-fadeIn"
+        />
+      )}
+
+      <aside
+        className={`w-64 h-screen bg-petro-green text-white flex flex-col fixed left-0 top-0 border-r border-white/10 z-50 shrink-0 shadow-2xl transition-transform duration-300 ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        }`}
+      >
       {/* Brand Header */}
       <Link
         href="/"
@@ -172,5 +205,6 @@ export default function Sidebar() {
         <span className="text-[9px] text-white/40 font-medium">© 2026 PT Petrokimia Gresik</span>
       </div>
     </aside>
-  );
+  </>
+);
 }

@@ -3,23 +3,31 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { createPortal } from "react-dom"; // IMPOR BARU: Untuk teleportasi modal ke body dokumen
+import { createPortal } from "react-dom";
 import { t, getLanguage } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
+import NotificationsMenu from "@/components/navbar/NotificationsMenu";
+
+function formatRelativeTime(dateStr: string): string {
+  if (!dateStr) return "";
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffInSec = Math.floor((now.getTime() - date.getTime()) / 1000);
+  if (isNaN(diffInSec) || diffInSec < 60) return "Just now";
+  if (diffInSec < 3600) return `${Math.floor(diffInSec / 60)}m ago`;
+  if (diffInSec < 86400) return `${Math.floor(diffInSec / 3600)}h ago`;
+  return `${Math.floor(diffInSec / 86400)}d ago`;
+}
 
 export default function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [showNotif, setShowNotif] = useState(false);
-  const [showAllNotifModal, setShowAllNotifModal] = useState(false);
+  const [apiNotifications, setApiNotifications] = useState<any[]>([]);
   const userMenuRef = useRef<HTMLDivElement>(null);
-  const notifRef = useRef<HTMLDivElement>(null);
   const [lang, setLang] = useState("English");
 
-  // ==========================================
-  // EFFECT 1: Pengaman Hidrasi (Hydration Guard)
-  // ==========================================
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
@@ -38,7 +46,6 @@ export default function Navbar() {
     };
   }, []);
 
-  // Judul modul dinamis berdasarkan path URL
   const getPageTitle = () => {
     if (pathname?.startsWith("/generate")) return tx("Generate Report", "Generate Report");
     if (pathname?.startsWith("/history")) return tx("Report History", "Report History");
@@ -46,20 +53,44 @@ export default function Navbar() {
     return tx("Dashboard", "Dashboard");
   };
 
+  const fetchNotifications = async () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/notifications`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const formatted = (data.items || []).map((n: any) => ({
+          id: n.id,
+          type: n.type || "info",
+          title: n.title,
+          sub: n.message,
+          time: formatRelativeTime(n.created_at),
+          unread: !n.is_read,
+          href: n.link || "/history"
+        }));
+        setApiNotifications(formatted);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch notifications:", err);
+    }
+  };
+
   useEffect(() => {
     const fetchUser = async () => {
       const token = localStorage.getItem("token");
       if (!token) { router.push("/login"); return; }
       try {
-        const res = await fetch("http://localhost:8000/api/v1/auth/me", {
+        const res = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (!res.ok) throw new Error("Session expired");
         setUser(await res.json());
 
-        // Sinkronisasi otomatis bahasa UI dari pengaturan database
         try {
-          const settingsRes = await fetch("http://localhost:8000/api/v1/settings/", {
+          const settingsRes = await fetch(`${API_BASE_URL}/api/v1/settings/`, {
             headers: { "Authorization": `Bearer ${token}` }
           });
           if (settingsRes.ok) {
@@ -80,18 +111,36 @@ export default function Navbar() {
       }
     };
     fetchUser();
+    fetchNotifications();
+
+    const intervalId = setInterval(fetchNotifications, 15000);
 
     window.addEventListener("user_profile_updated", fetchUser);
     return () => {
       window.removeEventListener("user_profile_updated", fetchUser);
+      clearInterval(intervalId);
     };
   }, [router]);
 
-  // Handler klik di luar untuk menutup dropdown otomatis
+  const handleMarkAllRead = async () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/notifications/read-all`, {
+        method: "PUT",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setApiNotifications(prev => prev.map(n => ({ ...n, unread: false })));
+      }
+    } catch (err) {
+      console.error("Failed to mark notifications as read:", err);
+    }
+  };
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) setShowUserMenu(false);
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setShowNotif(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -106,56 +155,6 @@ export default function Navbar() {
     ? user.full_name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()
     : user?.username?.slice(0, 2).toUpperCase() ?? "??";
 
-  // Data Contoh Notifikasi Lengkap (Ditambah Item Tambahan untuk Modal)
-  const allNotifications = [
-    {
-      id: 1,
-      type: "success",
-      title: tx("Report Generated", "Report Generated"),
-      sub: tx("SOC Executive Summary - July 2026", "SOC Executive Summary - July 2026"),
-      time: "2m ago",
-      unread: true,
-      href: "/history"
-    },
-    {
-      id: 2,
-      type: "warning",
-      title: tx("High Alert Detected", "High Alert Detected"),
-      sub: tx("22 new critical events flagged", "22 new critical events flagged"),
-      time: "18m ago",
-      unread: true,
-      href: "/history"
-    },
-    {
-      id: 3,
-      type: "info",
-      title: tx("Export Ready", "Export Ready"),
-      sub: tx("VAPT Report Q2 PDF is ready", "VAPT Report Q2 PDF is ready"),
-      time: "1h ago",
-      unread: false,
-      href: "/history"
-    },
-    {
-      id: 4,
-      type: "success",
-      title: tx("Data Parsing Complete", "Data Parsing Complete"),
-      sub: tx("Successfully parsed email_threat_report_july.pdf", "Successfully parsed email_threat_report_july.pdf"),
-      time: "3h ago",
-      unread: false,
-      href: "/history"
-    },
-    {
-      id: 5,
-      type: "warning",
-      title: tx("Suspicious Login Attempt", "Suspicious Login Attempt"),
-      sub: tx("Failed login attempt from unrecognized IP address", "Failed login attempt from unrecognized IP address"),
-      time: "1d ago",
-      unread: false,
-      href: "/settings"
-    }
-  ];
-
-  // Helper Renderer Ikon SVG Profesional (Bebas dari Emoji)
   const getNotifIcon = (type: string) => {
     switch (type) {
       case "success":
@@ -179,7 +178,7 @@ export default function Navbar() {
         return (
           <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-100/30">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.3} stroke="currentColor" className="w-4.5 h-4.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
             </svg>
           </div>
         );
@@ -187,91 +186,50 @@ export default function Navbar() {
   };
 
   return (
-    // DIUBAH Z-INDEX MENJADI z-40 AGAR FLOATING DROPDOWN SELALU DI ATAS SIDEBAR (z-30)
-    <header className="h-20 border-b border-stone-200/60 bg-white/80 backdrop-blur-xl flex items-center justify-between px-10 sticky top-0 z-40 w-full transition-all duration-300">
+    <header className="h-20 border-b border-stone-200/80 bg-stone-50/80 backdrop-blur-md sticky top-0 z-40 px-4 md:px-8 flex items-center justify-between transition-all duration-300">
 
-      {/* Sisi Kiri: Breadcrumb Module dengan Logo Petrokimia Danantara */}
-      <div className="flex items-center gap-3.5">
+      <div className="flex items-center gap-3 md:gap-4">
+        {/* Mobile Hamburger Toggle Button */}
+        <button
+          onClick={() => window.dispatchEvent(new Event("toggle_mobile_sidebar"))}
+          className="p-2 rounded-xl border border-stone-200 bg-white text-stone-600 hover:text-petro-green hover:border-petro-green/40 md:hidden transition-all shadow-sm cursor-pointer"
+          title="Toggle Navigation Menu"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+          </svg>
+        </button>
+
         <img
           src="/LOGO_PETRO_DANANTARA.png"
-          alt="Petrokimia Danantara Logo"
-          className="h-8 w-auto object-contain shrink-0"
+          alt="Petrokimia Gresik Logo"
+          className="h-7 md:h-9 w-auto object-contain transition-transform duration-300 hover:scale-105"
         />
-        <div className="w-1 h-8 bg-petro-yellow rounded-full shrink-0 shadow-sm" />
+        <div className="w-1 h-7 md:h-8 bg-petro-yellow rounded-full shrink-0 shadow-sm hidden sm:block" />
         <div className="flex flex-col text-left">
-          <span className="text-[10px] text-stone-400 font-extrabold uppercase tracking-widest">
+          <span className="text-[9px] md:text-[10px] text-stone-400 font-extrabold uppercase tracking-widest truncate">
             {tx("PT Petrokimia Gresik", "PT Petrokimia Gresik")}
           </span>
-          <h1 className="text-base font-black text-stone-900 leading-none mt-1 tracking-wide">{getPageTitle()}</h1>
+          <h1 className="text-sm md:text-base font-black text-stone-900 leading-none mt-1 tracking-wide truncate">{getPageTitle()}</h1>
         </div>
       </div>
 
-      {/* Sisi Kanan: Notifikasi & Widget Profil Dinamis */}
       <div className="flex items-center gap-4.5">
 
-        {/* Lonceng Notifikasi */}
-        <div className="relative" ref={notifRef}>
-          <button
-            onClick={() => { setShowNotif(!showNotif); setShowUserMenu(false); }}
-            className="relative w-11 h-10.5 rounded-xl bg-white border border-stone-200 flex items-center justify-center text-stone-500 hover:text-petro-green hover:border-petro-green/30 hover:shadow-sm transition-all duration-200 group cursor-pointer"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5 transition-transform duration-300 group-hover:scale-110">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
-            </svg>
+        <NotificationsMenu
+          mounted={mounted}
+          tx={tx}
+          allNotifications={apiNotifications}
+          getNotifIcon={getNotifIcon}
+          showUserMenu={showUserMenu}
+          setShowUserMenu={setShowUserMenu}
+          onMarkAllRead={handleMarkAllRead}
+        />
 
-            {/* Lencana Jumlah Notifikasi Berbentuk Angka */}
-            <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-[10px] font-black text-white flex items-center justify-center border-2 border-white shadow-sm">
-              3
-            </span>
-          </button>
-
-          {/* Dropdown Notifikasi dengan Garis Emas Petrokimia di Atas */}
-          {showNotif && (
-            <div className="absolute right-0 top-13.5 w-80 bg-white rounded-2xl shadow-xl border border-stone-200/80 border-t-4 border-t-petro-yellow z-50 animate-slideDown overflow-hidden">
-              <div className="px-4 py-3 border-b border-stone-100 flex items-center justify-between">
-                <span className="text-xs font-extrabold text-stone-800">{tx("Notifications", "Notifications")}</span>
-                <span className="text-[10px] text-petro-green font-bold cursor-pointer hover:underline">{tx("Mark all read", "Mark all read")}</span>
-              </div>
-              <div className="divide-y divide-stone-50">
-                {/* Tampilkan 3 notifikasi teratas di dropdown */}
-                {allNotifications.slice(0, 3).map((n) => (
-                  <Link
-                    href={n.href}
-                    key={n.id}
-                    onClick={() => setShowNotif(false)}
-                    className="flex gap-3 px-4 py-3 hover:bg-stone-50/50 cursor-pointer transition-colors duration-150 text-left items-start relative block"
-                  >
-                    {getNotifIcon(n.type)}
-                    <div className="flex-1 min-w-0 text-left pr-4">
-                      <p className="text-xs font-bold text-stone-800 truncate">{n.title}</p>
-                      <p className="text-[10px] text-stone-500 font-semibold truncate mt-0.5">{n.sub}</p>
-                      <span className="text-[9px] text-stone-400 font-bold block mt-1">{n.time}</span>
-                    </div>
-                    {n.unread && (
-                      <span className="w-2 h-2 rounded-full bg-emerald-600 shrink-0 self-center absolute right-4 shadow-sm" />
-                    )}
-                  </Link>
-                ))}
-              </div>
-
-              {/* Mengklik "Lihat semua" kini memicu pembukaan Modal Popup Semua Notifikasi */}
-              <div className="px-4 py-2.5 border-t border-stone-100 text-center">
-                <button
-                  onClick={() => { setShowAllNotifModal(true); setShowNotif(false); }}
-                  className="w-full text-xs text-petro-green font-bold cursor-pointer hover:underline text-center focus:outline-none"
-                >
-                  {tx("View all notifications", "View all notifications")}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* User Card Widget */}
         <div className="relative" ref={userMenuRef}>
           {user ? (
             <button
-              onClick={() => { setShowUserMenu(!showUserMenu); setShowNotif(false); }}
+              onClick={() => setShowUserMenu(!showUserMenu)}
               className="flex items-center gap-3 bg-white border border-stone-200/80 pl-2 pr-4 py-2 rounded-xl shadow-sm hover:shadow-md hover:border-stone-300 transition-all duration-200 group cursor-pointer"
             >
               {user.avatar_url ? (
@@ -331,64 +289,6 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* ── REVISI: TELEPORTASI MODAL POPUP MENGGUNAKAN REACT PORTAL ── */}
-      {/* Menggunakan createPortal agar modal dimuat langsung di bawah <body> untuk menghindari clipping dari header */}
-      {showAllNotifModal && mounted && createPortal(
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-md flex items-center justify-center z-[9999] animate-fadeIn px-4">
-          <div className="bg-white rounded-3xl shadow-2xl border border-stone-200/80 w-full max-w-xl max-h-[80vh] flex flex-col overflow-hidden animate-scaleIn border-t-4 border-t-petro-yellow">
-
-            {/* Header Modal */}
-            <div className="px-6 py-4.5 border-b border-stone-100 flex items-center justify-between">
-              <div className="text-left">
-                <h3 className="text-base font-black text-stone-900">{tx("All Notifications", "All Notifications")}</h3>
-                <p className="text-[10px] text-stone-400 font-semibold mt-1">{tx("View and manage your recent system alerts and updates", "View and manage your recent system alerts and updates")}</p>
-              </div>
-              <button
-                onClick={() => setShowAllNotifModal(false)}
-                className="w-8 h-8 rounded-full hover:bg-stone-50 border border-stone-200 flex items-center justify-center text-stone-500 hover:text-stone-700 transition-all cursor-pointer focus:outline-none"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* List Notifikasi (Scrollable) */}
-            <div className="flex-1 overflow-y-auto divide-y divide-stone-100 px-2 py-1">
-              {allNotifications.map((n) => (
-                <Link
-                  href={n.href}
-                  key={n.id}
-                  onClick={() => setShowAllNotifModal(false)}
-                  className="flex gap-4 p-5 hover:bg-stone-50/50 transition-colors duration-150 text-left items-start relative rounded-2xl my-1 block"
-                >
-                  {getNotifIcon(n.type)}
-                  <div className="flex-1 min-w-0 pr-6 text-left">
-                    <p className="text-xs font-black text-stone-900">{n.title}</p>
-                    <p className="text-[10px] text-stone-500 font-semibold mt-1 leading-relaxed">{n.sub}</p>
-                    <span className="text-[9px] text-stone-450 font-bold block mt-2">{n.time}</span>
-                  </div>
-                  {n.unread && (
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 shrink-0 self-center absolute right-6 shadow-sm" />
-                  )}
-                </Link>
-              ))}
-            </div>
-
-            {/* Footer Modal */}
-            <div className="px-6 py-4 border-t border-stone-100 flex items-center justify-between bg-stone-50/50">
-              <span className="text-xs text-petro-green font-extrabold cursor-pointer hover:underline">{tx("Mark all read", "Mark all read")}</span>
-              <button
-                onClick={() => setShowAllNotifModal(false)}
-                className="px-4 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer focus:outline-none"
-              >
-                {tx("Close", "Close")}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body // Meneleportasikan HTML modal langsung di bawah body dokumen
-      )}
     </header>
   );
 }

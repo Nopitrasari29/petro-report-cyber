@@ -183,15 +183,16 @@ class ChartGenerator:
 
             # --- GRAFIK 1: Tren Event per Periode (Time Series) ---
             if date_col:
-                num_cols = _find_numeric_cols(df, exclude=[date_col])
-                if num_cols:
-                    main_num = num_cols[0]
-                    fig_trend = px.line(
-                        df, x=date_col, y=num_cols[:3],
-                        title=f"Tren Volume {data_type.replace('_', ' ').title()} per Periode",
-                        labels={date_col: "Waktu / Periode"}
+                try:
+                    daily_dates = pd.to_datetime(df[date_col]).dt.strftime("%Y-%m-%d")
+                    df_trend = df.groupby(daily_dates).size().reset_index(name="jumlah_event")
+                    df_trend.columns = ["Tanggal", "Jumlah Event"]
+                    fig_trend = px.area(
+                        df_trend, x="Tanggal", y="Jumlah Event",
+                        title=f"Tren Volume Aktivitas Log {data_type.replace('_', ' ').title()} (Jumlah Insiden / Hari)",
+                        labels={"Tanggal": "Tanggal", "Jumlah Event": "Jumlah Log / Alert"}
                     )
-                else:
+                except Exception:
                     df_trend = df.groupby(date_col).size().reset_index(name="jumlah_event")
                     fig_trend = px.line(
                         df_trend, x=date_col, y="jumlah_event",
@@ -241,9 +242,13 @@ class ChartGenerator:
                 fig_cat = px.bar(
                     top_cats, x="count", y=cat_col, orientation="h",
                     title=f"Top 10 Kategori Alert & Aktivitas ({data_type.replace('_', ' ').title()})",
-                    labels={cat_col: "Kategori / Event", "count": "Jumlah Incident"}
+                    labels={cat_col: "", "count": "Jumlah Incident"}
                 )
                 fig_cat = _build_layout(fig_cat, fig_cat.layout.title.text)
+                fig_cat.update_layout(
+                    margin={"l": 180, "r": 30, "t": 50, "b": 50},
+                    yaxis={"categoryorder": "total ascending", "title_text": "", "automargin": True}
+                )
                 charts.append(json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_cat)))
 
             # Fallback jika tidak ada chart khusus yang terbentuk

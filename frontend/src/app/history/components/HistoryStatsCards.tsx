@@ -33,7 +33,7 @@ export default function HistoryStatsCards({
 
   return (
     <ScrollReveal animation="fadeInUp" delay={100}>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         {/* Total Reports */}
         <div className="bg-white border border-stone-200/80 rounded-2xl p-5 shadow-sm text-left flex flex-col justify-between premium-card-hover cursor-pointer">
           <div>

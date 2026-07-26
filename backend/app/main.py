@@ -15,20 +15,23 @@ DIM = "\033[2m"   # Dim
 R  = "\033[0m"    # Reset
 
 def print_banner():
-    print(f"""
-{G}╔══════════════════════════════════════════════════════════╗
-║{W}       AI Security Reports — FastAPI Backend              {G}║
-║{DIM}       PT Petrokimia Gresik · SOC Intelligence Platform    {G}║
-╠══════════════════════════════════════════════════════════╣
-║  {C}API Docs  {R}→  {W}http://localhost:8000/docs                   {G}║
-║  {C}Health   {R}→  {W}http://localhost:8000/health                  {G}║
-║  {C}API Base {R}→  {W}http://localhost:8000/api/v1                  {G}║
-╠══════════════════════════════════════════════════════════╣
-║  {Y}Database {R}→  {W}PostgreSQL @ localhost:5432                   {G}║
-║  {Y}Auth     {R}→  {W}JWT + Google OAuth2                          {G}║
-║  {Y}Email    {R}→  {W}SMTP (Fallback: Terminal Log Mode)            {G}║
-╚══════════════════════════════════════════════════════════╝{R}
+    try:
+        print(f"""
+{G}+----------------------------------------------------------+
+|{W}       AI Security Reports — FastAPI Backend              {G}|
+|{DIM}       PT Petrokimia Gresik · SOC Intelligence Platform    {G}|
++----------------------------------------------------------+
+|  {C}API Docs  {R}->  {W}http://localhost:8000/docs                   {G}|
+|  {C}Health   {R}->  {W}http://localhost:8000/health                  {G}|
+|  {C}API Base {R}->  {W}http://localhost:8000/api/v1                  {G}|
++----------------------------------------------------------+
+|  {Y}Database {R}->  {W}PostgreSQL @ localhost:5432                   {G}|
+|  {Y}Auth     {R}->  {W}JWT + Google OAuth2                          {G}|
+|  {Y}Email    {R}->  {W}SMTP (Fallback: Terminal Log Mode)            {G}|
++----------------------------------------------------------+{R}
 """)
+    except Exception:
+        print("[STARTUP] AI Security Reports Backend running on http://localhost:8000")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -10,11 +10,12 @@ def sanitize_for_json(obj: Any) -> Any:
     """
     if obj is None:
         return None
-    try:
-        if pd.isna(obj):
-            return None
-    except Exception:
-        pass
+    if not isinstance(obj, (dict, list, tuple, set, pd.DataFrame, pd.Series)):
+        try:
+            if pd.isna(obj):
+                return None
+        except Exception:
+            pass
 
     if isinstance(obj, (datetime.datetime, datetime.date, pd.Timestamp)):
         return obj.isoformat()

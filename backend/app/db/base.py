@@ -4,3 +4,5 @@ from app.db.session import Base
 from app.models.user import User
 from app.models.report import Report
 from app.models.system_setting import SystemSetting
+from app.models.notification import Notification
+from app.models.audit_log import AuditLog  # Fix #9: Audit Log System

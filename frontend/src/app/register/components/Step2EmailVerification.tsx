@@ -1,15 +1,18 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { t } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
 
 interface Step2EmailVerificationProps {
   email: string;
-  onBack: () => void;
+  onBack?: () => void;
+  onBackToLogin?: () => void;
 }
 
 export default function Step2EmailVerification({
   email,
   onBack,
+  onBackToLogin,
 }: Step2EmailVerificationProps) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -26,7 +29,7 @@ export default function Step2EmailVerification({
     setError("");
     try {
       const res = await fetch(
-        "http://localhost:8000/api/v1/auth/resend-verification",
+        `${API_BASE_URL}/api/v1/auth/resend-verification`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

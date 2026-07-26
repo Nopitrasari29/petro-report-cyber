@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { setLanguage as setUiLanguage, t } from "@/utils/i18n";
+import { t, getLanguage, setLanguage as setUiLanguage } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
 import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import ScrollReveal from "@/components/ScrollReveal";
@@ -50,7 +51,7 @@ export default function SettingsPage() {
 
       // 1. Fetch User Profile (termasuk preferensi personal: language, appearance, notifikasi)
       const profileRes = await fetch(
-        "http://localhost:8000/api/v1/settings/profile",
+        `${API_BASE_URL}/api/v1/settings/profile`,
         { headers },
       );
       if (profileRes.status === 401 || profileRes.status === 403) {
@@ -136,7 +137,7 @@ export default function SettingsPage() {
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      await fetch("http://localhost:8000/api/v1/settings/profile", {
+      await fetch(`${API_BASE_URL}/api/v1/settings/profile`, {
         method: "PUT",
         headers,
         body: JSON.stringify({
@@ -206,7 +207,7 @@ export default function SettingsPage() {
       }
 
       const profileRes = await fetch(
-        "http://localhost:8000/api/v1/settings/profile",
+        `${API_BASE_URL}/api/v1/settings/profile`,
         {
           method: "PUT",
           headers: authHeaders,
@@ -257,10 +258,10 @@ export default function SettingsPage() {
     <div className="min-h-screen bg-petro-bg-warm flex">
       <Sidebar />
 
-      <div className="flex-1 pl-64 flex flex-col min-h-screen">
+      <div className="flex-1 pl-0 md:pl-64 flex flex-col min-h-screen">
         <Navbar />
 
-        <main className="flex-1 p-8 max-w-4xl mx-auto w-full space-y-6">
+        <main className="flex-1 p-4 sm:p-6 md:p-8 max-w-4xl mx-auto w-full space-y-6">
           {/* Header Title section */}
           <div className="flex justify-between items-center text-left animate-fadeInUp">
             <div>

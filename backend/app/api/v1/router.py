@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, upload, analysis, chart, history, validation, settings, dashboard, profile
+from app.api.v1.endpoints import auth, upload, analysis, chart, history, validation, settings, dashboard, profile, notifications
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -11,3 +11,4 @@ api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboar
 api_router.include_router(validation.router, prefix="/validation", tags=["validation"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
 api_router.include_router(profile.router, prefix="/settings", tags=["profile"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])

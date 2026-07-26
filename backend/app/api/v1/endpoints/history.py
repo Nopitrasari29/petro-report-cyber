@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -7,6 +7,7 @@ import io
 from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
 from app.crud.report import get_owned_report, delete_report, update_report
+from app.crud.audit_log import log_action  # Fix #9: Audit Log
 from app.schemas.report import ReportResponse, ReportUpdate
 from app.models.report import Report
 from app.services.export_pdf import PDFExporter
@@ -87,6 +88,7 @@ def read_report_detail(
 @router.delete("/{report_id}")
 def remove_report(
     report_id: int,
+    request: Request,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -97,18 +99,97 @@ def remove_report(
     db_report = get_owned_report(db, report_id, current_user.id)
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
+    report_title = db_report.title  # Simpan sebelum dihapus
     delete_report(db, report_id)
+    # Fix #9: Catat aksi delete ke audit log
+    try:
+        log_action(
+            db, user_id=current_user.id, action="delete",
+            resource_type="report", resource_id=report_id,
+            detail=f"Laporan '{report_title}' dihapus.",
+            ip_address=request.client.host if request.client else None
+        )
+    except Exception:
+        pass  # Audit log jangan sampai mengganggu respons utama
     return {"status": "success", "message": "Laporan berhasil dihapus dari riwayat siber."}
+
+@router.post("/bulk-delete")
+def bulk_remove_reports(
+    report_ids: List[int],
+    request: Request,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Menghapus beberapa laporan sekaligus dari database riwayat.
+    Hanya bisa dilakukan untuk laporan milik user yang sedang login.
+    """
+    if not report_ids:
+        raise HTTPException(status_code=400, detail="Daftar ID laporan tidak boleh kosong.")
+
+    deleted_count = db.query(Report).filter(
+        Report.id.in_(report_ids),
+        Report.user_id == current_user.id
+    ).delete(synchronize_session=False)
+
+    db.commit()
+    # Fix #9: Catat aksi bulk delete ke audit log
+    try:
+        log_action(
+            db, user_id=current_user.id, action="bulk_delete",
+            resource_type="report", resource_id=None,
+            detail=f"{deleted_count} laporan dihapus sekaligus. IDs: {report_ids}",
+            ip_address=request.client.host if request.client else None
+        )
+    except Exception:
+        pass
+    return {"status": "success", "deleted_count": deleted_count, "message": f"{deleted_count} laporan berhasil dihapus."}
+
+@router.post("/{report_id}/retry")
+def retry_report_analysis(
+    report_id: int,
+    request: Request,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Memicu ulang analisis AI untuk laporan berstatus 'failed'.
+    """
+    db_report = get_owned_report(db, report_id, current_user.id)
+    if not db_report:
+        raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
+
+    db_report.status = "processing"
+    db_report.tokens_generated = 0
+    db.commit()
+    db.refresh(db_report)
+
+    from app.api.v1.endpoints.analysis import _run_analysis_job
+    import threading
+    threading.Thread(target=_run_analysis_job, args=(report_id,), daemon=True).start()
+
+    # Fix #9: Catat aksi retry ke audit log
+    try:
+        log_action(
+            db, user_id=current_user.id, action="retry_analysis",
+            resource_type="report", resource_id=report_id,
+            detail=f"Analisis AI dipicu ulang untuk laporan '{db_report.title}'.",
+            ip_address=request.client.host if request.client else None
+        )
+    except Exception:
+        pass
+    return {"status": "processing", "message": "Analisis AI berhasil dipicu ulang di background."}
 
 @router.get("/{report_id}/pdf")
 def download_pdf_report(
     report_id: int,
+    request: Request,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Mengekspor laporan keamanan siber ke file PDF dan mendownloadnya.
-    Hanya bisa dilakukan oleh pemilik laporan tersebut.
+    Disimpan di cache disk (storage/exports/) agar download berikutnya instan.
     """
     db_report = get_owned_report(db, report_id, current_user.id)
     if not db_report:
@@ -120,37 +201,64 @@ def download_pdf_report(
             detail="Laporan belum dianalisis oleh AI. Silakan jalankan analisis terlebih dahulu sebelum melakukan ekspor."
         )
 
-    if not db_report.chart_data and db_report.parsed_data:
-        try:
-            chart_config = ChartGenerator.generate_chart_config(db_report.data_type, db_report.parsed_data)
-            db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
-        except Exception as chart_err:
-            print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PDF: {chart_err}")
+    # Cek cache di disk
+    import os
+    export_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "storage", "exports")
+    os.makedirs(export_dir, exist_ok=True)
+    pdf_cache_path = os.path.join(export_dir, f"soc_report_{report_id}.pdf")
 
+    if os.path.exists(pdf_cache_path) and db_report.file_pdf_path == pdf_cache_path:
+        with open(pdf_cache_path, "rb") as f:
+            pdf_bytes = f.read()
+    else:
+        if not db_report.chart_data and db_report.parsed_data:
+            try:
+                chart_config = ChartGenerator.generate_chart_config(db_report.data_type, db_report.parsed_data)
+                db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
+            except Exception as chart_err:
+                print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PDF: {chart_err}")
+
+        try:
+            pdf_bytes = PDFExporter.generate_pdf_report(db_report)
+            with open(pdf_cache_path, "wb") as f:
+                f.write(pdf_bytes)
+            db_report.file_pdf_path = pdf_cache_path
+            db.commit()
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Gagal melakukan ekspor PDF: {str(e)}"
+            )
+
+    # Fix #9: Catat aksi download PDF ke audit log
     try:
-        pdf_bytes = PDFExporter.generate_pdf_report(db_report)
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename=soc_report_{report_id}.pdf"
-            }
+        log_action(
+            db, user_id=current_user.id, action="download_pdf",
+            resource_type="report", resource_id=report_id,
+            detail=f"PDF diunduh untuk laporan '{db_report.title}'.",
+            ip_address=request.client.host if request.client else None
         )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Gagal melakukan ekspor PDF: {str(e)}"
-        )
+    except Exception:
+        pass
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=soc_report_{report_id}.pdf"
+        }
+    )
 
 @router.get("/{report_id}/pptx")
 def download_pptx_report(
     report_id: int,
+    request: Request,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Mengekspor laporan keamanan siber ke slide presentasi PowerPoint (.pptx).
-    Hanya bisa dilakukan oleh pemilik laporan tersebut.
+    Disimpan di cache disk (storage/exports/) agar download berikutnya instan.
     """
     db_report = get_owned_report(db, report_id, current_user.id)
     if not db_report:
@@ -162,24 +270,50 @@ def download_pptx_report(
             detail="Laporan belum dianalisis oleh AI. Silakan jalankan analisis terlebih dahulu."
         )
 
-    if not db_report.chart_data and db_report.parsed_data:
-        try:
-            chart_config = ChartGenerator.generate_chart_config(db_report.data_type, db_report.parsed_data)
-            db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
-        except Exception as chart_err:
-            print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PPTX: {chart_err}")
+    # Cek cache di disk
+    import os
+    export_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "storage", "exports")
+    os.makedirs(export_dir, exist_ok=True)
+    ppt_cache_path = os.path.join(export_dir, f"soc_report_{report_id}.pptx")
 
+    if os.path.exists(ppt_cache_path) and db_report.file_ppt_path == ppt_cache_path:
+        with open(ppt_cache_path, "rb") as f:
+            ppt_bytes = f.read()
+    else:
+        if not db_report.chart_data and db_report.parsed_data:
+            try:
+                chart_config = ChartGenerator.generate_chart_config(db_report.data_type, db_report.parsed_data)
+                db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
+            except Exception as chart_err:
+                print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PPTX: {chart_err}")
+
+        try:
+            ppt_bytes = PPTXExporter.generate_ppt_report(db_report)
+            with open(ppt_cache_path, "wb") as f:
+                f.write(ppt_bytes)
+            db_report.file_ppt_path = ppt_cache_path
+            db.commit()
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Gagal melakukan ekspor PPTX: {str(e)}"
+            )
+
+    # Fix #9: Catat aksi download PPTX ke audit log
     try:
-        ppt_bytes = PPTXExporter.generate_ppt_report(db_report)
-        return Response(
-            content=ppt_bytes,
-            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            headers={
-                "Content-Disposition": f"attachment; filename=soc_report_{report_id}.pptx"
-            }
+        log_action(
+            db, user_id=current_user.id, action="download_pptx",
+            resource_type="report", resource_id=report_id,
+            detail=f"PPTX diunduh untuk laporan '{db_report.title}'.",
+            ip_address=request.client.host if request.client else None
         )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Gagal melakukan ekspor PPTX: {str(e)}"
-        )
+    except Exception:
+        pass
+
+    return Response(
+        content=ppt_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={
+            "Content-Disposition": f"attachment; filename=soc_report_{report_id}.pptx"
+        }
+    )

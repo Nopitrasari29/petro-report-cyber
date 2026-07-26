@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { t, getLanguage } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
 
 function AuthLeftPanel() {
   const [mounted, setMounted] = useState(false);
@@ -130,7 +131,7 @@ function ResetPasswordContent() {
     setLoading(true);
     try {
       const res = await fetch(
-        "http://localhost:8000/api/v1/auth/reset-password",
+        `${API_BASE_URL}/api/v1/auth/reset-password`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

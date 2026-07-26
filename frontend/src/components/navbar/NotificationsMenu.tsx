@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { t } from "@/utils/i18n";
 
@@ -19,6 +20,7 @@ interface NotificationsMenuProps {
   getNotifIcon: (type: string) => React.ReactNode;
   showUserMenu: boolean;
   setShowUserMenu: (show: boolean) => void;
+  onMarkAllRead?: () => void;
 }
 
 export default function NotificationsMenu({
@@ -27,6 +29,7 @@ export default function NotificationsMenu({
   allNotifications,
   getNotifIcon,
   setShowUserMenu,
+  onMarkAllRead,
 }: NotificationsMenuProps) {
   const [showNotif, setShowNotif] = useState(false);
   const [showAllNotifModal, setShowAllNotifModal] = useState(false);
@@ -70,7 +73,12 @@ export default function NotificationsMenu({
         <div className="absolute right-0 top-13.5 w-80 bg-white rounded-2xl shadow-xl border border-stone-200/80 border-t-4 border-t-petro-yellow z-50 animate-slideDown overflow-hidden">
           <div className="px-4 py-3 border-b border-stone-100 flex items-center justify-between">
             <span className="text-xs font-extrabold text-stone-800">{tx("Notifications", "Notifications")}</span>
-            <span className="text-[10px] text-petro-green font-bold cursor-pointer hover:underline">{tx("Mark all read", "Mark all read")}</span>
+            <button
+              onClick={onMarkAllRead}
+              className="text-[10px] text-petro-green font-bold cursor-pointer hover:underline focus:outline-none"
+            >
+              {tx("Mark all read", "Mark all read")}
+            </button>
           </div>
           <div className="divide-y divide-stone-50">
             {allNotifications.length === 0 ? (
@@ -113,9 +121,9 @@ export default function NotificationsMenu({
         </div>
       )}
 
-      {/* Modal Popup All Notifications */}
-      {showAllNotifModal && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-md flex items-center justify-center z-50 animate-fadeIn px-4">
+      {/* Modal Popup All Notifications dengan Teleportasi createPortal */}
+      {showAllNotifModal && mounted && createPortal(
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-md flex items-center justify-center z-[9999] animate-fadeIn px-4">
           <div className="bg-white rounded-3xl shadow-2xl border border-stone-200/80 w-full max-w-xl max-h-[80vh] flex flex-col overflow-hidden animate-scaleIn border-t-4 border-t-petro-yellow">
 
             {/* Header Modal */}
@@ -164,7 +172,12 @@ export default function NotificationsMenu({
 
             {/* Footer Modal */}
             <div className="px-6 py-4 border-t border-stone-100 flex items-center justify-between bg-stone-50/50">
-              <span className="text-xs text-petro-green font-extrabold cursor-pointer hover:underline">{tx("Mark all read", "Mark all read")}</span>
+              <button
+                onClick={onMarkAllRead}
+                className="text-xs text-petro-green font-extrabold cursor-pointer hover:underline focus:outline-none"
+              >
+                {tx("Mark all read", "Mark all read")}
+              </button>
               <button
                 onClick={() => setShowAllNotifModal(false)}
                 className="px-4 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer focus:outline-none"
@@ -173,7 +186,8 @@ export default function NotificationsMenu({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -41,6 +41,8 @@ interface HistoryTableProps {
   formatDateString: (date: string) => string;
   handleDownloadFile: (id: number, format: "pdf" | "pptx") => void;
   handleDelete: (id: number) => void;
+  handleBulkDelete?: (ids: number[]) => void;
+  handleRetry?: (id: number) => void;
 }
 
 export default function HistoryTable({
@@ -60,105 +62,156 @@ export default function HistoryTable({
   formatDateString,
   handleDownloadFile,
   handleDelete,
+  handleBulkDelete,
+  handleRetry,
 }: HistoryTableProps) {
   const [mounted, setMounted] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+
   useEffect(() => {
     setMounted(true);
   }, []);
   const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
 
+  const toggleSelectAll = () => {
+    if (selectedIds.length === currentRows.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(currentRows.map((r) => r.id));
+    }
+  };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const onBulkDeleteClick = () => {
+    if (!selectedIds.length) return;
+    if (confirm(`Apakah Anda yakin ingin menghapus ${selectedIds.length} laporan terpilih?`)) {
+      if (handleBulkDelete) {
+        handleBulkDelete(selectedIds);
+        setSelectedIds([]);
+      }
+    }
+  };
+
   return (
     <>
+      {/* Floating Bulk Action Bar */}
+      {selectedIds.length > 0 && (
+        <div className="bg-[#004D25] text-white px-6 py-3 border-b border-white/10 flex items-center justify-between animate-fadeIn text-xs font-bold">
+          <span>
+            {selectedIds.length} {tx("report(s) selected", "report(s) selected")}
+          </span>
+          <button
+            onClick={onBulkDeleteClick}
+            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor" className="w-4 h-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9 9m12 6a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25V5.25c0-.54.384-1.006.917-1.096A48.24 48.24 0 0 1 12 3c2.78 0 5.518.232 8.161.68.525.09.917.556.917 1.096V15Z" />
+            </svg>
+            {tx("Delete Selected", "Delete Selected")}
+          </button>
+        </div>
+      )}
+
       {/* Table Area */}
       {loading ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>
               <tr className="bg-stone-50/70 border-b border-stone-150 text-stone-500 font-extrabold text-[11px] uppercase tracking-wider text-left">
-                <th className="py-4 px-6">
-                  {tx("Report Name", "Report Name")}
+                <th className="py-4 px-4 w-10 text-center">
+                  <input type="checkbox" disabled checked={false} readOnly className="rounded border-stone-300" />
                 </th>
+                <th className="py-4 px-6">{tx("Report Name", "Report Name")}</th>
                 <th className="py-4 px-6">{tx("Period", "Period")}</th>
-                <th className="py-4 px-6">
-                  {tx("Report Type", "Report Type")}
-                </th>
-                <th className="py-4 px-6">{tx("Created By", "Created By")}</th>
+                <th className="py-4 px-6">{tx("Report Type", "Report Type")}</th>
                 <th className="py-4 px-6">{tx("Status", "Status")}</th>
                 <th className="py-4 px-6">{tx("Created At", "Created At")}</th>
-                <th className="py-4 px-6 text-center">
-                  {tx("Action", "Action")}
-                </th>
+                <th className="py-4 px-6 text-center">{tx("Action", "Action")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
               {Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i}>
-                  <td className="py-4 px-6">
-                    <div className="skeleton h-3.5 w-48 rounded" />
-                  </td>
-                  <td className="py-4 px-6">
-                    <div className="skeleton h-3 w-28 rounded" />
-                  </td>
-                  <td className="py-4 px-6">
-                    <div className="skeleton h-3 w-24 rounded" />
-                  </td>
-                  <td className="py-4 px-6">
-                    <div className="skeleton h-3 w-20 rounded" />
-                  </td>
-                  <td className="py-4 px-6">
-                    <div className="skeleton h-5 w-16 rounded-full" />
-                  </td>
-                  <td className="py-4 px-6">
-                    <div className="skeleton h-3 w-24 rounded" />
-                  </td>
-                  <td className="py-4 px-6">
-                    <div className="flex justify-center gap-2">
-                      <div className="skeleton h-6 w-6 rounded-lg" />
-                      <div className="skeleton h-6 w-6 rounded-lg" />
-                      <div className="skeleton h-6 w-6 rounded-lg" />
-                    </div>
-                  </td>
+                  <td className="py-4 px-4 text-center"><div className="skeleton h-4 w-4 rounded" /></td>
+                  <td className="py-4 px-6"><div className="skeleton h-3.5 w-48 rounded" /></td>
+                  <td className="py-4 px-6"><div className="skeleton h-3 w-28 rounded" /></td>
+                  <td className="py-4 px-6"><div className="skeleton h-3 w-24 rounded" /></td>
+                  <td className="py-4 px-6"><div className="skeleton h-5 w-16 rounded-full" /></td>
+                  <td className="py-4 px-6"><div className="skeleton h-3 w-24 rounded" /></td>
+                  <td className="py-4 px-6"><div className="flex justify-center gap-2"><div className="skeleton h-6 w-6 rounded-lg" /></div></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       ) : filteredReports.length === 0 ? (
-        <div className="p-20 text-center text-stone-400 font-bold text-sm">
-          {tx(
-            "No reports found matching filters.",
-            "No reports found matching filters.",
-          )}
+        <div className="p-16 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-stone-100 border border-stone-200 text-stone-400 flex items-center justify-center mx-auto">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+            </svg>
+          </div>
+          <div>
+            <h4 className="text-base font-extrabold text-stone-800">
+              {tx("No Security Reports Found", "No Security Reports Found")}
+            </h4>
+            <p className="text-xs text-stone-500 font-semibold mt-1">
+              {tx("No report records available matching your current filter.", "No report records available matching your current filter.")}
+            </p>
+          </div>
+          <Link
+            href="/generate"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white text-xs font-black shadow-sm transition-all"
+          >
+            + {tx("Generate First Report", "Generate First Report")}
+          </Link>
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>
               <tr className="bg-stone-50/70 border-b border-stone-150 text-stone-500 font-extrabold text-[11px] uppercase tracking-wider text-left">
-                <th className="py-4 px-6">
-                  {tx("Report Name", "Report Name")}
+                <th className="py-4 px-4 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(currentRows.length > 0 && selectedIds.length === currentRows.length)}
+                    onChange={toggleSelectAll}
+                    className="rounded border-stone-300 text-petro-green focus:ring-petro-green cursor-pointer"
+                  />
                 </th>
+                <th className="py-4 px-6">{tx("Report Name", "Report Name")}</th>
                 <th className="py-4 px-6">{tx("Period", "Period")}</th>
-                <th className="py-4 px-6">
-                  {tx("Report Type", "Report Type")}
-                </th>
-                <th className="py-4 px-6">{tx("Created By", "Created By")}</th>
+                <th className="py-4 px-6">{tx("Report Type", "Report Type")}</th>
                 <th className="py-4 px-6">{tx("Status", "Status")}</th>
                 <th className="py-4 px-6">{tx("Created At", "Created At")}</th>
-                <th className="py-4 px-6 text-center">
-                  {tx("Action", "Action")}
-                </th>
+                <th className="py-4 px-6 text-center">{tx("Action", "Action")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100 text-stone-700 text-xs font-bold">
               {currentRows.map((item, rowIdx) => {
                 const statusDetails = getStatusDetails(item.status);
+                const isSelected = selectedIds.includes(item.id);
                 return (
                   <tr
                     key={item.id}
-                    className="group hover:bg-stone-50/70 transition-all duration-200 animate-fadeInUp"
+                    className={`group transition-all duration-200 animate-fadeInUp ${
+                      isSelected ? "bg-emerald-50/60" : "hover:bg-stone-50/70"
+                    }`}
                     style={{ animationDelay: `${rowIdx * 40}ms` }}
                   >
+                    <td className="py-4 px-4 text-center">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(isSelected)}
+                        onChange={() => toggleSelect(item.id)}
+                        className="rounded border-stone-300 text-petro-green focus:ring-petro-green cursor-pointer"
+                      />
+                    </td>
                     <td className="py-4 px-6 font-black text-stone-855 text-left group-hover:text-petro-green transition-colors duration-200">
                       {item.title}
                     </td>
@@ -166,21 +219,13 @@ export default function HistoryTable({
                       {formatPeriod(item.period_start, item.period_end)}
                     </td>
                     <td className="py-4 px-6 text-left">
-                      {tx(
-                        getDataTypeLabel(item),
-                        getDataTypeLabel(item),
-                      )}
-                    </td>
-                    {/* REVISI: Mengganti nama statis dummy "Rafika" menjadi nama pembuat riil dari DB secara dinamis */}
-                    <td className="py-4 px-6 text-left">
-                      {item.created_by_name || tx("Analyst", "Analyst")}
+                      {tx(getDataTypeLabel(item), getDataTypeLabel(item))}
                     </td>
                     <td className="py-4 px-6 text-left">
                       <span
                         className={`px-3 py-1 rounded-full font-bold text-[10px] whitespace-nowrap inline-flex items-center gap-1.5 ${statusDetails.classes}`}
                       >
-                        {item.status === "draft" ||
-                        item.status === "analyzed" ? (
+                        {item.status === "draft" || item.status === "processing" ? (
                           <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
                         ) : null}
                         {tx(statusDetails.label, statusDetails.label)}
@@ -190,6 +235,20 @@ export default function HistoryTable({
                       {formatDateString(item.created_at)}
                     </td>
                     <td className="py-4 px-6 text-center flex items-center justify-center gap-2">
+                      {/* Retry Button if Failed */}
+                      {item.status === "failed" && handleRetry && (
+                        <button
+                          onClick={() => handleRetry(item.id)}
+                          className="px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-extrabold text-[10px] transition-colors shadow-sm cursor-pointer flex items-center gap-1"
+                          title={tx("Retry AI Analysis", "Retry AI Analysis")}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor" className="w-3.5 h-3.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                          </svg>
+                          {tx("Retry", "Retry")}
+                        </button>
+                      )}
+
                       {/* View Action */}
                       <Link
                         href={`/history/${item.id}`}

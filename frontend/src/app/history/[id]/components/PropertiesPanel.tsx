@@ -35,7 +35,7 @@ export default function PropertiesPanel({ report }: PropertiesPanelProps) {
   const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
 
   return (
-    <div className="lg:col-span-3 bg-white border border-stone-200/85 rounded-2xl p-4 shadow-sm h-[520px]">
+    <div className="lg:col-span-3 bg-white border border-stone-200/85 rounded-2xl p-4 shadow-sm h-auto lg:h-[520px] overflow-y-auto">
       <h3 className="font-extrabold text-stone-900 text-sm border-b border-stone-100 pb-3 flex justify-between items-center cursor-pointer">
         <span>{tx("Properties", "Properties")}</span>
         <svg

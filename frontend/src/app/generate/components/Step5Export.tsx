@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import ScrollReveal from "@/components/ScrollReveal";
+import { API_BASE_URL } from "@/utils/api";
 
 interface Step5ExportProps {
   reportId: number | null;
@@ -22,7 +23,7 @@ async function downloadAuthorizedFile(
     throw new Error("Token tidak ditemukan. Silakan login ulang.");
   }
 
-  const url = `http://localhost:8000/api/v1/history/${reportId}/${format}`;
+  const url = `${API_BASE_URL}/api/v1/history/${reportId}/${format}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
   };
@@ -60,8 +61,21 @@ export default function Step5Export({
   onReset,
   tx,
 }: Step5ExportProps) {
-  // Kalau dua-duanya gak kepilih (mestinya gak mungkin, sudah divalidasi di Report Settings),
-  // tetap tampilkan keduanya sebagai fallback biar user gak macet tanpa tombol download sama sekali.
+  const [downloadingFormat, setDownloadingFormat] = useState<"pdf" | "pptx" | null>(null);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const handleDownload = async (format: "pdf" | "pptx") => {
+    setDownloadingFormat(format);
+    setErrorMsg("");
+    try {
+      await downloadAuthorizedFile(reportId, format);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal mengunduh file.");
+    } finally {
+      setDownloadingFormat(null);
+    }
+  };
+
   const showPdf = exportFormats?.pdf || !exportFormats?.pptx;
   const showPptx = exportFormats?.pptx || !exportFormats?.pdf;
   return (
@@ -97,19 +111,30 @@ export default function Step5Export({
         </p>
       </div>
 
+      {errorMsg && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-xl">
+          {errorMsg}
+        </div>
+      )}
+
       {/* Big Cards for Download — cuma tampil sesuai format yang dicentang di Report Settings */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
         {showPdf && (
           <button
-            onClick={() => downloadAuthorizedFile(reportId, "pdf")}
-            className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors"
+            disabled={downloadingFormat !== null}
+            onClick={() => handleDownload("pdf")}
+            className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors disabled:opacity-50"
           >
-            <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-655 font-black text-xs">
-              PDF
-            </div>
+            {downloadingFormat === "pdf" ? (
+              <div className="w-10 h-10 border-3 border-stone-200 border-t-red-600 rounded-full animate-spin"></div>
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-655 font-black text-xs">
+                PDF
+              </div>
+            )}
             <div className="space-y-1">
               <div className="text-xs font-extrabold text-stone-800">
-                {tx("Download PDF", "Download PDF")}
+                {downloadingFormat === "pdf" ? tx("Generating PDF...", "Generating PDF...") : tx("Download PDF", "Download PDF")}
               </div>
               <div className="text-[9px] text-stone-400 font-bold">
                 {tx("Standard Document Format", "Standard Document Format")}
@@ -120,15 +145,20 @@ export default function Step5Export({
 
         {showPptx && (
           <button
-            onClick={() => downloadAuthorizedFile(reportId, "pptx")}
-            className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors"
+            disabled={downloadingFormat !== null}
+            onClick={() => handleDownload("pptx")}
+            className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors disabled:opacity-50"
           >
-            <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 font-black text-xs">
-              PPTX
-            </div>
+            {downloadingFormat === "pptx" ? (
+              <div className="w-10 h-10 border-3 border-stone-200 border-t-amber-600 rounded-full animate-spin"></div>
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 font-black text-xs">
+                PPTX
+              </div>
+            )}
             <div className="space-y-1">
               <div className="text-xs font-extrabold text-stone-800">
-                {tx("Download PPTX", "Download PPTX")}
+                {downloadingFormat === "pptx" ? tx("Generating PPTX...", "Generating PPTX...") : tx("Download PPTX", "Download PPTX")}
               </div>
               <div className="text-[9px] text-stone-400 font-bold">
                 {tx("Presentation Slide Deck", "Presentation Slide Deck")}

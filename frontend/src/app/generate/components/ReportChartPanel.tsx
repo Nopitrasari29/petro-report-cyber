@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import { API_BASE_URL } from "@/utils/api";
 
 // react-plotly.js di-load hanya di browser (ssr: false)
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
@@ -44,7 +45,7 @@ export default function ReportChartPanel({
         }
 
         const res = await fetch(
-          `http://localhost:8000/api/v1/chart/${reportId}`,
+          `${API_BASE_URL}/api/v1/chart/${reportId}`,
           { headers },
         );
         const data = await res.json();
@@ -128,26 +129,35 @@ export default function ReportChartPanel({
 
   return (
     <div className="space-y-6 w-full animate-fadeIn">
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 w-full">
-        {chartsList.map((c: any, idx: number) => (
-          <div
-            key={idx}
-            className="border border-stone-200/80 rounded-2xl p-5 bg-white shadow-sm hover:shadow-md transition-shadow flex flex-col items-center overflow-hidden"
-          >
-            <Plot
-              data={c.data}
-              layout={{
-                ...c.layout,
-                autosize: true,
-                margin: { l: 50, r: 30, t: 55, b: 65 },
-                font: { family: "Inter, sans-serif", size: 11 },
-              }}
-              config={{ displayModeBar: false, responsive: true }}
-              style={{ width: "100%", height: "360px" }}
-              useResizeHandler
-            />
-          </div>
-        ))}
+      <div className="grid grid-cols-1 gap-6 w-full">
+        {chartsList.map((c: any, idx: number) => {
+          const isHorizontalBar = c.data?.[0]?.orientation === "h";
+          const leftMargin = c.layout?.margin?.l ?? (isHorizontalBar ? 180 : 55);
+
+          return (
+            <div
+              key={idx}
+              className="border border-stone-200/80 rounded-2xl p-4 bg-white shadow-sm hover:shadow-md transition-shadow flex flex-col items-center overflow-x-auto w-full"
+            >
+              <Plot
+                data={c.data}
+                layout={{
+                  ...c.layout,
+                  autosize: true,
+                  margin: c.layout?.margin || { l: leftMargin, r: 30, t: 55, b: 65 },
+                  font: { family: "Inter, sans-serif", size: 10 },
+                  yaxis: {
+                    ...c.layout?.yaxis,
+                    automargin: true,
+                  },
+                }}
+                config={{ displayModeBar: false, responsive: true }}
+                style={{ width: "100%", height: "340px", minWidth: isHorizontalBar ? "380px" : "auto" }}
+                useResizeHandler
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

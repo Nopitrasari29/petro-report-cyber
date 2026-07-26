@@ -5,15 +5,19 @@ from typing import List
 import datetime
 
 from app.db.session import get_db
+from app.api.v1.endpoints.auth import get_current_user
 from app.models.datasource import DataSource
 from app.models.report import Report
 
 router = APIRouter()
 
 @router.get("/")
-def get_datasources(db: Session = Depends(get_db)):
+def get_datasources(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Mendapatkan seluruh daftar data sources yang terhubung.
+    Mendapatkan seluruh daftar data sources yang terhubung. Wajib login.
     """
     return db.query(DataSource).all()
 
@@ -24,10 +28,11 @@ def create_datasource(
     status: str = Form("Connected"),
     records_count: int = Form(0),
     data_quality: int = Form(100),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Mendaftarkan data source baru secara manual.
+    Mendaftarkan data source baru secara manual. Wajib login.
     """
     existing = db.query(DataSource).filter(DataSource.name == name).first()
     if existing:
@@ -46,9 +51,13 @@ def create_datasource(
     return ds
 
 @router.delete("/{id}")
-def delete_datasource(id: int, db: Session = Depends(get_db)):
+def delete_datasource(
+    id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Menghapus data source berdasarkan ID.
+    Menghapus data source berdasarkan ID. Wajib login.
     """
     ds = db.query(DataSource).filter(DataSource.id == id).first()
     if not ds:
@@ -59,9 +68,12 @@ def delete_datasource(id: int, db: Session = Depends(get_db)):
     return {"message": f"Sumber data '{ds.name}' berhasil dihapus."}
 
 @router.get("/stats")
-def get_datasources_stats(db: Session = Depends(get_db)):
+def get_datasources_stats(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Mendapatkan statistik data sources untuk dashboard Sumber Data secara riil dari database.
+    Mendapatkan statistik data sources untuk dashboard Sumber Data secara riil dari database. Wajib login.
     """
     # 1. Hitung metrics dasar dari tabel DataSource
     total_sources = db.query(DataSource).count()
@@ -130,6 +142,7 @@ def get_datasources_stats(db: Session = Depends(get_db)):
 def upload_datasource_file(
     name: str = Form(...),
     file: UploadFile = File(...),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """

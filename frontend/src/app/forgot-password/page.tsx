@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { t, getLanguage } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
 
 function AuthLeftPanel() {
   const [mounted, setMounted] = useState(false);
@@ -96,7 +97,7 @@ export default function ForgotPasswordPage() {
     setLoading(true);
     try {
       const res = await fetch(
-        "http://localhost:8000/api/v1/auth/forgot-password",
+        `${API_BASE_URL}/api/v1/auth/forgot-password`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

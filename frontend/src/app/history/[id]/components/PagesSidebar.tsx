@@ -23,7 +23,7 @@ export default function PagesSidebar({
   const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
 
   return (
-    <div className="lg:col-span-3 bg-white border border-stone-200/85 rounded-2xl p-4 shadow-sm flex flex-col justify-between h-[520px]">
+    <div className="lg:col-span-3 bg-white border border-stone-200/85 rounded-2xl p-4 shadow-sm flex flex-col justify-between h-auto lg:h-[520px]">
       <div>
         <h3 className="font-extrabold text-stone-900 text-sm border-b border-stone-100 pb-3 flex justify-between items-center cursor-pointer">
           <span>{tx("Pages", "Pages")}</span>

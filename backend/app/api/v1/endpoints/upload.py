@@ -138,6 +138,15 @@ def upload_security_file(
         if not files:
             raise HTTPException(status_code=400, detail="Tidak ada berkas yang diunggah.")
 
+        # Validasi konsistensi ekstensi file jika mengunggah beberapa file sekaligus
+        if len(files) > 1:
+            exts = {f.filename.split(".")[-1].lower() for f in files if "." in f.filename}
+            if len(exts) > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Semua berkas yang diunggah sekaligus harus memiliki format/ekstensi yang sama (contoh: semua .csv atau semua .xlsx)."
+                )
+
         # Baca & parse SEMUA file yang diunggah, gabungkan hasilnya jadi satu daftar data
         # (baris dari tiap file digabung apa adanya — kalau strukturnya beda antar file,
         # kolom yang tidak ada di salah satu file otomatis kosong saat diproses ke DataFrame
@@ -207,8 +216,58 @@ def upload_security_file(
         )
         
         db_report = create_report(db, report_in, user_id=current_user.id)
+
+        # Fix #2: Simpan parsed_data ke file system alih-alih membiarkannya di kolom JSON DB.
+        # Kolom JSON di DB masih terisi (dari create_report) — kita pindahkan ke file dan hapus dari DB.
+        try:
+            import os
+            parsed_dir = os.path.join(
+                os.path.dirname(__file__), "..", "..", "..", "..", "storage", "parsed"
+            )
+            os.makedirs(parsed_dir, exist_ok=True)
+            parsed_file_path = os.path.join(parsed_dir, f"parsed_{db_report.id}.json")
+            with open(parsed_file_path, "w", encoding="utf-8") as pf:
+                import json as _json
+                _json.dump(parsed_data, pf, ensure_ascii=False)
+            # Update DB: set path, kosongkan kolom JSON besar
+            db_report.parsed_data_path = parsed_file_path
+            db_report.parsed_data = None  # Hapus data besar dari DB column
+            db.commit()
+            db.refresh(db_report)
+        except Exception as fs_err:
+            # Jika gagal simpan ke file system, biarkan parsed_data tetap di DB sebagai fallback
+            print(f"[UPLOAD] ⚠️ Gagal simpan parsed_data ke file system, fallback ke DB column: {fs_err}")
+
+        # Trigger Notifikasi Upload Berhasil
+        try:
+            from app.schemas.notification import NotificationCreate
+            from app.crud.notification import create_notification
+            create_notification(
+                db,
+                NotificationCreate(
+                    user_id=current_user.id,
+                    type="info",
+                    title="Data Parsing Complete",
+                    message=f"Berkas '{db_report.input_file_name}' ({total_records} baris) berhasil di-parse.",
+                    link=f"/history/{db_report.id}"
+                )
+            )
+        except Exception as notif_err:
+            print(f"[UPLOAD] Gagal buat notifikasi upload: {notif_err}")
+
+        # Fix #9: Audit log untuk aksi upload
+        try:
+            from app.crud.audit_log import log_action
+            log_action(
+                db, user_id=current_user.id, action="upload",
+                resource_type="report", resource_id=db_report.id,
+                detail=f"File '{db_report.input_file_name}' ({total_records} baris) diunggah dan di-parse.",
+            )
+        except Exception:
+            pass
+
         return db_report
-        
+
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=f"Kesalahan validasi format data: {str(ve)}")
     except HTTPException:

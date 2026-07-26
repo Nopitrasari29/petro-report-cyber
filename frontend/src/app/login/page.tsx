@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { t, getLanguage } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
 import AuthLeftPanel from "../register/components/AuthLeftPanel";
 import LoginForm from "./components/LoginForm";
 import GoogleSignInButton from "./components/GoogleSignInButton";
@@ -43,7 +44,7 @@ export default function LoginPage() {
     };
   }, []);
 
-  // Memuat kredensial tersimpan saat pertama kali dimuat
+  // Memuat kredensial tersimpan saat pertama kali dimuat & cek expired session
   useEffect(() => {
     if (typeof window !== "undefined") {
       const savedEmail = localStorage.getItem("saved_email");
@@ -51,6 +52,10 @@ export default function LoginPage() {
       if (savedRemember && savedEmail) {
         setEmail(savedEmail);
         setRememberMe(true);
+      }
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("expired") === "true") {
+        setError("Sesi Anda telah kedaluwarsa atau belum terotentikasi. Silakan login kembali.");
       }
     }
   }, []);
@@ -60,7 +65,7 @@ export default function LoginPage() {
     setGoogleLoading(true);
     try {
       const res = await fetch(
-        "http://127.0.0.1:8000/api/v1/auth/google-login",
+        `${API_BASE_URL}/api/v1/auth/google-login`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -123,7 +128,7 @@ export default function LoginPage() {
 
     try {
       // Menggunakan IP 127.0.0.1 secara konsisten
-      const res = await fetch("http://127.0.0.1:8000/api/v1/auth/login", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),

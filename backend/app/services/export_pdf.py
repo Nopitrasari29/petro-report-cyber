@@ -64,11 +64,18 @@ class PDFExporter:
         parsed_data = report.parsed_data or []
         chart_data = report.chart_data or {}
 
-        # Render SEMUA chart Plotly ke gambar PNG base64 untuk embed di PDF
+        # Render SEMUA chart Plotly (3 Grafik) ke gambar PNG base64 untuk embed di PDF.
+        # Jika report di database adalah laporan lama yang baru punya 1 grafik, regenerasikan 3 grafik secara dinamis.
         chart_imgs_html = []
         charts_list = []
-        if isinstance(chart_data.get("charts"), list) and len(chart_data["charts"]) > 0:
+        if isinstance(chart_data.get("charts"), list) and len(chart_data["charts"]) >= 2:
             charts_list = chart_data["charts"]
+        elif report.parsed_data:
+            fresh_config = ChartGenerator.generate_chart_config(report.data_type, report.parsed_data)
+            if isinstance(fresh_config.get("charts"), list) and len(fresh_config["charts"]) > 0:
+                charts_list = fresh_config["charts"]
+            elif "data" in fresh_config:
+                charts_list = [fresh_config]
         elif "data" in chart_data:
             charts_list = [chart_data]
 
@@ -137,20 +144,42 @@ class PDFExporter:
             for idx, (title, content) in enumerate(report_items)
         )
 
-        # Bentuk tabel data log terlampir
+        # Bentuk tabel data log terlampir (dipilih max 8 kolom utama agar tidak meluber/tumpang tindih di PDF)
         table_headers = ""
         table_rows = ""
         if parsed_data:
-            headers = list(parsed_data[0].keys())
-            table_headers = "".join([f"<th style='padding: 8px 6px; font-weight: 700; text-transform: uppercase; font-size: 7.5pt; border: 1px solid #edf2f7;'>{html.escape(str(h))}</th>" for h in headers])
+            all_headers = list(parsed_data[0].keys())
+            # Prioritaskan kolom-kolom paling penting untuk sampel PDF
+            preferred_keys = [
+                "alert_id", "id", "timestamp", "date", "waktu", "source_ip", "src_ip",
+                "destination_ip", "dst_ip", "destination_host", "host", "destination_port",
+                "protocol", "attack_type", "event", "type", "signature_id", "severity",
+                "level", "action_taken", "status", "description", "detail"
+            ]
+
+            if len(all_headers) > 8:
+                selected_headers = [h for h in all_headers if h.lower() in preferred_keys]
+                if len(selected_headers) < 5:
+                    selected_headers = all_headers[:8]
+                else:
+                    selected_headers = selected_headers[:8]
+            else:
+                selected_headers = all_headers
+
+            table_headers = "".join([
+                f"<th style='padding: 6px 5px; font-weight: 700; text-transform: uppercase; font-size: 7.5pt; border: 1px solid #004D25; background-color: #004D25; color: white;'>{html.escape(str(h))}</th>"
+                for h in selected_headers
+            ])
             
-            # Batasi hanya 20 baris data agar PDF tetap rapi dan tidak terlalu panjang
+            # Batasi 20 baris sampel
             for row in parsed_data[:20]:
                 cell_strs = []
-                for h in headers:
+                for h in selected_headers:
                     val = row.get(h, "")
                     val_str = "" if val is None else str(val)
-                    cell_strs.append(f"<td style='padding: 6px 4px; border: 1px solid #edf2f7; font-size: 7.5pt; word-wrap: break-word; overflow-wrap: break-word; max-width: 120px;'>{html.escape(val_str)}</td>")
+                    cell_strs.append(
+                        f"<td style='padding: 5px 4px; border: 1px solid #cbd5e0; font-size: 7.5pt; word-wrap: break-word; overflow-wrap: break-word; vertical-align: top;'>{html.escape(val_str)}</td>"
+                    )
                 table_rows += f"<tr>{''.join(cell_strs)}</tr>"
 
         # Format tanggal pembuatan laporan secara dinamis (Indonesian Friendly)

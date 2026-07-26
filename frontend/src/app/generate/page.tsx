@@ -7,6 +7,7 @@ import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import ScrollReveal from "@/components/ScrollReveal";
 import { t, getLanguage } from "@/utils/i18n";
+import { API_BASE_URL } from "@/utils/api";
 import {
   REPORT_SECTIONS,
   getSectionTitle,
@@ -88,7 +89,7 @@ export default function GenerateReportPage() {
           headers["Authorization"] = `Bearer ${token}`;
         }
         const res = await fetch(
-          "http://localhost:8000/api/v1/settings/profile",
+          `${API_BASE_URL}/api/v1/settings/profile`,
           { headers },
         );
         if (res.ok) {
@@ -241,7 +242,7 @@ export default function GenerateReportPage() {
       fd.append("file", file);
 
       const res = await fetch(
-        "http://localhost:8000/api/v1/upload/detect-period",
+        `${API_BASE_URL}/api/v1/upload/detect-period`,
         {
           method: "POST",
           headers: authHeaders,
@@ -323,7 +324,7 @@ export default function GenerateReportPage() {
       if (token) authHeaders["Authorization"] = `Bearer ${token}`;
 
       const res = await fetch(
-        "http://localhost:8000/api/v1/history/?limit=10&status=analyzed",
+        `${API_BASE_URL}/api/v1/history/?limit=10&status=analyzed`,
         { headers: authHeaders },
       );
       if (!res.ok) return null;
@@ -436,7 +437,7 @@ export default function GenerateReportPage() {
       // banyak entri dengan nama field yang sama, FastAPI mem-parsingnya sebagai List[UploadFile].
       rawFiles.forEach((file) => formData.append("files", file));
 
-      const uploadRes = await fetch("http://localhost:8000/api/v1/upload/", {
+      const uploadRes = await fetch(`${API_BASE_URL}/api/v1/upload/`, {
         method: "POST",
         headers: authHeaders,
         body: formData,
@@ -465,7 +466,7 @@ export default function GenerateReportPage() {
       // polling progress token-nya secara live di bawah — bukan lagi 1 fetch yang nge-block
       // browser selama 3-10 menit.
       const generateRes = await fetch(
-        `http://localhost:8000/api/v1/analysis/generate/${generatedId}`,
+        `${API_BASE_URL}/api/v1/analysis/generate/${generatedId}`,
         {
           method: "POST",
           headers: authHeaders,
@@ -496,7 +497,7 @@ export default function GenerateReportPage() {
         }
         await new Promise((resolve) => setTimeout(resolve, 2000));
         const progRes = await fetch(
-          `http://localhost:8000/api/v1/analysis/${generatedId}/progress`,
+          `${API_BASE_URL}/api/v1/analysis/${generatedId}/progress`,
           { headers: authHeaders },
         );
         if (!progRes.ok) continue; // hiccup jaringan sesaat — coba lagi tick berikutnya
@@ -514,7 +515,7 @@ export default function GenerateReportPage() {
 
       setProcessingStep("fetching");
       const detailRes = await fetch(
-        `http://localhost:8000/api/v1/history/${generatedId}`,
+        `${API_BASE_URL}/api/v1/history/${generatedId}`,
         {
           headers: authHeaders,
         },
@@ -567,7 +568,7 @@ export default function GenerateReportPage() {
       }
 
       const res = await fetch(
-        `http://localhost:8000/api/v1/analysis/${reportId}`,
+        `${API_BASE_URL}/api/v1/analysis/${reportId}`,
         {
           method: "PUT",
           headers: authHeaders,
@@ -750,11 +751,11 @@ export default function GenerateReportPage() {
       <Sidebar />
 
       {/* Main Content Area */}
-      <div className="flex-1 pl-64 flex flex-col min-h-screen">
+      <div className="flex-1 pl-0 md:pl-64 flex flex-col min-h-screen">
         <Navbar />
 
         {/* Main Body */}
-        <main className="flex-1 p-8 max-w-6xl mx-auto w-full">
+        <main className="flex-1 p-4 sm:p-6 md:p-8 max-w-6xl mx-auto w-full">
           {/* STEPPER LOGO & METRIC (Only show if step > 0) */}
           {currentStep > 0 && (
             <div className="w-full flex justify-center mb-10">

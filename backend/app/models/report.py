@@ -12,6 +12,10 @@ class Report(Base):
     input_file_name = Column(String, nullable=True)
     
     parsed_data = Column(JSON, nullable=True)
+    # Fix #2: Path ke file JSON parsed data yang disimpan di file system (storage/parsed/).
+    # Jika terisi, maka parsed_data harus dibaca dari file ini, bukan dari kolom JSON di atas.
+    # Kolom JSON di atas tetap ada sebagai fallback untuk laporan-laporan lama (backward compat).
+    parsed_data_path = Column(String, nullable=True)
     ai_summary = Column(JSON, nullable=True)  # Executive Summary, Trend Analysis, dll.
     chart_data = Column(JSON, nullable=True)   # Plotly config data
     
