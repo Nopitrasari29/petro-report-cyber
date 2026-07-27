@@ -30,8 +30,19 @@ interface ReportDetails {
   threat_count_medium: number;
   threat_count_low: number;
   total_records_parsed: number;
+  total_file_size_bytes: number | null;
   created_at: string;
   ai_summary: Record<string, any>;
+}
+
+// Laporan lama (sebelum kolom ini ada) punya total_file_size_bytes = null — tampilkan "-"
+// alih-alih menebak/memalsukan angka.
+function formatFileSize(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || bytes <= 0) return "-";
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1) return `${mb.toFixed(2)} MB`;
+  const kb = bytes / 1024;
+  return `${kb.toFixed(1)} KB`;
 }
 
 export default function ReportDetailPage({
@@ -425,7 +436,7 @@ export default function ReportDetailPage({
                       d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
                     />
                   </svg>
-                  {tx("Size:", "Size:")} <strong>27.5 MB</strong>
+                  {tx("Size:", "Size:")} <strong>{formatFileSize(report.total_file_size_bytes)}</strong>
                 </span>
               </div>
             </div>

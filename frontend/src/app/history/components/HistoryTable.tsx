@@ -110,7 +110,7 @@ export default function HistoryTable({
             className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor" className="w-4 h-4">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9 9m12 6a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25V5.25c0-.54.384-1.006.917-1.096A48.24 48.24 0 0 1 12 3c2.78 0 5.518.232 8.161.68.525.09.917.556.917 1.096V15Z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
             </svg>
             {tx("Delete Selected", "Delete Selected")}
           </button>
@@ -249,33 +249,6 @@ export default function HistoryTable({
                         </button>
                       )}
 
-                      {/* View Action */}
-                      <Link
-                        href={`/history/${item.id}`}
-                        className="p-1.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-600 hover:text-stone-800 transition-colors shadow-sm cursor-pointer"
-                        title={tx("View Preview", "View Preview")}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          strokeWidth={2.2}
-                          stroke="currentColor"
-                          className="w-3.5 h-3.5"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.43 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"
-                          />
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-                          />
-                        </svg>
-                      </Link>
-
                       {/* Download PDF Action */}
                       <button
                         onClick={() => handleDownloadFile(item.id, "pdf")}
@@ -347,7 +320,7 @@ export default function HistoryTable({
                       {/* Delete Action */}
                       <button
                         onClick={() => handleDelete(item.id)}
-                        className="p-1.5 rounded-lg border border-red-100 bg-red-50 hover:bg-red-100 text-red-655 hover:text-red-700 transition-colors shadow-sm cursor-pointer"
+                        className="p-1.5 rounded-lg border border-red-700 bg-red-600 hover:bg-red-700 text-white transition-colors shadow-sm cursor-pointer"
                         title={tx("Delete Report", "Delete Report")}
                       >
                         <svg
@@ -361,7 +334,7 @@ export default function HistoryTable({
                           <path
                             strokeLinecap="round"
                             strokeLinejoin="round"
-                            d="m14.74 9-.346 9m-4.788 0L9 9m12 6a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25V5.25c0-.54.384-1.006.917-1.096A48.24 48.24 0 0 1 12 3c2.78 0 5.518.232 8.161.68.525.09.917.556.917 1.096V15Z"
+                            d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
                           />
                         </svg>
                       </button>

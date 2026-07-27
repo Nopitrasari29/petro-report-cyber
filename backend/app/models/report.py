@@ -43,6 +43,9 @@ class Report(Base):
     threat_count_low = Column(Integer, nullable=True, default=0)
     threat_count_info = Column(Integer, nullable=True, default=0)
     total_records_parsed = Column(Integer, nullable=True, default=0)
+    # Total ukuran file asli yang diupload (bytes, gabungan semua file kalau multi-upload).
+    # NULL untuk laporan lama sebelum kolom ini ada.
+    total_file_size_bytes = Column(Integer, nullable=True)
 
     # Dict {section_key: bool} — section mana yang user pilih untuk dimasukkan ke PDF/PPTX
     # (mis. {"executive_summary": true, "recommendations": false, ...}). NULL/kosong berarti

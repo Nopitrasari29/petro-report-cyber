@@ -65,6 +65,46 @@ const HIGHLIGHT_COLORS = [
   "#fbcfe8",
   "#fed7aa",
 ];
+const TABLE_BORDER_COLORS = [
+  "#e7e5e4",
+  "#004D25",
+  "#d9a700",
+  "#dc2626",
+  "#2563eb",
+];
+
+// Extend TableCell/TableHeader dengan attribute borderColor kustom (disimpan sebagai inline
+// style di HTML, jadi ikut kesave/kebaca lewat editor.getHTML() seperti attribute bawaan lain).
+const TableCellWithBorder = TableCell.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      borderColor: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.style.borderColor || null,
+        renderHTML: (attributes: { borderColor?: string | null }) => {
+          if (!attributes.borderColor) return {};
+          return { style: `border-color: ${attributes.borderColor};` };
+        },
+      },
+    };
+  },
+});
+const TableHeaderWithBorder = TableHeader.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      borderColor: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.style.borderColor || null,
+        renderHTML: (attributes: { borderColor?: string | null }) => {
+          if (!attributes.borderColor) return {};
+          return { style: `border-color: ${attributes.borderColor};` };
+        },
+      },
+    };
+  },
+});
 
 export default function RichTextEditor({
   value,
@@ -92,8 +132,8 @@ export default function RichTextEditor({
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       Table.configure({ resizable: true }),
       TableRow,
-      TableHeader,
-      TableCell,
+      TableHeaderWithBorder,
+      TableCellWithBorder,
     ],
     content: value,
     onUpdate: ({ editor }) => {
@@ -141,6 +181,21 @@ export default function RichTextEditor({
       .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
       .run();
   }, [editor]);
+
+  // Diterapkan ke tableCell DAN tableHeader sekaligus supaya tetap benar kalau seleksi
+  // menyentuh baris header — no-op aman kalau cursor sedang tidak berada di dalam tabel.
+  const setTableBorderColor = useCallback(
+    (color: string | null) => {
+      if (!editor) return;
+      editor
+        .chain()
+        .focus()
+        .updateAttributes("tableCell", { borderColor: color })
+        .updateAttributes("tableHeader", { borderColor: color })
+        .run();
+    },
+    [editor],
+  );
 
   if (!editor) {
     return (
@@ -526,6 +581,50 @@ export default function RichTextEditor({
           </svg>
         </button>
 
+        {/* Warna border tabel — aktif kalau kursor sedang di dalam sel tabel */}
+        <div className="relative group">
+          <button
+            type="button"
+            className={btnClass(
+              editor.isActive("tableCell") || editor.isActive("tableHeader"),
+            )}
+            title={tx("Table border color", "Table border color")}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              className="w-3.5 h-3.5"
+            >
+              <rect x="3" y="3" width="14" height="14" rx="1.5" />
+              <line x1="3" y1="10" x2="17" y2="10" />
+              <line x1="10" y1="3" x2="10" y2="17" />
+            </svg>
+          </button>
+          <div className="hidden group-hover:flex absolute z-20 top-full left-0 mt-1 p-1.5 bg-white border border-stone-200 rounded-lg shadow-lg gap-1">
+            {TABLE_BORDER_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setTableBorderColor(c)}
+                className="w-5 h-5 rounded-full border border-stone-300"
+                style={{ backgroundColor: c }}
+                title={c}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={() => setTableBorderColor(null)}
+              className="w-5 h-5 rounded-full border border-stone-300 bg-white flex items-center justify-center text-[8px] font-bold text-stone-400"
+              title={tx("Reset border color", "Reset border color")}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
         {/* Clear formatting */}
         <button
           type="button"
@@ -557,6 +656,9 @@ export default function RichTextEditor({
           font-size: 13px;
           color: #292524;
           line-height: 1.6;
+          /* Eksplisit supaya kursor selalu terlihat, tidak ikut ketiban warna
+             teks/background terang dari fitur Text Color/Highlight. */
+          caret-color: #292524;
         }
         .rte-content p {
           margin: 0 0 10px 0;

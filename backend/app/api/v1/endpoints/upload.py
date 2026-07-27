@@ -154,6 +154,7 @@ def upload_security_file(
         max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
         parsed_data = []
         file_names = []
+        total_size_bytes = 0
         for f in files:
             # Validasi ukuran berkas SEBELUM diproses, sesuai batas di settings (MAX_UPLOAD_SIZE_MB).
             # f.size tersedia dari Starlette tanpa perlu baca seluruh file ke memory dulu.
@@ -162,6 +163,7 @@ def upload_security_file(
                     status_code=413,
                     detail=f"Ukuran berkas '{f.filename}' melebihi batas maksimum {settings.MAX_UPLOAD_SIZE_MB}MB."
                 )
+            total_size_bytes += f.size or 0
 
             try:
                 parser = ParserFactory.get_parser(f.filename)
@@ -212,6 +214,7 @@ def upload_security_file(
             threat_count_low=threat_metrics["low"],
             threat_count_info=threat_metrics["informational"],
             total_records_parsed=total_records,
+            total_file_size_bytes=total_size_bytes,
             included_sections=parsed_sections
         )
         

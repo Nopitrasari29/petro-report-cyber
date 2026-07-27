@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import { t, getLanguage } from "@/utils/i18n";
 import { API_BASE_URL } from "@/utils/api";
 import NotificationsMenu from "@/components/navbar/NotificationsMenu";
+import { ConfirmModal } from "@/components/ToastModal";
 
 function formatRelativeTime(dateStr: string): string {
   if (!dateStr) return "";
@@ -25,6 +26,7 @@ export default function Navbar() {
   const [user, setUser] = useState<any>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [apiNotifications, setApiNotifications] = useState<any[]>([]);
+  const [showPasswordSetupModal, setShowPasswordSetupModal] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [lang, setLang] = useState("English");
 
@@ -88,7 +90,16 @@ export default function Navbar() {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (!res.ok) throw new Error("Session expired");
-        setUser(await res.json());
+        const userData = await res.json();
+        setUser(userData);
+
+        // Akun daftar via Google tidak pernah set password sendiri (password_set === false),
+        // jadi belum bisa login lewat email+password biasa. Selalu ditampilkan tiap kali masuk
+        // ke halaman manapun (bukan cuma sekali per sesi) selama password beneran belum di-set —
+        // begitu user benar-benar set password, password_set jadi true dan ini otomatis berhenti.
+        if (userData?.password_set === false) {
+          setShowPasswordSetupModal(true);
+        }
 
         try {
           const settingsRes = await fetch(`${API_BASE_URL}/api/v1/settings/`, {
@@ -290,6 +301,28 @@ export default function Navbar() {
         </div>
       </div>
 
+      {mounted &&
+        createPortal(
+          <ConfirmModal
+            isOpen={showPasswordSetupModal}
+            title={tx("Lengkapi Password Akun Anda", "Complete Your Account Password")}
+            message={tx(
+              "Akun Anda terdaftar via Google dan belum memiliki password sendiri, sehingga belum bisa login lewat email & password biasa. Set password sekarang atau nanti?",
+              "Your account registered via Google and doesn't have its own password yet, so you can't log in with regular email & password. Set a password now or later?",
+            )}
+            confirmText={tx("Sekarang", "Now")}
+            cancelText={tx("Nanti", "Later")}
+            type="brand"
+            onConfirm={() => {
+              setShowPasswordSetupModal(false);
+              router.push("/settings?tab=account");
+            }}
+            onCancel={() => {
+              setShowPasswordSetupModal(false);
+            }}
+          />,
+          document.body,
+        )}
     </header>
   );
 }

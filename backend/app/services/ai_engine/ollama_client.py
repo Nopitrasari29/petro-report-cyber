@@ -5,6 +5,39 @@ import ollama
 import requests
 from app.core.config import settings
 from app.services.ai_engine.prompts import SYSTEM_PROMPT, get_analysis_prompt
+from app.services.ai_engine.data_profiler import (
+    compute_statistics,
+    compute_schema_summary,
+    format_statistics_as_text,
+    format_schema_as_text,
+)
+
+# Dipakai bersama oleh _normalize_json_keys (nilai fallback per key) dan analysis.py
+# (Fix deteksi laporan yang "sukses" tapi isinya cuma teks default ini semua).
+_REQUIRED_KEY_DEFAULTS = {
+    "executive_summary": "Ringkasan analisis tidak berhasil dimuat secara otomatis.",
+    "trend_analysis": "Analisis tren tidak tersedia.",
+    "severity_analysis": "Detail tingkat keparahan tidak dapat dipetakan.",
+    "risk_assessment": "Penilaian risiko tidak dapat dirumuskan.",
+    "recommendations": ["Tinjau kembali log siber secara manual."],
+    "conclusion": "Analisis selesai dengan penyesuaian manual."
+}
+
+# Alias key Bahasa Indonesia yang umum dipakai model walau SYSTEM_PROMPT sudah minta
+# snake_case Inggris persis — dicocokkan lewat _normalize_single_key (bukan match string
+# apa adanya), jadi "Ringkasan Eksekutif" atau "ringkasan-eksekutif" ikut ketangkap juga.
+_KEY_ALIASES: dict[str, list[str]] = {
+    "executive_summary": ["executive_summary", "ringkasan_eksekutif", "ringkasan_eksekutif_summary", "summary"],
+    "trend_analysis": ["trend_analysis", "analisis_tren", "analisa_tren", "tren"],
+    "severity_analysis": ["severity_analysis", "analisis_severity", "analisis_tingkat_keparahan", "tingkat_keparahan"],
+    "risk_assessment": ["risk_assessment", "penilaian_risiko", "analisis_risiko", "risiko"],
+    "recommendations": ["recommendations", "rekomendasi", "recommendation"],
+    "conclusion": ["conclusion", "kesimpulan"],
+}
+
+# Fase B — key TAMBAHAN opsional (bukan bagian dari 6 key wajib): tidak memicu retry/fallback
+# di analysis.py kalau kosong, cuma disalin apa adanya kalau model AI menyertakannya.
+_OPTIONAL_KEYS = ["key_findings", "metrics_table", "chart_captions"]
 
 def get_ai_settings() -> dict:
     """
@@ -121,48 +154,73 @@ class OllamaClient:
 
         return "".join(content_parts)
 
+    @staticmethod
+    def _normalize_single_key(k: str) -> str:
+        """'Executive Summary' / 'executive-summary' / 'EXECUTIVE_SUMMARY' -> 'executive_summary'."""
+        return re.sub(r"[\s\-]+", "_", str(k).strip().lower())
+
+    def _find_source_key(self, lookup: dict, target_key: str) -> str | None:
+        """lookup: {key_ternormalisasi: key_asli_di_dict}. Coba semua alias termasuk camelCase."""
+        for alias in _KEY_ALIASES.get(target_key, [target_key]):
+            norm_alias = self._normalize_single_key(alias)
+            if norm_alias in lookup:
+                return lookup[norm_alias]
+
+        camel_case = "".join(x.capitalize() or "_" for x in target_key.split("_"))
+        camel_case = camel_case[0].lower() + camel_case[1:]
+        norm_camel = self._normalize_single_key(camel_case)
+        if norm_camel in lookup:
+            return lookup[norm_camel]
+        return None
+
     def _normalize_json_keys(self, data: dict) -> dict:
         """
-        Menjamin bahwa semua kunci JSON yang diperlukan oleh Frontend Next.js
-        pasti ada dengan format penulisan yang konsisten. Mencegah error jika
-        AI melakukan salah ketik nama kunci.
+        Menjamin bahwa semua kunci JSON yang diperlukan oleh Frontend Next.js pasti ada dengan
+        format penulisan yang konsisten, walau model AI menjawab dengan variasi nama key:
+        - kapitalisasi/spasi bebas ("Executive Summary")
+        - alias Bahasa Indonesia ("ringkasan_eksekutif", dst — lihat _KEY_ALIASES)
+        - dibungkus SATU objek dict lain (mis. {"laporan": {...6 key...}}) — kalau 0 dari 6 key
+          ketemu di level atas dan ada TEPAT SATU value bertipe dict, cari lagi di dalamnya.
         """
-        required_keys = {
-            "executive_summary": "Ringkasan analisis tidak berhasil dimuat secara otomatis.",
-            "trend_analysis": "Analisis tren tidak tersedia.",
-            "severity_analysis": "Detail tingkat keparahan tidak dapat dipetakan.",
-            "risk_assessment": "Penilaian risiko tidak dapat dirumuskan.",
-            "recommendations": ["Tinjau kembali log siber secara manual."],
-            "conclusion": "Analisis selesai dengan penyesuaian manual."
-        }
-        
-        normalized = {}
-        for key, default_val in required_keys.items():
-            found_key = None
-            key_variations = [key, key.replace("_", ""), key.lower(), key.upper()]
-            
-            # Konversi snake_case ke camelCase (contoh: executive_summary -> executiveSummary)
-            camel_case = "".join(x.capitalize() or "_" for x in key.split("_"))
-            camel_case = camel_case[0].lower() + camel_case[1:]
-            key_variations.append(camel_case)
+        def build_lookup(d: dict) -> dict:
+            return {self._normalize_single_key(k): k for k in d.keys()}
 
-            for var in key_variations:
-                if var in data:
-                    found_key = var
-                    break
-            
+        lookup = build_lookup(data)
+        search_data = data
+        found_count = sum(
+            1 for k in _REQUIRED_KEY_DEFAULTS if self._find_source_key(lookup, k) is not None
+        )
+
+        if found_count == 0:
+            nested_dicts = [v for v in data.values() if isinstance(v, dict)]
+            if len(nested_dicts) == 1:
+                search_data = nested_dicts[0]
+                lookup = build_lookup(search_data)
+
+        normalized = {}
+        for key, default_val in _REQUIRED_KEY_DEFAULTS.items():
+            found_key = self._find_source_key(lookup, key)
+
             if found_key is not None:
+                value = search_data[found_key]
                 # Pastikan tipe data untuk recommendations adalah list
-                if key == "recommendations" and not isinstance(data[found_key], list):
-                    if isinstance(data[found_key], str):
-                        normalized[key] = [data[found_key]]
+                if key == "recommendations" and not isinstance(value, list):
+                    if isinstance(value, str):
+                        normalized[key] = [value]
                     else:
                         normalized[key] = default_val
                 else:
-                    normalized[key] = data[found_key]
+                    normalized[key] = value
             else:
                 normalized[key] = default_val
-                
+
+        # Fase B — key opsional: disalin apa adanya kalau ada & berbentuk list, kalau tidak
+        # ada/salah tipe cukup diisi list kosong (tidak pernah memicu fallback ke 6 key wajib).
+        for opt_key in _OPTIONAL_KEYS:
+            found_key = self._find_source_key(lookup, opt_key)
+            value = search_data.get(found_key) if found_key is not None else None
+            normalized[opt_key] = value if isinstance(value, list) else []
+
         return normalized
 
     def _extract_json_robust(self, raw_text: str) -> dict:
@@ -202,21 +260,6 @@ class OllamaClient:
             return self._normalize_json_keys(parsed_dict)
 
         raise ValueError(f"Tidak dapat mengekstrak JSON valid. Preview: {text[:300]}")
-
-    def _smart_sample_data(self, parsed_data: list) -> list:
-        """
-        Mengambil sampel data secara cerdas agar representatif:
-        - <= 500 baris: ambil semua
-        - > 500 baris: 200 pertama + 150 tengah + 150 terakhir
-        """
-        total = len(parsed_data)
-        if total <= 500:
-            return parsed_data
-        first = parsed_data[:200]
-        mid_start = max(0, (total // 2) - 75)
-        middle = parsed_data[mid_start:mid_start + 150]
-        last = parsed_data[-150:]
-        return first + middle + last
 
     def analyze_security_data(
         self,
@@ -260,14 +303,24 @@ class OllamaClient:
                 "conclusion": "Ollama service connection failed."
             }
 
-        # Smart sampling — representasi distribusi data tanpa membuat context limit penuh
-        sampled_data = self._smart_sample_data(parsed_data)
-        data_str = json.dumps(sampled_data, indent=2, ensure_ascii=False)
+        # Precompute statistik & schema dari SELURUH data (bukan sampel) via pandas — deterministik,
+        # selalu benar. Model tinggal MENARASIKAN angka ini, bukan menghitung sendiri dari data mentah.
+        stats = compute_statistics(parsed_data, data_type)
+        stats_text = format_statistics_as_text(stats)
+        schema = compute_schema_summary(parsed_data)
+        schema_text = format_schema_as_text(schema)
+
+        # Cuma 15 baris ILUSTRATIF dikirim (bukan lagi ratusan baris) — sumber angka utama
+        # sekarang stats_text di atas, bukan data mentah ini.
+        sample_rows = parsed_data[:15]
+        data_str = json.dumps(sample_rows, indent=2, ensure_ascii=False)
 
         # Hasilkan prompt dengan metadata lengkap
         prompt = get_analysis_prompt(
             data_type=data_type,
             data_content=data_str,
+            stats_text=stats_text,
+            schema_text=schema_text,
             period_start=period_start,
             period_end=period_end,
             template_type=template_type,
@@ -279,6 +332,7 @@ class OllamaClient:
             raw_response = self.generate(
                 prompt, system_prompt=SYSTEM_PROMPT, json_mode=True, on_progress=on_progress
             )
+            print(f"[OLLAMA RAW]\n{raw_response[:2000]}")
             return self._extract_json_robust(raw_response)
         except Exception as e:
             preview = raw_response[:300] if raw_response else "Tidak ada respon"

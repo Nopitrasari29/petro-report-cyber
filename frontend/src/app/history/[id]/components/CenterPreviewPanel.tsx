@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { t } from "@/utils/i18n";
 import { REPORT_SECTIONS } from "@/utils/reportSections";
 import ReportChartPanel from "@/app/generate/components/ReportChartPanel";
+import RichTextEditor from "@/app/generate/components/RichTextEditor";
 
 const LAST_PAGE = REPORT_SECTIONS[REPORT_SECTIONS.length - 1].page;
 
@@ -396,14 +397,10 @@ export default function CenterPreviewPanel({
                 )}{" "}
                 ({tx(getPageTitle(activePage), getPageTitle(activePage))})
               </label>
-              <textarea
+              <RichTextEditor
                 value={getPageText(activePage)}
-                onChange={(e) => handleTextChange(e.target.value)}
-                className="w-full flex-1 p-4 border border-stone-200 rounded-2xl focus:outline-none focus:border-petro-green text-xs font-semibold leading-relaxed text-stone-800 shadow-sm bg-white"
-                placeholder={tx(
-                  "Write dynamic logs narration...",
-                  "Write dynamic logs narration...",
-                )}
+                onChange={handleTextChange}
+                tx={tx}
               />
             </div>
 

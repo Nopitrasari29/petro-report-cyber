@@ -80,6 +80,11 @@ class PDFExporter:
         elif "data" in chart_data:
             charts_list = [chart_data]
 
+        # Fase B — key opsional, kosong ([]) di laporan lama yang belum punya key ini
+        key_findings = ai_summary.get("key_findings") or []
+        metrics_table = ai_summary.get("metrics_table") or []
+        chart_captions = ai_summary.get("chart_captions") or []
+
         if PLOTLY_AVAILABLE and charts_list:
             for idx, c_dict in enumerate(charts_list):
                 try:
@@ -90,9 +95,16 @@ class PDFExporter:
                     # GTK/Pango) gagal parsing "width:100%" pada <img> di sini ("getSize: Not a
                     # float '100%'"), yang bikin gambar chart gagal ikut layout container dan
                     # lompat terpisah dari heading-nya. Nilai px tetap aman di WeasyPrint juga.
+                    caption_html = ""
+                    if idx < len(chart_captions) and chart_captions[idx]:
+                        caption_html = (
+                            f"<p style='text-align:center;font-size:9pt;font-style:italic;"
+                            f"color:#4a5568;margin-top:2px;'>{html.escape(str(chart_captions[idx]))}</p>"
+                        )
                     chart_imgs_html.append(
                         f'<div style="margin-bottom: 22px; text-align: center;">'
                         f'<img src="data:image/png;base64,{c_b64}" width="620" style="width:620px;margin:0 auto;display:block;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);" alt="Grafik Analisis #{idx+1}" />'
+                        f'{caption_html}'
                         f'</div>'
                     )
                 except Exception as chart_err:
@@ -115,6 +127,42 @@ class PDFExporter:
         if not rec_html:
             rec_html = "<li style='color:#718096; font-style:italic;'>Rekomendasi tidak tersedia saat ini.</li>"
 
+        # Fase B — kartu KPI dari metrics_table (opsional, AI-generated). Dipakai <table> (bukan
+        # flex/grid) karena xhtml2pdf (fallback engine kalau WeasyPrint tidak tersedia) tidak
+        # mendukung flexbox/grid, sedangkan tabel HTML sudah terbukti aman di kedua engine.
+        metrics_html = ""
+        if metrics_table:
+            cells_html = []
+            for m in metrics_table[:8]:
+                is_dict = isinstance(m, dict)
+                m_value = html.escape(str(m.get("value", "-"))) if is_dict else html.escape(str(m))
+                m_pct = html.escape(str(m.get("percentage") or "").strip()) if is_dict else ""
+                m_label = html.escape(str(m.get("label", ""))) if is_dict else ""
+                cells_html.append(
+                    "<td style='width:25%; padding:14px 8px; text-align:center; "
+                    "background-color:#f7fafc; border:1px solid #004D25; border-radius:8px;'>"
+                    f"<div style='font-size:19pt;font-weight:800;color:#004D25;'>{m_value}"
+                    f"{f' ({m_pct})' if m_pct else ''}</div>"
+                    f"<div style='font-size:8.5pt;color:#4a5568;margin-top:4px;'>{m_label}</div>"
+                    "</td>"
+                )
+            rows_html = "".join(
+                f"<tr>{''.join(cells_html[i:i + 4])}</tr>" for i in range(0, len(cells_html), 4)
+            )
+            metrics_html = (
+                "<table style='width:100%; border-collapse:separate; border-spacing:8px; margin-top:16px;'>"
+                f"{rows_html}</table>"
+            )
+
+        # Fase B — bullet temuan kunci (opsional, AI-generated)
+        key_findings_html = ""
+        if key_findings:
+            kf_items = "".join(f"<li style='margin-bottom: 6px;'>{html.escape(str(f))}</li>" for f in key_findings)
+            key_findings_html = (
+                "<h3 style='font-size:11pt;color:#004D25;margin-top:16px;margin-bottom:6px;'>Temuan Kunci</h3>"
+                f"<ul>{kf_items}</ul>"
+            )
+
         # Section mana yang ditampilkan, sesuai pilihan "Include Sections" user di Report
         # Settings. included_sections None/kosong berarti semua ditampilkan (laporan lama
         # sebelum fitur ini ada, atau user tidak menyentuh pilihan defaultnya).
@@ -127,7 +175,10 @@ class PDFExporter:
         # nomornya tetap ikut urutan section lain yang benar-benar tampil, bukan hardcode "2.".
         report_items = []
         if is_included("executive_summary"):
-            report_items.append(("Ringkasan Eksekutif (Executive Summary)", f"<p>{exec_summary}</p>"))
+            report_items.append((
+                "Ringkasan Eksekutif (Executive Summary)",
+                f"<p>{exec_summary}</p>{metrics_html}{key_findings_html}"
+            ))
         report_items.append(("Visualisasi Data Analitik", chart_img_html))
         if is_included("trend_analysis"):
             report_items.append(("Analisis Tren Ancaman (Trend Analysis)", f"<p>{trend_analysis}</p>"))

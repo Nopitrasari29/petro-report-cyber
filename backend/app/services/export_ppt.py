@@ -167,6 +167,69 @@ class PPTXExporter:
             if pending_tables:
                 render_tables_to_slide(c_slide, pending_tables, body_left, Inches(5.6), body_width)
 
+        # -------------------------------------------------------------
+        # Helper Fase B: slide kartu KPI dari metrics_table (opsional, AI-generated)
+        # -------------------------------------------------------------
+        def add_metrics_slide(metrics: list):
+            slide_layout = prs.slide_layouts[6]
+            m_slide = prs.slides.add_slide(slide_layout)
+
+            if has_logo:
+                try:
+                    m_slide.shapes.add_picture(logo_path, Inches(7.6), Inches(0.12), width=Inches(1.9))
+                except Exception:
+                    pass
+
+            title_box = m_slide.shapes.add_textbox(Inches(0.6), Inches(0.35), Inches(7.0), Inches(0.7))
+            p = title_box.text_frame.paragraphs[0]
+            p.text = "Ringkasan Metrik Utama"
+            p.font.size = Pt(26)
+            p.font.bold = True
+            p.font.color.rgb = GREEN
+            add_title_rule(m_slide, y_top=Inches(1.05))
+
+            # Batasi 8 kartu biar tidak overflow kalau AI kasih metrics_table terlalu panjang
+            items = metrics[:8]
+            cols = min(len(items), 4) or 1
+            margin_x, usable_width, gap = 0.6, 8.8, 0.25
+            card_w = (usable_width - gap * (cols - 1)) / cols
+            card_h, row_gap, start_top = 1.7, 0.3, 1.5
+
+            for idx, item in enumerate(items):
+                row, col = idx // cols, idx % cols
+                left, top = margin_x + col * (card_w + gap), start_top + row * (card_h + row_gap)
+
+                card = m_slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE, Inches(left), Inches(top), Inches(card_w), Inches(card_h)
+                )
+                card.fill.solid()
+                card.fill.fore_color.rgb = RGBColor(0xF7, 0xFA, 0xFC)
+                card.line.color.rgb = GREEN
+                card.line.width = Pt(1)
+
+                is_dict = isinstance(item, dict)
+                value = str(item.get("value", "-")) if is_dict else str(item)
+                pct = str(item.get("percentage") or "").strip() if is_dict else ""
+                label = str(item.get("label", "")) if is_dict else ""
+
+                ctf = card.text_frame
+                ctf.word_wrap = True
+                ctf.vertical_anchor = MSO_ANCHOR.MIDDLE
+
+                p_value = ctf.paragraphs[0]
+                p_value.text = value + (f"  ({pct})" if pct else "")
+                p_value.font.size = Pt(22)
+                p_value.font.bold = True
+                p_value.font.color.rgb = GREEN
+                p_value.alignment = PP_ALIGN.CENTER
+
+                if label:
+                    p_label = ctf.add_paragraph()
+                    p_label.text = label
+                    p_label.font.size = Pt(12)
+                    p_label.font.color.rgb = DARK_TEXT
+                    p_label.alignment = PP_ALIGN.CENTER
+                    p_label.space_before = Pt(4)
 
         # Ambil data AI summary
         ai_summary = report.ai_summary or {}
@@ -177,6 +240,10 @@ class PPTXExporter:
         risk_assessment = ai_summary.get("risk_assessment", "Penilaian risiko tidak tersedia.")
         recommendations = ai_summary.get("recommendations", [])
         conclusion = ai_summary.get("conclusion", "Kesimpulan tidak tersedia.")
+        # Fase B — key opsional, kosong ([]) di laporan lama yang belum punya key ini
+        key_findings = ai_summary.get("key_findings") or []
+        metrics_table = ai_summary.get("metrics_table") or []
+        chart_captions = ai_summary.get("chart_captions") or []
 
         # Section mana yang ditampilkan, sesuai pilihan "Include Sections" user di Report
         # Settings. included_sections None/kosong berarti semua ditampilkan (laporan lama
@@ -186,9 +253,17 @@ class PPTXExporter:
         def is_included(key: str) -> bool:
             return included.get(key, True)
 
-        # Slide 2: Ringkasan Eksekutif
+        # Slide 2: Ringkasan Eksekutif (+ Temuan Kunci kalau AI menyertakan key_findings)
         if is_included("executive_summary"):
-            add_content_slide("Ringkasan Eksekutif", [exec_summary])
+            exec_content = [exec_summary]
+            if key_findings:
+                findings_html = "<ul>" + "".join(f"<li>{f}</li>" for f in key_findings) + "</ul>"
+                exec_content.append(findings_html)
+            add_content_slide("Ringkasan Eksekutif", exec_content)
+
+        # Slide 2b: Kartu Metrik Utama (hanya dibuat kalau AI menyertakan metrics_table)
+        if metrics_table:
+            add_metrics_slide(metrics_table)
 
         # Slide 3+: Visualisasi Chart (Render SEMUA 3 chart yang ada)
         charts_list = []
@@ -236,7 +311,21 @@ class PPTXExporter:
                     p_sub.font.color.rgb = DARK_TEXT
                     p_sub.space_before = Pt(4)
 
-                    chart_slide.shapes.add_picture(img_io, Inches(0.5), Inches(1.2), Inches(9.0), Inches(5.2))
+                    # Tinggi dikurangi sedikit (5.2 -> 5.0) untuk menyisakan ruang caption di bawahnya
+                    chart_slide.shapes.add_picture(img_io, Inches(0.5), Inches(1.2), Inches(9.0), Inches(5.0))
+
+                    # Fase B: caption interpretasi di bawah chart, kalau AI menyertakan chart_captions
+                    # sejajar index dengan charts_list — no-op aman kalau array kosong/lebih pendek.
+                    if idx < len(chart_captions) and chart_captions[idx]:
+                        cap_box = chart_slide.shapes.add_textbox(Inches(0.5), Inches(6.25), Inches(9.0), Inches(0.6))
+                        cap_tf = cap_box.text_frame
+                        cap_tf.word_wrap = True
+                        cap_p = cap_tf.paragraphs[0]
+                        cap_p.text = str(chart_captions[idx])
+                        cap_p.font.size = Pt(11)
+                        cap_p.font.italic = True
+                        cap_p.font.color.rgb = DARK_TEXT
+                        cap_p.alignment = PP_ALIGN.CENTER
                 except Exception as chart_err:
                     print(f"[PPT CHART WARNING] Gagal merender grafik slide #{idx+1}: {chart_err}")
 

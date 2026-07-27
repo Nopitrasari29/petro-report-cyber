@@ -35,11 +35,16 @@ Sistem ini membutuhkan model AI lokal agar data log keamanan perusahaan tetap am
 ---
 
 ### TAHAP 2: Menjalankan Backend (FastAPI)
-Buka terminal baru (PowerShell direkomendasikan) di root proyek `d:\PKG-Intern`:
+Kalau belum punya salinan lokal repo ini, clone dulu:
+```powershell
+git clone https://github.com/Nopitrasari29/petro-report-cyber.git
+cd petro-report-cyber
+```
+Lalu buka terminal (PowerShell direkomendasikan) di root proyek hasil clone tadi:
 
 1. **Masuk ke folder backend**:
    ```powershell
-   cd d:\PKG-Intern\backend
+   cd backend
    ```
 
 2. **Buat & Aktifkan Virtual Environment**:
@@ -65,7 +70,16 @@ Buka terminal baru (PowerShell direkomendasikan) di root proyek `d:\PKG-Intern`:
    ```powershell
    cp .env.example .env
    ```
-   *Secara bawaan, `.env` sudah menggunakan SQLite lokal (`sql_app.db`) sehingga Anda bisa langsung menggunakannya tanpa konfigurasi tambahan.*
+   Lalu buka `.env` dan lengkapi 2 hal berikut — **wajib**, aplikasi tidak akan menyala tanpanya:
+   - **`JWT_SECRET_KEY`** — isi dengan string acak apa saja. Generate cepat lewat:
+     ```powershell
+     python -c "import secrets; print(secrets.token_hex(32))"
+     ```
+   - **`DATABASE_URL`** — bawaannya mengarah ke PostgreSQL lokal (`postgresql://user:password@localhost:5432/dbname`). Pilih salah satu:
+     - **PostgreSQL via Docker (Recommended, tanpa install manual)**: pastikan Docker Desktop aktif, lalu jalankan `docker compose up -d db` di folder `backend`. Ubah `user`/`password`/`dbname` di `DATABASE_URL` menjadi `postgres`/`postgres`/`pkg_security_db` sesuai `docker-compose.yml`.
+     - **SQLite (paling simpel, tanpa Docker/Postgres sama sekali)**: comment baris `DATABASE_URL` PostgreSQL, lalu un-comment baris `DATABASE_URL=sqlite:///./sql_app.db` di bawahnya.
+
+   *(Opsional) `GOOGLE_CLIENT_ID` dan `SMTP_*` boleh dibiarkan kosong — Google Sign-In & email verifikasi otomatis fallback ke mode log terminal kalau tidak diisi.*
 
 5. **Generate Berkas Log Sampel (Dummy) untuk Pengujian**:
    ```powershell
@@ -77,6 +91,7 @@ Buka terminal baru (PowerShell direkomendasikan) di root proyek `d:\PKG-Intern`:
    ```powershell
    alembic upgrade head
    ```
+   *Wajib dijalankan setiap kali `git pull` membawa migrasi baru (folder `alembic/versions/`) — kalau di-skip, aplikasi bisa error "column does not exist" saat dipakai.*
 
 7. **Jalankan Server Backend**:
    ```powershell
@@ -89,9 +104,9 @@ Buka terminal baru (PowerShell direkomendasikan) di root proyek `d:\PKG-Intern`:
 ### TAHAP 3: Menjalankan Frontend (Next.js)
 Buka terminal baru (PowerShell) lainnya dan biarkan terminal backend tetap berjalan:
 
-1. **Masuk ke folder frontend**:
+1. **Masuk ke folder frontend** (dari root proyek):
    ```powershell
-   cd d:\PKG-Intern\frontend
+   cd frontend
    ```
 
 2. **Instal Package Dependencies**:
@@ -106,6 +121,11 @@ Buka terminal baru (PowerShell) lainnya dan biarkan terminal backend tetap berja
    *Frontend akan aktif dalam mode development. Buka **[http://localhost:3000](http://localhost:3000)** di browser Anda untuk masuk ke sistem.*
 
 ---
+
+## 📝 Catatan Tambahan
+
+- **Folder `backend/storage/`** (data hasil parsing log & cache export PDF/PPTX) dibuat **otomatis** oleh aplikasi saat pertama kali upload/download laporan — bukan bagian dari kode, sudah di-`.gitignore`, tidak perlu dibuat manual.
+- Kalau `git pull` gagal karena riwayat lokal & remote berbeda (`non-fast-forward`), jalankan `git pull --rebase` lalu selesaikan konflik jika ada, baru `git push` lagi.
 
 ## 🛠️ Perintah Opsional Lainnya
 

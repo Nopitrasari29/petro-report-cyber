@@ -10,6 +10,9 @@ from app.schemas.notification import NotificationResponse
 
 router = APIRouter()
 
+_PASSWORD_SETUP_TITLE = "Lengkapi Password Akun Anda"
+
+
 @router.get("/", response_model=List[NotificationResponse])
 def get_notifications(
     current_user = Depends(get_current_user),
@@ -18,6 +21,26 @@ def get_notifications(
     """
     Mendapatkan seluruh daftar notifikasi milik user yang sedang terotentikasi.
     """
+    # Akun daftar via Google yang belum pernah set password sendiri: pastikan ada notifikasi
+    # pengingat di lonceng juga (bukan cuma popup) — dibuat sekali secara idempotent (dicek
+    # duluan berdasar title supaya tidak duplikat tiap kali user buka notifikasi), dan otomatis
+    # tidak dibuat lagi begitu current_user.password_set jadi True.
+    if current_user.password_set is False:
+        existing = db.query(Notification).filter(
+            Notification.user_id == current_user.id,
+            Notification.title == _PASSWORD_SETUP_TITLE,
+        ).first()
+        if not existing:
+            db.add(Notification(
+                user_id=current_user.id,
+                type="warning",
+                title=_PASSWORD_SETUP_TITLE,
+                message="Akun Anda terdaftar via Google dan belum memiliki password sendiri. Atur password di halaman Settings agar bisa login lewat email & password biasa.",
+                link="/settings?tab=account",
+                is_read=False,
+            ))
+            db.commit()
+
     return db.query(Notification).filter(
         Notification.user_id == current_user.id
     ).order_by(Notification.created_at.desc()).limit(50).all()

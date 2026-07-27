@@ -26,6 +26,7 @@ class ReportCreate(ReportBase):
     threat_count_low: Optional[int] = 0
     threat_count_info: Optional[int] = 0
     total_records_parsed: Optional[int] = 0
+    total_file_size_bytes: Optional[int] = None
     included_sections: Optional[Dict[str, bool]] = None
 
 class ReportUpdate(BaseModel):
@@ -52,6 +53,7 @@ class ReportUpdate(BaseModel):
     threat_count_low: Optional[int] = None
     threat_count_info: Optional[int] = None
     total_records_parsed: Optional[int] = None
+    total_file_size_bytes: Optional[int] = None
     included_sections: Optional[Dict[str, bool]] = None
     tokens_generated: Optional[int] = None
 
@@ -75,6 +77,7 @@ class ReportResponse(ReportBase):
     threat_count_low: Optional[int]
     threat_count_info: Optional[int]
     total_records_parsed: Optional[int]
+    total_file_size_bytes: Optional[int] = None
     included_sections: Optional[Dict[str, bool]]
     tokens_generated: Optional[int]
     created_at: datetime

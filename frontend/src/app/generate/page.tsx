@@ -19,6 +19,7 @@ import Step2Settings from "./components/Step2Settings";
 import Step3AIProcessing from "./components/Step3AIProcessing";
 import Step4PreviewEdit from "./components/Step4PreviewEdit";
 import Step5Export from "./components/Step5Export";
+import TitlePromptModal from "./components/TitlePromptModal";
 
 interface UploadedFile {
   name: string;
@@ -554,6 +555,30 @@ export default function GenerateReportPage() {
     setCurrentStep(4);
   };
 
+  const [showTitlePrompt, setShowTitlePrompt] = useState(false);
+
+  const handleConfirmTitle = async (newTitle: string) => {
+    setTitle(newTitle);
+    setShowTitlePrompt(false);
+    if (reportId) {
+      try {
+        const token = localStorage.getItem("token");
+        const authHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+        await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
+          method: "PUT",
+          headers: authHeaders,
+          body: JSON.stringify({ title: newTitle }),
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    handleNextStep();
+  };
+
   const handleSaveEdits = async () => {
     if (!reportId) return;
     setIsSaving(true);
@@ -901,10 +926,18 @@ export default function GenerateReportPage() {
               handleTextChange={handleTextChange}
               handleSaveEdits={handleSaveEdits}
               onBack={handleBackStep}
-              onNext={handleNextStep}
+              onNext={() => setShowTitlePrompt(true)}
               tx={tx}
             />
           )}
+
+          <TitlePromptModal
+            isOpen={showTitlePrompt}
+            initialTitle={title}
+            onConfirm={handleConfirmTitle}
+            onClose={() => setShowTitlePrompt(false)}
+            tx={tx}
+          />
 
           {/* STEP 5: EXPORT */}
           {currentStep === 5 && (

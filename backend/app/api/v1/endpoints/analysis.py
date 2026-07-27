@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db, SessionLocal
 from app.core.config import settings
 from app.api.v1.endpoints.auth import get_current_user
-from app.services.ai_engine.ollama_client import ollama_client
+from app.services.ai_engine.ollama_client import ollama_client, _REQUIRED_KEY_DEFAULTS
 from app.services.chart_generator import ChartGenerator
 from app.crud.report import get_owned_report, update_report
 from app.models.report import Report
@@ -53,6 +53,25 @@ def _expected_total_tokens(db: Session, user_id: int) -> int | None:
     if not values:
         return None
     return round(sum(values) / len(values))
+
+
+_ALL_REQUIRED_FIELDS = list(_REQUIRED_KEY_DEFAULTS.keys())
+
+
+def _count_default_fields(result: dict) -> int:
+    """
+    Hitung berapa dari 6 field wajib yang isinya PERSIS teks default dari
+    _normalize_json_keys (artinya: key itu tidak ketemu sama sekali di respons AI).
+    "Gagal merumuskan ringkasan" dicek terpisah karena itu pesan error dari cabang
+    exception di analyze_security_data, bukan dari _REQUIRED_KEY_DEFAULTS.
+    """
+    count = 0
+    for key in _ALL_REQUIRED_FIELDS:
+        val = result.get(key)
+        default_val = _REQUIRED_KEY_DEFAULTS[key]
+        if val == default_val or "Gagal merumuskan ringkasan" in str(val):
+            count += 1
+    return count
 
 
 def _run_analysis_job(report_id: int) -> None:
@@ -119,6 +138,18 @@ def _run_analysis_job(report_id: int) -> None:
                     language=db_report.language,
                     on_progress=on_progress,
                 )
+
+                # Kalau setengah atau lebih dari 6 field wajib cuma teks default (artinya
+                # AI tidak menjawab dengan key yang dikenali sama sekali), perlakukan
+                # sebagai kegagalan attempt ini juga — trigger retry yang sudah ada di
+                # bawah, bukan diam-diam ditandai "analyzed" padahal isinya kosong.
+                default_hit_count = _count_default_fields(analysis_result)
+                if default_hit_count >= 3:
+                    raise RuntimeError(
+                        f"AI mengembalikan {default_hit_count}/6 bagian berupa teks default "
+                        f"(key tidak dikenali atau model gagal menjawab)."
+                    )
+
                 last_err = None
                 break  # Sukses — keluar dari loop retry
             except Exception as ai_err:
@@ -152,7 +183,10 @@ def _run_analysis_job(report_id: int) -> None:
 
         sla_met_status = elapsed_time <= settings.SLA_THRESHOLD_SECONDS
 
-        is_fallback = "Gagal merumuskan ringkasan" in analysis_result.get("executive_summary", "")
+        # Kalau lolos loop retry di atas, default_hit_count di sini sudah pasti < 3 (kalau >= 3
+        # akan sudah diretry / berakhir "failed" duluan) — tapi 1-2 field default masih mungkin
+        # lolos, jadi tetap diturunkan confidence-nya lewat _calc_confidence di bawah.
+        is_fallback = _count_default_fields(analysis_result) >= 1
 
         # Fix #6: Kalkulasi ai_confidence secara DINAMIS berdasarkan kualitas output AI
         # (bukan nilai hardcoded 94.0 atau 95.0)
