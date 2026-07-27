@@ -11,6 +11,7 @@ from pptx.enum.shapes import MSO_SHAPE
 from app.models.report import Report
 from app.services.html_to_pptx import parse_html_to_blocks, render_blocks_to_textframe, render_tables_to_slide
 from app.services.chart_generator import ChartGenerator
+from app.crud.report import get_parsed_data
 
 try:
     import plotly  # noqa: F401 — cuma dipakai untuk cek ketersediaan; render sungguhan lewat ChartGenerator.render_png
@@ -191,10 +192,11 @@ class PPTXExporter:
 
         # Slide 3+: Visualisasi Chart (Render SEMUA 3 chart yang ada)
         charts_list = []
+        parsed_data = get_parsed_data(report)
         if isinstance(chart_data.get("charts"), list) and len(chart_data["charts"]) >= 2:
             charts_list = chart_data["charts"]
-        elif report.parsed_data:
-            fresh_config = ChartGenerator.generate_chart_config(report.data_type, report.parsed_data)
+        elif parsed_data:
+            fresh_config = ChartGenerator.generate_chart_config(report.data_type, parsed_data)
             if isinstance(fresh_config.get("charts"), list) and len(fresh_config["charts"]) > 0:
                 charts_list = fresh_config["charts"]
             elif "data" in fresh_config:

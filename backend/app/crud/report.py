@@ -1,9 +1,28 @@
+import json
+
 from sqlalchemy.orm import Session
 from app.models.report import Report
 from app.schemas.report import ReportCreate, ReportUpdate
 
 def get_report(db: Session, report_id: int):
     return db.query(Report).filter(Report.id == report_id).first()
+
+def get_parsed_data(db_report: Report) -> list:
+    """
+    Ambil data log yang sudah di-parse untuk sebuah laporan.
+
+    Sejak Fix #2 (pemindahan parsed_data ke file system), kolom JSON parsed_data
+    di DB dikosongkan setelah upload dan data sebenarnya disimpan di file lewat
+    parsed_data_path — jadi baca dari file dulu, fallback ke kolom DB untuk
+    laporan lama (dibuat sebelum Fix #2 ada).
+    """
+    if db_report.parsed_data_path:
+        try:
+            with open(db_report.parsed_data_path, "r", encoding="utf-8") as pf:
+                return json.load(pf)
+        except Exception:
+            pass
+    return db_report.parsed_data or []
 
 def get_owned_report(db: Session, report_id: int, user_id: int):
     """

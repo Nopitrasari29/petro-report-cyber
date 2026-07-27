@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
-from app.crud.report import get_owned_report
+from app.crud.report import get_owned_report, get_parsed_data
 from app.services.log_validator import run_log_validation
 
 router = APIRouter()
@@ -22,11 +22,12 @@ def get_validation_summary(
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
 
-    if not db_report.parsed_data:
+    parsed_data = get_parsed_data(db_report)
+    if not parsed_data:
         raise HTTPException(status_code=400, detail="Laporan tidak memiliki data log parsed untuk divalidasi.")
 
     result = run_log_validation(
-        parsed_list=db_report.parsed_data,
+        parsed_list=parsed_data,
         data_type=db_report.data_type,
         report_title=db_report.title,
         created_at=db_report.created_at

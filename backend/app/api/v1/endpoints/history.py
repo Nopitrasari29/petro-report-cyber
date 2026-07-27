@@ -6,7 +6,7 @@ import io
 
 from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
-from app.crud.report import get_owned_report, delete_report, update_report
+from app.crud.report import get_owned_report, delete_report, update_report, get_parsed_data
 from app.crud.audit_log import log_action  # Fix #9: Audit Log
 from app.schemas.report import ReportResponse, ReportUpdate
 from app.models.report import Report
@@ -211,9 +211,10 @@ def download_pdf_report(
         with open(pdf_cache_path, "rb") as f:
             pdf_bytes = f.read()
     else:
-        if not db_report.chart_data and db_report.parsed_data:
+        parsed_data = get_parsed_data(db_report)
+        if not db_report.chart_data and parsed_data:
             try:
-                chart_config = ChartGenerator.generate_chart_config(db_report.data_type, db_report.parsed_data)
+                chart_config = ChartGenerator.generate_chart_config(db_report.data_type, parsed_data)
                 db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
             except Exception as chart_err:
                 print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PDF: {chart_err}")
@@ -280,9 +281,10 @@ def download_pptx_report(
         with open(ppt_cache_path, "rb") as f:
             ppt_bytes = f.read()
     else:
-        if not db_report.chart_data and db_report.parsed_data:
+        parsed_data = get_parsed_data(db_report)
+        if not db_report.chart_data and parsed_data:
             try:
-                chart_config = ChartGenerator.generate_chart_config(db_report.data_type, db_report.parsed_data)
+                chart_config = ChartGenerator.generate_chart_config(db_report.data_type, parsed_data)
                 db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
             except Exception as chart_err:
                 print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PPTX: {chart_err}")

@@ -62,7 +62,8 @@ export default function Navbar() {
       });
       if (res.ok) {
         const data = await res.json();
-        const formatted = (data.items || []).map((n: any) => ({
+        const items = Array.isArray(data) ? data : (data.items || []);
+        const formatted = items.map((n: any) => ({
           id: n.id,
           type: n.type || "info",
           title: n.title,

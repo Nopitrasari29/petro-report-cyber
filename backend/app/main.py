@@ -44,8 +44,8 @@ async def lifespan(app: FastAPI):
     except Exception as db_err:
         print(f"\033[91m[DB ERROR]\033[0m Gagal membuat tabel: {db_err}")
     print_banner()
-    print(f"{G}[STARTUP]{R} Backend siap menerima request ✓")
-    print(f"{DIM}[INFO]{R}    Hot-reload aktif — perubahan kode otomatis ter-apply\n")
+    print(f"{G}[STARTUP]{R} Backend siap menerima request [OK]")
+    print(f"{DIM}[INFO]{R}    Hot-reload aktif - perubahan kode otomatis ter-apply\n")
     yield
     # Shutdown
     print(f"\n{Y}[SHUTDOWN]{R} Backend sedang dimatikan...")

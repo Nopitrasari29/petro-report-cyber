@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
-from app.crud.report import get_owned_report, update_report
+from app.crud.report import get_owned_report, update_report, get_parsed_data
 from app.schemas.report import ReportUpdate
 from app.services.chart_generator import ChartGenerator
 
@@ -27,11 +27,12 @@ def get_report_chart(
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
 
-    if not db_report.parsed_data:
+    parsed_data = get_parsed_data(db_report)
+    if not parsed_data:
         raise HTTPException(status_code=400, detail="Data laporan belum di-parsing atau kosong.")
 
     try:
-        chart_config = ChartGenerator.generate_chart_config(db_report.data_type, db_report.parsed_data)
+        chart_config = ChartGenerator.generate_chart_config(db_report.data_type, parsed_data)
     except Exception as e:
         raise HTTPException(
             status_code=500,

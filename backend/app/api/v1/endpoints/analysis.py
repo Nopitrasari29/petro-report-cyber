@@ -185,11 +185,11 @@ def _run_analysis_job(report_id: int) -> None:
         ai_confidence_score = _calc_confidence(analysis_result)
 
         chart_config = None
-        if db_report.parsed_data and not db_report.chart_data:
+        if parsed_data_to_use and not db_report.chart_data:
             try:
                 candidate_chart = ChartGenerator.generate_chart_config(
                     db_report.data_type,
-                    db_report.parsed_data,
+                    parsed_data_to_use,
                 )
                 if candidate_chart and not candidate_chart.get("error") and candidate_chart.get("data"):
                     chart_config = candidate_chart
@@ -244,7 +244,7 @@ def generate_ai_analysis(
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
 
-    if not db_report.parsed_data:
+    if not db_report.parsed_data and not db_report.parsed_data_path:
         raise HTTPException(status_code=400, detail="Data laporan kosong atau belum di-parsing.")
 
     if db_report.status == "processing":
