@@ -177,7 +177,13 @@ class PDFExporter:
                 cell_strs = []
                 for h in selected_headers:
                     val = row.get(h, "")
-                    val_str = "" if val is None else str(val)
+                    # Sel benar-benar kosong (bukan cuma falsy seperti 0/False) bikin xhtml2pdf
+                    # menghitung lebar kolom otomatis jadi negatif dan crash (ValueError: flowable
+                    # given negative availWidth) - lihat cell yang isinya "" di kolom pertama.
+                    if val is None or (isinstance(val, str) and val.strip() == ""):
+                        val_str = "-"
+                    else:
+                        val_str = str(val)
                     cell_strs.append(
                         f"<td style='padding: 5px 4px; border: 1px solid #cbd5e0; font-size: 7.5pt; word-wrap: break-word; overflow-wrap: break-word; vertical-align: top;'>{html.escape(val_str)}</td>"
                     )
