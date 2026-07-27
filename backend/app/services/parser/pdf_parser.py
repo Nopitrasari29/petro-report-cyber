@@ -1,4 +1,5 @@
-from typing import Any, BinaryIO, Dict, List, Optional
+from typing import Any, BinaryIO, Dict, List, Optional, cast
+import numpy as np
 import pandas as pd
 from app.services.parser.base import BaseParser
 
@@ -47,7 +48,7 @@ class PDFParser(BaseParser):
         return df
 
     def parse(self, file_content: BinaryIO) -> List[Dict[str, Any]]:
-        if not PDFPLUMBER_AVAILABLE:
+        if not PDFPLUMBER_AVAILABLE or pdfplumber is None:
             raise ValueError(
                 "Modul 'pdfplumber' belum terinstal di lingkungan virtualenv Python backend. "
                 "Silakan jalankan 'pip install pdfplumber' atau 'pip install -r requirements.txt'."
@@ -57,22 +58,25 @@ class PDFParser(BaseParser):
         header: Optional[List[str]] = None
         rows: List[Dict[str, Any]] = []
 
+        def _clean_cell(c: Any) -> str:
+            return "" if c is None else str(c).strip()
+
         try:
-            with pdfplumber.open(file_content) as pdf:
+            with pdfplumber.open(cast(Any, file_content)) as pdf:
                 for page in pdf.pages:
                     for table in page.extract_tables():
                         for raw_row in table:
-                            if not any(cell is not None and str(cell).strip() for cell in raw_row):
+                            if not any(_clean_cell(cell) for cell in raw_row):
                                 continue  # baris kosong total, lewati
 
                             if header is None:
                                 header = [
-                                    (str(cell).strip() if cell is not None and str(cell).strip() else f"column_{i + 1}")
+                                    (_clean_cell(cell) or f"column_{i + 1}")
                                     for i, cell in enumerate(raw_row)
                                 ]
                                 continue
 
-                            normalized_row = [str(cell).strip() if cell is not None else "" for cell in raw_row]
+                            normalized_row = [_clean_cell(cell) for cell in raw_row]
                             if normalized_row == header:
                                 continue  # header yang berulang di halaman/tabel berikutnya
 
@@ -81,6 +85,8 @@ class PDFParser(BaseParser):
                                 value = raw_row[col_idx] if col_idx < len(raw_row) else None
                                 row_dict[col_name] = value.strip() if isinstance(value, str) else value
                             rows.append(row_dict)
+
+
         except ValueError:
             raise
         except Exception as e:
@@ -98,5 +104,8 @@ class PDFParser(BaseParser):
         df = self._coerce_numeric_columns(df)
         # Bersihkan NaN hasil coercion jadi None agar serialize ke JSON tidak error,
         # konsisten dengan pola yang sama di CSVParser/ExcelParser.
-        df = df.where(pd.notnull(df), None)
-        return df.to_dict(orient="records")
+        records: List[Dict[str, Any]] = cast(
+            List[Dict[str, Any]],
+            df.astype(object).replace({np.nan: None}).to_dict(orient="records")
+        )
+        return records

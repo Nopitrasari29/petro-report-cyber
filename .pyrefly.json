@@ -1,0 +1,7 @@
+{
+  "pythonPath": "backend/venv/Scripts/python.exe",
+  "searchPaths": [
+    "backend",
+    "backend/venv/Lib/site-packages"
+  ]
+}
