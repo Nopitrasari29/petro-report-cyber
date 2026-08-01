@@ -85,27 +85,53 @@ class PDFExporter:
         metrics_table = ai_summary.get("metrics_table") or []
         chart_captions = ai_summary.get("chart_captions") or []
 
+        # Default narasi fallback jika AI belum generate chart_captions
+        default_captions = [
+            "Distribusi data berdasarkan kategori utama dalam periode laporan ini.",
+            "Tren dan pola data dari waktu ke waktu selama periode yang dianalisis.",
+            "Perbandingan antar entitas atau kategori berdasarkan indikator utama.",
+            "Analisis frekuensi dan proporsi per kelompok data yang diidentifikasi.",
+            "Ringkasan visual temuan utama dari keseluruhan dataset yang diproses.",
+        ]
+
         if PLOTLY_AVAILABLE and charts_list:
             for idx, c_dict in enumerate(charts_list):
                 try:
-                    png_bytes = ChartGenerator.render_png(c_dict, width=750, height=360, scale=2)
+                    # Render chart lebih kecil karena hanya menempati setengah lebar halaman
+                    png_bytes = ChartGenerator.render_png(c_dict, width=520, height=310, scale=2)
                     c_b64 = base64.b64encode(png_bytes).decode("utf-8")
-                    # width dalam piksel tetap (BUKAN "width:100%"): xhtml2pdf (fallback engine
-                    # kalau WeasyPrint tidak tersedia, kondisi umum di Windows lokal tanpa
-                    # GTK/Pango) gagal parsing "width:100%" pada <img> di sini ("getSize: Not a
-                    # float '100%'"), yang bikin gambar chart gagal ikut layout container dan
-                    # lompat terpisah dari heading-nya. Nilai px tetap aman di WeasyPrint juga.
-                    caption_html = ""
+
+                    # Narasi per-chart: prioritas dari AI, fallback ke default
+                    narasi_text = ""
                     if idx < len(chart_captions) and chart_captions[idx]:
-                        caption_html = (
-                            f"<p style='text-align:center;font-size:9pt;font-style:italic;"
-                            f"color:#4a5568;margin-top:2px;'>{html.escape(str(chart_captions[idx]))}</p>"
-                        )
+                        narasi_text = html.escape(str(chart_captions[idx]))
+                    else:
+                        narasi_text = default_captions[idx % len(default_captions)]
+
+                    chart_title = ""
+                    raw_title = c_dict.get("layout", {}).get("title", {})
+                    if isinstance(raw_title, dict):
+                        chart_title = html.escape(str(raw_title.get("text", "")))
+                    elif isinstance(raw_title, str):
+                        chart_title = html.escape(raw_title)
+
+                    # Layout 2-kolom: kiri = chart, kanan = narasi AI
+                    # Menggunakan <table> (bukan flex/grid) karena xhtml2pdf tidak support flexbox
                     chart_imgs_html.append(
-                        f'<div style="margin-bottom: 22px; text-align: center;">'
-                        f'<img src="data:image/png;base64,{c_b64}" width="620" style="width:620px;margin:0 auto;display:block;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);" alt="Grafik Analisis #{idx+1}" />'
-                        f'{caption_html}'
+                        f'<table style="width:100%;border-collapse:collapse;margin-bottom:20px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">'
+                        f'<tr>'
+                        f'<td style="width:55%;vertical-align:middle;padding:8px;background-color:#f8fafc;border-right:1px solid #e2e8f0;">'
+                        f'<img src="data:image/png;base64,{c_b64}" width="340" style="width:340px;display:block;margin:0 auto;" alt="Grafik #{idx+1}" />'
+                        f'</td>'
+                        f'<td style="width:45%;vertical-align:middle;padding:14px 12px;">'
+                        f'<div style="background-color:#fffbeb;border-left:3px solid #d97706;padding:8px 10px;border-radius:4px;">'
+                        f'<p style="font-size:7.5pt;font-weight:800;color:#92400e;margin:0 0 6px 0;">&#x1F4A1; Narasi Insight AI</p>'
+                        + (f'<p style="font-size:8pt;font-weight:700;color:#1e293b;margin:0 0 5px 0;">{chart_title}</p>' if chart_title else '')
+                        + f'<p style="font-size:8pt;color:#374151;margin:0;line-height:1.55;">{narasi_text}</p>'
                         f'</div>'
+                        f'</td>'
+                        f'</tr>'
+                        f'</table>'
                     )
                 except Exception as chart_err:
                     print(f"[PDF CHART WARNING] Gagal merender grafik #{idx+1}: {chart_err}")
@@ -163,38 +189,88 @@ class PDFExporter:
                 f"<ul>{kf_items}</ul>"
             )
 
+        header_title_text = html.escape(report.header_title or "PT PETROKIMIA GRESIK")
+        header_subtitle_text = html.escape(report.header_subtitle or "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI")
+        
+        # Color Theme Config
+        theme = (report.theme_color or "green").lower()
+        theme_map = {
+            "green": {"primary": "#004D25", "accent": "#d9a700", "light": "#f0fdf4"},
+            "navy": {"primary": "#0F172A", "accent": "#38BDF8", "light": "#f8fafc"},
+            "dark": {"primary": "#111827", "accent": "#818CF8", "light": "#f3f4f6"},
+            "gold": {"primary": "#78350F", "accent": "#F59E0B", "light": "#fffbeb"},
+        }
+        theme_colors = theme_map.get(theme, theme_map["green"])
+        primary_color = theme_colors["primary"]
+        accent_color = theme_colors["accent"]
+        light_color = theme_colors["light"]
+
+        # chart_img_html sudah berisi layout 2-kolom per chart (narasi inline)
+        chart_img_html_with_caption = chart_img_html
+
         # Section mana yang ditampilkan, sesuai pilihan "Include Sections" user di Report
-        # Settings. included_sections None/kosong berarti semua ditampilkan (laporan lama
-        # sebelum fitur ini ada, atau user tidak menyentuh pilihan defaultnya).
         included = report.included_sections or {}
 
         def is_included(key: str) -> bool:
-            return included.get(key, True)
+            if isinstance(included, dict):
+                return included.get(key, True)
+            if isinstance(included, list):
+                # If included is a list of section objects
+                for sec in included:
+                    if isinstance(sec, dict) and sec.get("key") == key:
+                        return sec.get("enabled", True)
+            return True
 
-        # Chart selalu ditampilkan (bukan bagian dari 6 section yang bisa di-toggle), tapi
-        # nomornya tetap ikut urutan section lain yang benar-benar tampil, bukan hardcode "2.".
+        # Render Dynamic Sections
         report_items = []
         if is_included("executive_summary"):
             report_items.append((
                 "Ringkasan Eksekutif (Executive Summary)",
                 f"<p>{exec_summary}</p>{metrics_html}{key_findings_html}"
             ))
-        report_items.append(("Visualisasi Data Analitik", chart_img_html))
-        if is_included("trend_analysis"):
-            report_items.append(("Analisis Tren Ancaman (Trend Analysis)", f"<p>{trend_analysis}</p>"))
-        if is_included("severity_analysis"):
-            report_items.append(("Analisis Tingkat Keparahan (Severity Analysis)", f"<p>{severity_analysis}</p>"))
-        if is_included("risk_assessment"):
-            report_items.append(("Penilaian Risiko (Risk Assessment)", f"<p>{risk_assessment}</p>"))
-        if is_included("recommendations"):
-            report_items.append(("Rekomendasi Tindakan Keamanan Siber", f"<ul>{rec_html}</ul>"))
-        if is_included("conclusion"):
-            report_items.append(("Kesimpulan (Conclusion)", f"<p>{conclusion}</p>"))
+        report_items.append(("Visualisasi Data & Infografis Analitik", chart_img_html_with_caption))
+        
+        # Check dynamic sections from included list or dict
+        section_titles = {
+            "trend_analysis": "Analisis Tren & Distribusi Data",
+            "target_achievement": "Analisis Pencapaian Target & Realisasi",
+            "revenue_expense_trend": "Analisis Tren Pendapatan vs Beban Operasional",
+            "severity_analysis": "Analisis Tingkat Keparahan (Severity)",
+            "top_performers": "Analisis Performa Teratas & Evaluasi",
+            "budget_variance": "Analisis Varian Anggaran & Efisiensi",
+            "risk_assessment": "Penilaian Risiko & Dampak Operasional",
+            "financial_risk": "Penilaian Risiko Keuangan & Pengendalian Biaya",
+            "gap_risk_analysis": "Identifikasi Kendala & Area Perbaikan",
+            "recommendations": "Rekomendasi Tindakan Strategis & Pembinaan",
+            "conclusion": "Kesimpulan & Catatan Manajemen"
+        }
+
+        # Override titles if custom sections exist
+        if isinstance(included, list):
+            for sec in included:
+                if isinstance(sec, dict) and sec.get("enabled", True):
+                    k = sec.get("key")
+                    if k in ai_summary and k != "executive_summary":
+                        t = sec.get("title", k.replace("_", " ").title())
+                        c = html.escape(str(ai_summary.get(k, "")))
+                        report_items.append((t, f"<p>{c}</p>"))
+        else:
+            if is_included("trend_analysis") and trend_analysis:
+                report_items.append((section_titles.get("trend_analysis"), f"<p>{trend_analysis}</p>"))
+            if is_included("severity_analysis") and severity_analysis:
+                report_items.append((section_titles.get("severity_analysis"), f"<p>{severity_analysis}</p>"))
+            if is_included("risk_assessment") and risk_assessment:
+                report_items.append((section_titles.get("risk_assessment"), f"<p>{risk_assessment}</p>"))
+            if is_included("recommendations") and rec_html:
+                report_items.append((section_titles.get("recommendations"), f"<ul>{rec_html}</ul>"))
+            if is_included("conclusion") and conclusion:
+                report_items.append((section_titles.get("conclusion"), f"<p>{conclusion}</p>"))
 
         narrative_sections_html = "\n".join(
-            f"<h2>{idx + 1}. {title}</h2>\n{content}\n"
-            for idx, (title, content) in enumerate(report_items)
+            f"<h2>{idx + 1}. {sec_title}</h2>\n{content}\n"
+            for idx, (sec_title, content) in enumerate(report_items)
         )
+
 
         # Bentuk tabel data log terlampir (dipilih max 8 kolom utama agar tidak meluber/tumpang tindih di PDF)
         table_headers = ""
@@ -431,8 +507,8 @@ class PDFExporter:
                 <table style="width: 100%; border: none;">
                     <tr>
                         <td style="padding: 0; border: none; vertical-align: middle;">
-                            <div class="company-name">PT PETROKIMIA GRESIK</div>
-                            <div class="doc-subtitle">Sistem Otomasi Report Bulanan SOC Berbasis AI</div>
+                            <div class="company-name" style="color: {primary_color};">{header_title_text}</div>
+                            <div class="doc-subtitle" style="color: {accent_color};">{header_subtitle_text}</div>
                         </td>
                         <td style="padding: 0; border: none; text-align: right; vertical-align: middle;">
                             {logo_img_html}
@@ -440,6 +516,7 @@ class PDFExporter:
                     </tr>
                 </table>
             </div>
+
 
             <h1>{title}</h1>
             

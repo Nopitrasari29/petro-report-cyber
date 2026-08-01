@@ -1,11 +1,11 @@
 # app/services/ai_engine/prompts.py
 
-# System Prompt — Instruksi dasar untuk semua tipe analisis
+# System Prompt — Universal, berlaku untuk semua domain data (SOC, Keuangan, KPI, Operasional)
 SYSTEM_PROMPT = """
-Anda adalah Senior Cybersecurity Analyst di Departemen IT Security PT Petrokimia Gresik.
-Tugas Anda adalah menganalisis data log keamanan siber yang diberikan dan menyusun laporan naratif bulanan yang komprehensif, profesional, dan mudah dipahami oleh manajemen eksekutif.
+Anda adalah Senior Data Analyst & Business Intelligence Specialist di PT Petrokimia Gresik.
+Tugas Anda adalah menganalisis data yang diberikan (berupa log keamanan siber, data keuangan, data KPI/kinerja mitra, data operasional, atau data umum lainnya) dan menyusun laporan naratif eksekutif yang komprehensif, profesional, akurat, dan mudah dipahami oleh manajemen eksekutif.
 
-Gunakan data log mentah yang dikirim oleh pengguna untuk mengisi setiap bagian analisis. Anda harus menganalisis tren, tingkat keparahan (severity), penilaian risiko (risk assessment), dan memberikan rekomendasi mitigasi yang taktis serta strategis sesuai dengan kondisi internal enterprise.
+Gunakan data mentah dan statistik terhitung yang dikirim oleh pengguna untuk mengisi setiap bagian analisis. Anda harus menganalisis tren, temuan utama, penilaian risiko atau gap, dan memberikan rekomendasi taktis serta strategis yang relevan dengan jenis data dan konteks bisnis yang diberikan.
 
 Format keluaran analisis Anda HARUS berupa JSON valid dengan struktur kunci berikut:
 {
@@ -134,13 +134,56 @@ Fokus analisis untuk log IDS/IPS (Intrusion Detection/Prevention System):
 - Identifikasi anomali traffic yang tidak sesuai baseline normal jaringan.
 - Rekomendasikan tuning signature dan threshold untuk meningkatkan akurasi deteksi.
 """,
+    # =================== NON-SOC DOMAIN CONTEXTS ===================
+
+    "keuangan": """
+Fokus analisis untuk data KEUANGAN / FINANCIAL:
+- Analisis perbandingan REALISASI vs ANGGARAN/RKAP (variance analysis) per pos anggaran.
+- Identifikasi pos anggaran yang melebihi target (over-budget) dan yang under-budget signifikan.
+- Analisis tren pendapatan, biaya operasional, dan margin keuntungan berdasarkan periode data.
+- Identifikasi faktor utama yang mendorong perubahan kinerja keuangan (cost driver / revenue driver).
+- Evaluasi efisiensi pengeluaran dibandingkan target RKAP yang telah ditetapkan.
+- Berikan rekomendasi langkah efisiensi biaya dan optimalisasi alokasi anggaran ke depan.
+- Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif keuangan (tren, gap, persentase).
+""",
+    "financial": """
+Fokus analisis untuk data KEUANGAN / FINANCIAL:
+- Analisis perbandingan REALISASI vs ANGGARAN/RKAP (variance analysis) per pos anggaran.
+- Identifikasi pos anggaran yang melebihi target (over-budget) dan yang under-budget signifikan.
+- Analisis tren pendapatan, biaya operasional, dan margin keuntungan berdasarkan periode data.
+- Identifikasi faktor utama yang mendorong perubahan kinerja keuangan (cost driver / revenue driver).
+- Evaluasi efisiensi pengeluaran dibandingkan target RKAP yang telah ditetapkan.
+- Berikan rekomendasi langkah efisiensi biaya dan optimalisasi alokasi anggaran ke depan.
+- Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif keuangan (tren, gap, persentase).
+""",
+    "kpi_hr": """
+Fokus analisis untuk data KPI / KINERJA MITRA / SDM:
+- Analisis pencapaian KPI per entitas (mitra/karyawan/unit kerja): siapa yang mencapai target, siapa yang tidak.
+- Identifikasi top performers (skor tertinggi) dan entitas yang memerlukan pembinaan (skor di bawah threshold).
+- Analisis distribusi skor kinerja dan pola gap antara target vs realisasi per indikator.
+- Identifikasi bobot indikator yang berkontribusi paling besar terhadap skor keseluruhan.
+- Evaluasi tren kinerja jika data tersedia untuk beberapa periode atau kuartal.
+- Rekomendasikan program pembinaan, intervensi manajemen, atau redistribusi target yang tepat sasaran.
+- Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif pencapaian dan ranking kinerja.
+""",
+    "operasional": """
+Fokus analisis untuk data OPERASIONAL:
+- Analisis volume, throughput, atau kapasitas produksi/operasi berdasarkan data yang tersedia.
+- Identifikasi bottleneck operasional dan area yang mengalami penurunan kinerja.
+- Analisis efisiensi proses (cycle time, downtime, utilization rate) jika kolom relevan tersedia.
+- Evaluasi perbandingan kinerja aktual vs target/standar operasional yang ditetapkan.
+- Identifikasi pola musiman atau anomali yang mempengaruhi performa operasional.
+- Rekomendasikan perbaikan proses atau alokasi sumber daya yang lebih optimal.
+- Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif kinerja dan tren operasional.
+""",
 }
 
-# Fallback untuk tipe log yang tidak dikenal
+# Fallback untuk tipe data yang tidak dikenal / general
 _DEFAULT_CONTEXT = """
-Lakukan analisis keamanan menyeluruh berdasarkan data log yang tersedia.
-Fokus pada distribusi severity, identifikasi pola anomali, aset atau entitas yang paling sering terlibat,
-dan rekomendasikan tindakan mitigasi yang spesifik dan dapat dilaksanakan.
+Lakukan analisis data menyeluruh berdasarkan data yang tersedia.
+Fokus pada: distribusi dan tren data utama, identifikasi anomali atau outlier, entitas atau kategori yang paling signifikan,
+dan berikan rekomendasi tindakan yang spesifik dan dapat dilaksanakan berdasarkan temuan data.
+Dalam field 'chart_captions': tulis satu kalimat interpretasi untuk setiap grafik yang dihasilkan, menjelaskan apa yang ditunjukkan grafik tersebut.
 """
 
 
@@ -152,15 +195,18 @@ def get_analysis_prompt(
     period_start: str | None = None,
     period_end: str | None = None,
     template_type: str | None = None,
-    language: str | None = None
+    language: str | None = None,
+    domain_type: str | None = None,
 ) -> str:
     """
-    Prompt template dinamis berdasarkan tipe log.
-    Fix #8: Setiap data_type mendapatkan konteks analisis yang spesifik
-    sehingga output AI lebih akurat dan relevan dibanding satu prompt generik.
+    Prompt template dinamis berdasarkan tipe data (data_type) DAN domain (domain_type).
+    Setiap kombinasi mendapatkan konteks analisis spesifik sehingga output AI lebih akurat
+    dan relevan, baik untuk data SOC/keamanan, keuangan, KPI/HR, maupun data operasional.
 
     stats_text/schema_text: hasil precompute Python/pandas (lihat data_profiler.py) — SUMBER
     UTAMA angka & struktur data. data_content di sini cuma 15 baris ilustratif, BUKAN sumber angka.
+    domain_type: domain yang dideteksi AI (soc_security, financial, kpi_hr, general) — dipakai
+    sebagai fallback jika data_type tidak ada entry spesifik di _DATA_TYPE_CONTEXT.
     """
     period_str = f"dari tanggal {period_start} hingga {period_end}" if (period_start and period_end) else "saat ini"
     template_str = f"Template Laporan yang diminta: '{template_type}'" if template_type else ""
@@ -170,12 +216,33 @@ def get_analysis_prompt(
         "PENTING: Seluruh nilai teks dalam objek JSON HARUS ditulis dalam Bahasa Indonesia."
     )
 
-    # Cari konteks spesifik — normalisasi key (lowercase, strip whitespace)
+    # 1. Cari konteks dari data_type spesifik (normalisasi key)
     normalized_type = (data_type or "").lower().strip().replace(" ", "_").replace("-", "_")
-    type_context = _DATA_TYPE_CONTEXT.get(normalized_type, _DEFAULT_CONTEXT)
+    type_context = _DATA_TYPE_CONTEXT.get(normalized_type)
+
+    # 2. Jika data_type tidak dikenal, fallback ke domain_type yang dideteksi AI
+    if not type_context and domain_type:
+        normalized_domain = (domain_type or "").lower().strip().replace("-", "_")
+        type_context = _DATA_TYPE_CONTEXT.get(normalized_domain)
+
+    # 3. Jika masih tidak ada, pakai _DEFAULT_CONTEXT
+    if not type_context:
+        type_context = _DEFAULT_CONTEXT
+
+    # Tentukan kata deskriptif domain untuk prompt (agar tidak selalu disebut "log keamanan")
+    domain_labels = {
+        "soc_security": "data log keamanan siber",
+        "financial": "data keuangan",
+        "keuangan": "data keuangan",
+        "kpi_hr": "data KPI dan kinerja mitra/SDM",
+        "operasional": "data operasional",
+        "general": "data operasional",
+    }
+    normalized_domain_key = (domain_type or "").lower().strip().replace("-", "_")
+    data_label = domain_labels.get(normalized_domain_key, "data")
 
     return f"""
-Berikut adalah data log keamanan dengan tipe '{data_type}' untuk periode {period_str}:
+Berikut adalah {data_label} dengan tipe '{data_type}' untuk periode {period_str}:
 {template_str}
 {lang_str}
 
@@ -187,7 +254,7 @@ Berikut adalah data log keamanan dengan tipe '{data_type}' untuk periode {period
 {stats_text}
 --- AKHIR STATISTIK ---
 
---- PANDUAN ANALISIS SPESIFIK UNTUK TIPE LOG INI ---
+--- PANDUAN ANALISIS SPESIFIK UNTUK JENIS DATA INI ---
 {type_context}
 Catatan: panduan di atas adalah FOKUS ANALISIS untuk membantu Anda menulis isi ke-6 field
 wajib (executive_summary, dst) — BUKAN daftar key JSON baru yang harus dibuat. Kalau panduan

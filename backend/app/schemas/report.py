@@ -12,6 +12,10 @@ class ReportBase(BaseModel):
     language: Optional[str] = "Indonesian"
     include_ai_insights: Optional[bool] = True
     include_raw_data_summary: Optional[bool] = True
+    header_title: Optional[str] = "PT PETROKIMIA GRESIK"
+    header_subtitle: Optional[str] = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
+    theme_color: Optional[str] = "green"
+    domain_type: Optional[str] = "general"
 
 class ReportCreate(ReportBase):
     input_file_name: Optional[str] = None
@@ -27,7 +31,7 @@ class ReportCreate(ReportBase):
     threat_count_info: Optional[int] = 0
     total_records_parsed: Optional[int] = 0
     total_file_size_bytes: Optional[int] = None
-    included_sections: Optional[Dict[str, bool]] = None
+    included_sections: Optional[Any] = None
 
 class ReportUpdate(BaseModel):
     title: Optional[str] = None
@@ -43,6 +47,10 @@ class ReportUpdate(BaseModel):
     language: Optional[str] = None
     include_ai_insights: Optional[bool] = None
     include_raw_data_summary: Optional[bool] = None
+    header_title: Optional[str] = None
+    header_subtitle: Optional[str] = None
+    theme_color: Optional[str] = None
+    domain_type: Optional[str] = None
     ai_confidence: Optional[float] = None
     sla_met: Optional[bool] = None
     processing_time_sec: Optional[int] = None
@@ -54,7 +62,7 @@ class ReportUpdate(BaseModel):
     threat_count_info: Optional[int] = None
     total_records_parsed: Optional[int] = None
     total_file_size_bytes: Optional[int] = None
-    included_sections: Optional[Dict[str, bool]] = None
+    included_sections: Optional[Any] = None
     tokens_generated: Optional[int] = None
 
 class ReportResponse(ReportBase):
@@ -78,10 +86,11 @@ class ReportResponse(ReportBase):
     threat_count_info: Optional[int]
     total_records_parsed: Optional[int]
     total_file_size_bytes: Optional[int] = None
-    included_sections: Optional[Dict[str, bool]]
+    included_sections: Optional[Any] = None
     tokens_generated: Optional[int]
     created_at: datetime
     updated_at: datetime
+
 
     class Config:
         from_attributes = True

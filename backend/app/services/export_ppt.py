@@ -53,9 +53,17 @@ class PPTXExporter:
             logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "LOGO_PETRO.png"))
         has_logo = os.path.exists(logo_path)
         
-        # Palet Warna Korporat Resmi PT Petrokimia Gresik (GSM Aligned)
-        GREEN = RGBColor(0, 77, 37)       # Hijau Petro Resmi (#004D25)
-        GOLD = RGBColor(217, 167, 0)      # Emas Petro Resmi (#d9a700)
+        # Color Theme Config
+        theme = (report.theme_color or "green").lower()
+        theme_rgb_map = {
+            "green": {"primary": RGBColor(0, 77, 37), "accent": RGBColor(217, 167, 0)},
+            "navy": {"primary": RGBColor(15, 23, 42), "accent": RGBColor(56, 189, 248)},
+            "dark": {"primary": RGBColor(17, 24, 39), "accent": RGBColor(129, 140, 248)},
+            "gold": {"primary": RGBColor(120, 53, 15), "accent": RGBColor(245, 158, 11)},
+        }
+        theme_rgb = theme_rgb_map.get(theme, theme_rgb_map["green"])
+        PRIMARY_COLOR = theme_rgb["primary"]
+        ACCENT_COLOR = theme_rgb["accent"]
         DARK_TEXT = RGBColor(51, 51, 51)  # Hitam Elegan
         
         # -------------------------------------------------------------
@@ -71,26 +79,26 @@ class PPTXExporter:
             except Exception:
                 pass
         
-        # Tambahkan ornamen garis hijau di bagian atas slide
+        # Tambahkan ornamen garis warna tema di bagian atas slide
         top_bar = slide.shapes.add_shape(
             1,  # MSO_SHAPE.RECTANGLE = 1
             Inches(0), Inches(0), Inches(10), Inches(0.35)
         )
         top_bar.fill.solid()
-        top_bar.fill.fore_color.rgb = GREEN
-        top_bar.line.color.rgb = GREEN
+        top_bar.fill.fore_color.rgb = PRIMARY_COLOR
+        top_bar.line.color.rgb = PRIMARY_COLOR
         
         # Tambahkan Kotak Teks Judul Utama
         tx_box = slide.shapes.add_textbox(Inches(0.75), Inches(1.8), Inches(8.5), Inches(2.8))
         tf = tx_box.text_frame
         tf.word_wrap = True
         
-        # Nama Perusahaan
+        # Nama Perusahaan / Kop Header Title
         p_comp = tf.paragraphs[0]
-        p_comp.text = "PT PETROKIMIA GRESIK"
+        p_comp.text = report.header_title or "PT PETROKIMIA GRESIK"
         p_comp.font.size = Pt(22)
         p_comp.font.bold = True
-        p_comp.font.color.rgb = GREEN
+        p_comp.font.color.rgb = PRIMARY_COLOR
         p_comp.alignment = PP_ALIGN.LEFT
         
         # Judul Laporan utama
@@ -98,17 +106,17 @@ class PPTXExporter:
         p_title.text = report.title
         p_title.font.size = Pt(38)
         p_title.font.bold = True
-        p_title.font.color.rgb = GREEN
+        p_title.font.color.rgb = PRIMARY_COLOR
         p_title.alignment = PP_ALIGN.LEFT
-        p_title.space_before = Pt(14)
         
-        # Subjudul (Penanggalan yang sudah melokalkan bahasa Indonesia)
+        # Subtitle / Kop Header Subtitle
         p_sub = tf.add_paragraph()
-        formatted_date = format_report_date(report.created_at, report.language)
-        p_sub.text = f"Sistem Otomasi Report SOC | Laporan {report.data_type.upper()} | {formatted_date}"
-        p_sub.font.size = Pt(14)
+        formatted_date = format_report_date(report.period_end or datetime.datetime.now(), report.language)
+        sub_text = report.header_subtitle or "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
+        p_sub.text = f"{sub_text} | {report.data_type.upper()} | {formatted_date}"
+        p_sub.font.size = Pt(13)
         p_sub.font.bold = True
-        p_sub.font.color.rgb = GOLD
+        p_sub.font.color.rgb = ACCENT_COLOR
         p_sub.alignment = PP_ALIGN.LEFT
         p_sub.space_before = Pt(20)
         p_sub.line_spacing = 1.2
@@ -279,10 +287,20 @@ class PPTXExporter:
         elif "data" in chart_data:
             charts_list = [chart_data]
 
+        # Default narasi fallback jika AI belum generate chart_captions
+        default_narasi = [
+            "Distribusi data berdasarkan kategori utama dalam periode laporan ini.",
+            "Tren dan pola data dari waktu ke waktu selama periode yang dianalisis.",
+            "Perbandingan antar entitas atau kategori berdasarkan indikator utama.",
+            "Analisis frekuensi dan proporsi per kelompok data yang teridentifikasi.",
+            "Ringkasan visual temuan utama dari keseluruhan dataset yang diproses.",
+        ]
+
         if PLOTLY_AVAILABLE and charts_list:
             for idx, c_dict in enumerate(charts_list):
                 try:
-                    png_bytes = ChartGenerator.render_png(c_dict, width=1000, height=560, scale=2)
+                    # Render chart lebih kecil — hanya menempati ~60% lebar slide (kiri)
+                    png_bytes = ChartGenerator.render_png(c_dict, width=700, height=440, scale=2)
                     img_io = io.BytesIO(png_bytes)
 
                     chart_slide_layout = prs.slide_layouts[6]
@@ -290,44 +308,75 @@ class PPTXExporter:
 
                     if has_logo:
                         try:
-                            chart_slide.shapes.add_picture(logo_path, Inches(7.6), Inches(0.12), width=Inches(1.9))
+                            chart_slide.shapes.add_picture(logo_path, Inches(8.3), Inches(0.1), width=Inches(1.5))
                         except Exception:
                             pass
 
-                    chart_title_text = c_dict.get("layout", {}).get("title", {}).get("text", f"Visualisasi Data Analitik #{idx+1}")
+                    # Judul slide
+                    chart_title_text = ""
+                    raw_title = c_dict.get("layout", {}).get("title", {})
+                    if isinstance(raw_title, dict):
+                        chart_title_text = raw_title.get("text", f"Visualisasi Data #{idx+1}")
+                    elif isinstance(raw_title, str):
+                        chart_title_text = raw_title
+                    else:
+                        chart_title_text = f"Visualisasi Data #{idx+1}"
 
-                    title_box = chart_slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(7.0), Inches(0.8))
+                    title_box = chart_slide.shapes.add_textbox(Inches(0.3), Inches(0.12), Inches(7.8), Inches(0.65))
                     tf = title_box.text_frame
                     p = tf.paragraphs[0]
                     p.text = chart_title_text
-                    p.font.size = Pt(22)
+                    p.font.size = Pt(20)
                     p.font.bold = True
-                    p.font.color.rgb = GREEN
+                    p.font.color.rgb = PRIMARY_COLOR
 
-                    p_sub = tf.add_paragraph()
-                    p_sub.text = f"Visualisasi Grafik Analitis Keamanan #{idx+1} | PT Petrokimia Gresik"
-                    p_sub.font.size = Pt(11)
-                    p_sub.font.bold = False
-                    p_sub.font.color.rgb = DARK_TEXT
-                    p_sub.space_before = Pt(4)
+                    # Garis pemisah header
+                    rule = chart_slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.3), Inches(0.82), Inches(9.4), Pt(2))
+                    rule.fill.solid()
+                    rule.fill.fore_color.rgb = ACCENT_COLOR
+                    rule.line.fill.background()
 
-                    # Tinggi dikurangi sedikit (5.2 -> 5.0) untuk menyisakan ruang caption di bawahnya
-                    chart_slide.shapes.add_picture(img_io, Inches(0.5), Inches(1.2), Inches(9.0), Inches(5.0))
+                    # KIRI: Chart Image (60% lebar slide)
+                    chart_slide.shapes.add_picture(img_io, Inches(0.2), Inches(1.0), Inches(5.8), Inches(5.5))
 
-                    # Fase B: caption interpretasi di bawah chart, kalau AI menyertakan chart_captions
-                    # sejajar index dengan charts_list — no-op aman kalau array kosong/lebih pendek.
+                    # KANAN: Panel narasi AI (40% lebar slide)
+                    # Background box narasi
+                    narasi_bg = chart_slide.shapes.add_shape(
+                        MSO_SHAPE.ROUNDED_RECTANGLE,
+                        Inches(6.15), Inches(1.0), Inches(3.6), Inches(5.5)
+                    )
+                    narasi_bg.fill.solid()
+                    narasi_bg.fill.fore_color.rgb = RGBColor(0xFF, 0xFB, 0xEB)  # Amber-50
+                    narasi_bg.line.color.rgb = RGBColor(0xD9, 0x77, 0x06)       # Amber-600
+                    narasi_bg.line.width = Pt(1.5)
+
+                    # Label "💡 Narasi Insight AI"
+                    label_box = chart_slide.shapes.add_textbox(Inches(6.3), Inches(1.15), Inches(3.3), Inches(0.5))
+                    lp = label_box.text_frame.paragraphs[0]
+                    lp.text = "💡  Narasi Insight AI"
+                    lp.font.size = Pt(12)
+                    lp.font.bold = True
+                    lp.font.color.rgb = RGBColor(0x92, 0x40, 0x0E)  # Amber-900
+
+                    # Teks narasi
+                    narasi_text = ""
                     if idx < len(chart_captions) and chart_captions[idx]:
-                        cap_box = chart_slide.shapes.add_textbox(Inches(0.5), Inches(6.25), Inches(9.0), Inches(0.6))
-                        cap_tf = cap_box.text_frame
-                        cap_tf.word_wrap = True
-                        cap_p = cap_tf.paragraphs[0]
-                        cap_p.text = str(chart_captions[idx])
-                        cap_p.font.size = Pt(11)
-                        cap_p.font.italic = True
-                        cap_p.font.color.rgb = DARK_TEXT
-                        cap_p.alignment = PP_ALIGN.CENTER
+                        narasi_text = str(chart_captions[idx])
+                    else:
+                        narasi_text = default_narasi[idx % len(default_narasi)]
+
+                    narasi_box = chart_slide.shapes.add_textbox(Inches(6.3), Inches(1.75), Inches(3.3), Inches(4.45))
+                    ntf = narasi_box.text_frame
+                    ntf.word_wrap = True
+                    np_ = ntf.paragraphs[0]
+                    np_.text = narasi_text
+                    np_.font.size = Pt(13)
+                    np_.font.color.rgb = RGBColor(0x37, 0x41, 0x51)  # Gray-700
+                    np_.line_spacing = 1.4
+
                 except Exception as chart_err:
                     print(f"[PPT CHART WARNING] Gagal merender grafik slide #{idx+1}: {chart_err}")
+
 
         # Slide 4: Analisis Tren & Severity (satu slide gabungan — cuma dimasukkan bagiannya
         # yang beneran dipilih user; skip seluruh slide kalau dua-duanya di-exclude)

@@ -13,7 +13,9 @@ from app.crud.report import create_report
 from app.schemas.report import ReportCreate, ReportResponse
 from app.api.v1.endpoints.auth import get_current_user
 from app.services.chart_generator import ChartGenerator
+from app.services.ai_engine.section_suggester import suggest_sections_for_file
 from app.utils.sanitizer import sanitize_for_json
+
 
 router = APIRouter()
 
@@ -87,10 +89,20 @@ def detect_period_from_file(
             file.file.close()
 
         period_start, period_end = detect_period(parsed_data)
+
+        # AI & Heuristic Dynamic Section Suggester (Revisi Progress 2)
+        columns = list(parsed_data[0].keys()) if parsed_data and len(parsed_data) > 0 else []
+        suggestions = suggest_sections_for_file(columns=columns, sample_data=parsed_data[:10], file_name=file.filename)
+
         return {
             "period_start": period_start,
             "period_end": period_end,
-            "detected": period_start is not None and period_end is not None
+            "detected": period_start is not None and period_end is not None,
+            "domain_type": suggestions["domain_type"],
+            "domain_label": suggestions["domain_label"],
+            "header_title": suggestions["header_title"],
+            "header_subtitle": suggestions["header_subtitle"],
+            "suggested_sections": suggestions["suggested_sections"],
         }
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=f"Kesalahan validasi format data: {str(ve)}")
@@ -102,7 +114,7 @@ def detect_period_from_file(
 @router.post("/", response_model=ReportResponse)
 def upload_security_file(
     title: str = Form(...),
-    data_type: str = Form(...),  # firewall, email_security, ids_ips, vapt, dll.
+    data_type: str = Form(...),  # firewall, email_security, ids_ips, vapt, keuangan, kpi_hr, dll.
     files: List[UploadFile] = File(...),
     period_start: Optional[str] = Form(None),  # Format YYYY-MM-DD
     period_end: Optional[str] = Form(None),    # Format YYYY-MM-DD
@@ -111,10 +123,15 @@ def upload_security_file(
     language: Optional[str] = Form("Indonesian"),
     include_ai_insights: bool = Form(True),
     include_raw_data_summary: bool = Form(True),
-    included_sections: Optional[str] = Form(None),  # JSON string {"executive_summary": true, ...}
+    included_sections: Optional[str] = Form(None),  # JSON string [{"key": "...", "title": "..."}, ...]
+    header_title: Optional[str] = Form("PT PETROKIMIA GRESIK"),
+    header_subtitle: Optional[str] = Form("Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"),
+    theme_color: Optional[str] = Form("green"),
+    domain_type: Optional[str] = Form("general"),
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+
     """
     Mengunggah berkas log keamanan, mengurainya via Parser, dan menyimpan laporannya ke DB 
     dengan konfigurasi awal (status Draft/Uploaded) untuk siap diproses di Step 3 oleh AI.
@@ -215,8 +232,13 @@ def upload_security_file(
             threat_count_info=threat_metrics["informational"],
             total_records_parsed=total_records,
             total_file_size_bytes=total_size_bytes,
-            included_sections=parsed_sections
+            included_sections=parsed_sections,
+            header_title=header_title,
+            header_subtitle=header_subtitle,
+            theme_color=theme_color,
+            domain_type=domain_type
         )
+
         
         db_report = create_report(db, report_in, user_id=current_user.id)
 

@@ -47,10 +47,15 @@ class Report(Base):
     # NULL untuk laporan lama sebelum kolom ini ada.
     total_file_size_bytes = Column(Integer, nullable=True)
 
-    # Dict {section_key: bool} — section mana yang user pilih untuk dimasukkan ke PDF/PPTX
-    # (mis. {"executive_summary": true, "recommendations": false, ...}). NULL/kosong berarti
-    # semua section ditampilkan (kompatibel dengan laporan lama sebelum fitur ini ada).
+    # Dict {section_key: bool} atau List[{key, title, description}] — section dinamis yang dipilih user
     included_sections = Column(JSON, nullable=True)
+
+    # Kustomisasi Template Kop & Tema Visual (Revisi Progress 2)
+    header_title = Column(String, nullable=True, default="PT PETROKIMIA GRESIK")
+    header_subtitle = Column(String, nullable=True, default="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI")
+    theme_color = Column(String, nullable=True, default="green")  # green, navy, dark, gold
+    domain_type = Column(String, nullable=True, default="general")  # soc_security, financial, kpi_hr, general
+
 
     # Jumlah token yang sudah dihasilkan Ollama sejauh ini selama status="processing" (di-update
     # live oleh background job lewat streaming /api/chat), dan jadi angka final (eval_count) begitu

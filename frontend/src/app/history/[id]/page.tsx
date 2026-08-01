@@ -527,6 +527,7 @@ export default function ReportDetailPage({
               activeTab={activeTab}
               setActiveTab={setActiveTab}
               activePage={activePage}
+              setActivePage={setActivePage}
               report={report}
               getPageTitle={getPageTitle}
               getPageText={getPageText}

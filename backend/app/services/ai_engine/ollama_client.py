@@ -269,10 +269,12 @@ class OllamaClient:
         period_end: str | None = None,
         template_type: str | None = None,
         language: str | None = None,
+        domain_type: str | None = None,
         on_progress=None,
     ) -> dict:
         """
-        Mengonversi log parsed siber ke string, memicu Ollama Qwen,
+        Mengonversi data (log keamanan, keuangan, KPI, atau data umum) ke string,
+        memicu Ollama Qwen dengan prompt yang disesuaikan per domain data,
         dan memformat hasilnya kembali menjadi dictionary/JSON secara robust.
         """
         # Guard clause jika data log kosong
@@ -315,7 +317,7 @@ class OllamaClient:
         sample_rows = parsed_data[:15]
         data_str = json.dumps(sample_rows, indent=2, ensure_ascii=False)
 
-        # Hasilkan prompt dengan metadata lengkap
+        # Hasilkan prompt dengan metadata lengkap + domain_type untuk konteks spesifik
         prompt = get_analysis_prompt(
             data_type=data_type,
             data_content=data_str,
@@ -324,7 +326,8 @@ class OllamaClient:
             period_start=period_start,
             period_end=period_end,
             template_type=template_type,
-            language=language
+            language=language,
+            domain_type=domain_type,
         )
 
         raw_response = None

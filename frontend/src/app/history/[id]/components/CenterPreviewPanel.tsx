@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { t } from "@/utils/i18n";
 import { REPORT_SECTIONS } from "@/utils/reportSections";
-import ReportChartPanel from "@/app/generate/components/ReportChartPanel";
+import ChartNarasiLayout from "@/app/generate/components/ChartNarasiLayout";
 import RichTextEditor from "@/app/generate/components/RichTextEditor";
+import FullscreenStudioModal from "@/app/generate/components/FullscreenStudioModal";
 
 const LAST_PAGE = REPORT_SECTIONS[REPORT_SECTIONS.length - 1].page;
 
@@ -32,6 +33,7 @@ interface CenterPreviewPanelProps {
   activeTab: "preview" | "edit" | "charts";
   setActiveTab: (tab: "preview" | "edit" | "charts") => void;
   activePage: string;
+  setActivePage?: (page: string) => void;
   report: ReportDetails;
   getPageTitle: (page: string) => string;
   getPageText: (page: string) => string;
@@ -45,6 +47,7 @@ export default function CenterPreviewPanel({
   activeTab,
   setActiveTab,
   activePage,
+  setActivePage = () => {},
   report,
   getPageTitle,
   getPageText,
@@ -54,7 +57,10 @@ export default function CenterPreviewPanel({
   saveSuccess,
 }: CenterPreviewPanelProps) {
   const [previewFormat, setPreviewFormat] = useState<"pdf" | "pptx">("pdf");
+  const [zoomLevel, setZoomLevel] = useState<number>(100);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [mounted, setMounted] = useState(false);
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -67,6 +73,21 @@ export default function CenterPreviewPanel({
       }
     }
   }, [activePage, previewFormat]);
+
+  // Listener tombol Escape untuk melepaskan mode Fullscreen
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen]);
+
+  const chartCaptions: string[] = Array.isArray(report?.ai_summary?.chart_captions)
+    ? report.ai_summary.chart_captions
+    : [];
 
   const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
 
@@ -90,46 +111,69 @@ export default function CenterPreviewPanel({
           ))}
         </div>
 
-        {/* 100% Zoom badge */}
-        <div className="flex items-center gap-1.5">
-          <span className="px-2 py-1 bg-white border border-stone-200 text-stone-500 font-extrabold text-[10px] rounded-lg shadow-sm flex items-center gap-1 cursor-pointer">
-            100%
+        {/* Zoom Selector & Fullscreen Button */}
+        <div className="flex items-center gap-2 py-2">
+          {/* Zoom Dropdown Selector */}
+          <div className="relative inline-flex items-center bg-stone-100 hover:bg-stone-200 rounded-xl px-2.5 py-1 text-[11px] font-extrabold text-stone-700 transition-colors border border-stone-200 shadow-sm">
+            <select
+              value={zoomLevel}
+              onChange={(e) => setZoomLevel(Number(e.target.value))}
+              className="bg-transparent text-[11px] font-bold text-stone-700 appearance-none pr-5 py-0.5 outline-none cursor-pointer"
+            >
+              <option value={50}>50%</option>
+              <option value={75}>75%</option>
+              <option value={100}>100%</option>
+              <option value={125}>125%</option>
+              <option value={150}>150%</option>
+              <option value={200}>200%</option>
+            </select>
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={3}
-              stroke="currentColor"
-              className="w-2.5 h-2.5"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className="w-3 h-3 absolute right-2 pointer-events-none text-stone-500"
             >
               <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="m19.5 8.25-7.5 7.5-7.5-7.5"
+                fillRule="evenodd"
+                d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
+                clipRule="evenodd"
               />
             </svg>
-          </span>
-          <span className="p-1 bg-white border border-stone-200 text-stone-500 rounded-lg shadow-sm cursor-pointer hover:bg-stone-50">
+          </div>
+
+          {/* Fullscreen Toggle Button */}
+          <button
+            onClick={() => setIsFullscreen(true)}
+            title={tx("Fullscreen Edit/Preview", "Layar Penuh Edit/Preview")}
+            className="p-1.5 rounded-xl bg-white text-stone-600 hover:bg-stone-100 border border-stone-200 shadow-sm transition-all cursor-pointer"
+          >
             <svg
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
-              strokeWidth={2.2}
+              strokeWidth={2}
               stroke="currentColor"
               className="w-3.5 h-3.5"
             >
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75v4.5m0-4.5h-4.5m4.5 0L15 9m5.25 11.25v-4.5m0 4.5h-4.5m4.5 0-5.25-5.25"
+                d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
               />
             </svg>
-          </span>
+          </button>
         </div>
       </div>
 
-      {/* Tab Contents */}
+      {/* Tab Contents Container dengan Zoom scale */}
       <div className="flex-1 overflow-y-auto p-6 bg-[#EFECE5]/60 scroll-smooth">
+        <div
+          className="transition-transform duration-200 ease-out"
+          style={{
+            transform: zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : "none",
+            transformOrigin: "top center",
+          }}
+        >
         {/* PREVIEW TAB */}
         {activeTab === "preview" && (
           <div className="space-y-4">
@@ -222,13 +266,13 @@ export default function CenterPreviewPanel({
                     </p>
                   </div>
 
-                  {/* Section 2: Visualisasi Data Analitik */}
+                  {/* Section 2: Visualisasi Data & Infografis Analitik */}
                   <div id="pdf-section-02" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "02" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                    <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 mb-2 flex items-center justify-between">
-                      <span>2. Visualisasi Data Analitik</span>
+                    <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 mb-3 flex items-center justify-between">
+                      <span>2. Visualisasi Data & Infografis Analitik</span>
                       {activePage === "02" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
                     </h4>
-                    <ReportChartPanel reportId={report.id} tx={tx} />
+                    <ChartNarasiLayout reportId={report.id} chartCaptions={chartCaptions} tx={tx} />
                   </div>
 
                   {/* Section 3: Trend Analysis */}
@@ -325,13 +369,13 @@ export default function CenterPreviewPanel({
                     </div>
                   </div>
                 ) : activePage === "02" ? (
-                  /* Slide 2: Visualisasi Chart Slide */
+                  /* Slide 2: Visualisasi Chart + Narasi AI Slide */
                   <div className="h-full flex flex-col justify-between relative overflow-y-auto">
                     <div>
                       <div className="flex justify-between items-start border-b border-stone-150 pb-2 mb-2">
                         <div>
                           <h3 className="text-sm font-black text-[#004D25] m-0">
-                            Visualisasi Data Analitik
+                            Visualisasi Data & Infografis Analitik
                           </h3>
                           <div className="w-12 h-1 bg-[#d9a700] rounded mt-1"></div>
                         </div>
@@ -341,7 +385,7 @@ export default function CenterPreviewPanel({
                           className="h-6 w-auto object-contain"
                         />
                       </div>
-                      <ReportChartPanel reportId={report.id} tx={tx} />
+                      <ChartNarasiLayout reportId={report.id} chartCaptions={chartCaptions} tx={tx} />
                     </div>
                     <div className="flex justify-between items-center border-t border-stone-200 pt-2 mt-2 text-[8px] font-bold text-stone-400">
                       <span>PT Petrokimia Gresik • SOC Operations</span>
@@ -451,14 +495,49 @@ export default function CenterPreviewPanel({
 
         {/* CHARTS TAB */}
         {activeTab === "charts" && (
-          <div className="w-full text-left">
-            <h5 className="font-extrabold text-stone-855 text-xs mb-3 uppercase tracking-wide">
-              {tx("Chart Visualization", "Chart Visualization")}
-            </h5>
-            <ReportChartPanel reportId={report.id} tx={tx} />
+          <div className="w-full text-left space-y-4">
+            <div className="flex items-center justify-between">
+              <h5 className="font-extrabold text-stone-855 text-xs uppercase tracking-wide">
+                {tx("Chart Visualization & Insight Narasi", "Chart Visualization & Insight Narasi")}
+              </h5>
+              <span className="text-[10px] bg-amber-50 text-amber-700 px-2.5 py-0.5 rounded-full font-bold border border-amber-200">
+                💡 AI Chart Captions
+              </span>
+            </div>
+            <ChartNarasiLayout reportId={report.id} chartCaptions={chartCaptions} tx={tx} />
           </div>
         )}
+        </div>
       </div>
+
+      {/* Shared Fullscreen Studio Modal */}
+      <FullscreenStudioModal
+        isOpen={isFullscreen}
+        onClose={() => setIsFullscreen(false)}
+        reportTitle={report?.title || "SOC Executive Summary"}
+        dataType={report?.data_type || "DATA"}
+        activePage={activePage}
+        setActivePage={setActivePage}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        previewFormat={previewFormat}
+        setPreviewFormat={setPreviewFormat}
+        zoomLevel={zoomLevel}
+        setZoomLevel={setZoomLevel}
+        getPageTitle={getPageTitle}
+        getPageText={getPageText}
+        handleTextChange={handleTextChange}
+        handleSaveEdits={handleSaveEdits}
+        isSaving={isSaving}
+        saveSuccess={saveSuccess}
+        reportId={report?.id}
+        chartCaptions={chartCaptions}
+        headerTitle="PT PETROKIMIA GRESIK"
+        headerSubtitle="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
+        themeColor="green"
+        inputFile={report?.input_file_name || "-"}
+        tx={tx}
+      />
     </div>
   );
 }

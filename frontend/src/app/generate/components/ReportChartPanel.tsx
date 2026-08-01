@@ -9,6 +9,7 @@ const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 
 interface ReportChartPanelProps {
   reportId: number | null | undefined;
+  chartCaption?: string;
   tx: (key: string, fallback: string) => string;
 }
 
@@ -18,6 +19,7 @@ interface ReportChartPanelProps {
  */
 export default function ReportChartPanel({
   reportId,
+  chartCaption,
   tx,
 }: ReportChartPanelProps) {
   const [chartData, setChartData] = useState<any>(null);
@@ -48,30 +50,32 @@ export default function ReportChartPanel({
           `${API_BASE_URL}/api/v1/chart/${reportId}`,
           { headers },
         );
-        const data = await res.json();
-
-        if (cancelled) return;
-
-        if (!res.ok) {
-          throw new Error(data.detail || "Gagal memuat grafik.");
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled) {
+            if (!data || data.error || (!data.data && (!data.charts || data.charts.length === 0))) {
+              setStatus("empty");
+            } else {
+              setChartData(data);
+              setStatus("ready");
+            }
+          }
+        } else {
+          if (!cancelled) {
+            setStatus("error");
+            setErrorMsg("Gagal memuat grafik dari server.");
+          }
         }
-
-        if (!data || data.error || (!data.data && (!data.charts || data.charts.length === 0))) {
-          setStatus("empty");
-          return;
-        }
-
-        setChartData(data);
-        setStatus("ready");
       } catch (err: any) {
         if (!cancelled) {
-          setErrorMsg(err.message || "Terjadi kesalahan saat memuat grafik.");
           setStatus("error");
+          setErrorMsg(err?.message || "Koneksi terputus.");
         }
       }
     };
 
     fetchChart();
+
     return () => {
       cancelled = true;
     };
@@ -79,13 +83,10 @@ export default function ReportChartPanel({
 
   if (status === "loading") {
     return (
-      <div className="border border-stone-200 rounded-2xl p-8 bg-stone-50/50 flex flex-col justify-center items-center min-h-[350px] gap-3">
-        <div className="w-9 h-9 border-4 border-stone-200 border-t-petro-green rounded-full animate-spin"></div>
-        <p className="text-xs text-stone-500 font-semibold">
-          {tx(
-            "Generating interactive charts from your security logs...",
-            "Generating interactive charts from your security logs...",
-          )}
+      <div className="border border-stone-200/80 rounded-2xl p-8 bg-stone-50/50 flex flex-col justify-center items-center min-h-[350px] gap-3">
+        <div className="w-8 h-8 border-3 border-stone-300 border-t-petro-green rounded-full animate-spin"></div>
+        <p className="text-xs font-bold text-stone-600">
+          {tx("Loading analytics chart...", "Loading analytics chart...")}
         </p>
       </div>
     );
@@ -93,9 +94,9 @@ export default function ReportChartPanel({
 
   if (status === "empty") {
     return (
-      <div className="border border-stone-200 rounded-2xl p-8 bg-stone-50/50 flex flex-col justify-center items-center min-h-[350px] gap-2 text-center">
-        <p className="text-xs font-bold text-stone-600">
-          {tx("No chart available yet", "No chart available yet")}
+      <div className="border border-dashed border-stone-250 rounded-2xl p-8 bg-stone-50/30 flex flex-col justify-center items-center min-h-[350px] gap-2 text-center">
+        <p className="text-xs font-bold text-stone-500">
+          {tx("No chart data available", "No chart data available")}
         </p>
         <p className="text-[11px] text-stone-400 font-medium max-w-xs">
           {tx(
@@ -128,7 +129,7 @@ export default function ReportChartPanel({
         : [];
 
   return (
-    <div className="space-y-6 w-full animate-fadeIn">
+    <div className="space-y-6 w-full animate-fadeIn text-left">
       <div className="grid grid-cols-1 gap-6 w-full">
         {chartsList.map((c: any, idx: number) => {
           const isHorizontalBar = c.data?.[0]?.orientation === "h";
@@ -159,6 +160,16 @@ export default function ReportChartPanel({
           );
         })}
       </div>
+
+      {/* Chart Insight Caption Callout (Infographic Narration) */}
+      {chartCaption && (
+        <div className="p-4 rounded-xl bg-amber-50/80 border-l-4 border-amber-500 text-stone-700 text-xs font-medium leading-relaxed space-y-1 shadow-sm">
+          <strong className="text-amber-900 font-bold block flex items-center gap-1.5">
+            <span>💡</span> {tx("Infographic Insight", "Keterangan Narasi Infografis & Insight Data")}
+          </strong>
+          <p className="text-[11px] text-stone-700 font-medium m-0 whitespace-pre-wrap">{chartCaption}</p>
+        </div>
+      )}
     </div>
   );
 }

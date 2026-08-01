@@ -136,8 +136,10 @@ def _run_analysis_job(report_id: int) -> None:
                     period_end=db_report.period_end.strftime("%Y-%m-%d") if db_report.period_end else None,
                     template_type=db_report.template_type,
                     language=db_report.language,
+                    domain_type=db_report.domain_type,  # Domain AI (financial, kpi_hr, soc_security, general)
                     on_progress=on_progress,
                 )
+
 
                 # Kalau setengah atau lebih dari 6 field wajib cuma teks default (artinya
                 # AI tidak menjawab dengan key yang dikenali sama sekali), perlakukan

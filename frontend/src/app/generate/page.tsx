@@ -15,8 +15,9 @@ import {
 } from "@/utils/reportSections";
 import Step0Overview from "./components/Step0Overview";
 import Step1Upload from "./components/Step1Upload";
-import Step2Settings from "./components/Step2Settings";
+import Step2Settings, { type DynamicSectionItem } from "./components/Step2Settings";
 import Step3AIProcessing from "./components/Step3AIProcessing";
+
 import Step4PreviewEdit from "./components/Step4PreviewEdit";
 import Step5Export from "./components/Step5Export";
 import TitlePromptModal from "./components/TitlePromptModal";
@@ -109,12 +110,16 @@ export default function GenerateReportPage() {
     fetchFormDefaults();
   }, []);
 
+  const [headerTitle, setHeaderTitle] = useState("PT PETROKIMIA GRESIK");
+  const [headerSubtitle, setHeaderSubtitle] = useState(
+    "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
+  );
+  const [themeColor, setThemeColor] = useState("green");
+  const [domainType, setDomainType] = useState("general");
+  const [dynamicSections, setDynamicSections] = useState<DynamicSectionItem[]>([]);
+
   const [tone, setTone] = useState("Professional");
   const [defaultLevel, setDefaultLevel] = useState("Standard");
-  // Key di sini HARUS sama persis dengan key di REPORT_SECTIONS/ai_summary backend
-  // (executive_summary, trend_analysis, dst) — bukan nama dekoratif seperti sebelumnya
-  // ("vaptSummary", "bandwidthMonitoring") yang tidak berhubungan dengan section sungguhan
-  // apapun, dan gara-gara itu checkbox ini dulu gak pernah benar-benar dikirim/dipakai.
   const [sections, setSections] = useState<Record<string, boolean>>(
     Object.fromEntries(REPORT_SECTIONS.map((s) => [s.key, true])),
   );
@@ -122,6 +127,7 @@ export default function GenerateReportPage() {
     pdf: false,
     pptx: false,
   });
+
 
   // Stepper Status (Step 3)
   const [aiStatus, setAiStatus] = useState<
@@ -160,6 +166,11 @@ export default function GenerateReportPage() {
   const [activePage, setActivePage] = useState("01");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Ambil chart_captions dari AI summary — array narasi satu kalimat per chart
+  const chartCaptions: string[] = Array.isArray(editedSummary?.chart_captions)
+    ? editedSummary.chart_captions
+    : [];
 
   const getPageTitle = getSectionTitle;
   const getPageContentKey = getSectionContentKey;
@@ -258,7 +269,14 @@ export default function GenerateReportPage() {
           setPeriodEnd(data.period_end);
           setPeriodAutoDetected(true);
         }
+        if (data.header_title) setHeaderTitle(data.header_title);
+        if (data.header_subtitle) setHeaderSubtitle(data.header_subtitle);
+        if (data.domain_type) setDomainType(data.domain_type);
+        if (data.suggested_sections && Array.isArray(data.suggested_sections)) {
+          setDynamicSections(data.suggested_sections);
+        }
       }
+
     } catch (err) {
       // Deteksi gagal itu bukan error fatal — user tetap bisa isi periode manual di Step 2.
       console.warn("[PERIOD DETECT] Gagal mendeteksi periode otomatis:", err);
@@ -423,7 +441,17 @@ export default function GenerateReportPage() {
       formData.append("language", language);
       formData.append("include_ai_insights", String(includeAI));
       formData.append("include_raw_data_summary", String(includeRaw));
-      formData.append("included_sections", JSON.stringify(sections));
+      formData.append("header_title", headerTitle);
+      formData.append("header_subtitle", headerSubtitle);
+      formData.append("theme_color", themeColor);
+      formData.append("domain_type", domainType);
+
+      if (dynamicSections.length > 0) {
+        formData.append("included_sections", JSON.stringify(dynamicSections));
+      } else {
+        formData.append("included_sections", JSON.stringify(sections));
+      }
+
 
       // Step1Upload menonaktifkan tombol Next selama belum ada file, jadi ini seharusnya
       // tidak pernah kejadian lewat alur normal — tapi kalau sampai kejadian (state gak
@@ -880,6 +908,14 @@ export default function GenerateReportPage() {
               setExportFormats={setExportFormats}
               sections={sections}
               setSections={setSections}
+              dynamicSections={dynamicSections}
+              setDynamicSections={setDynamicSections}
+              headerTitle={headerTitle}
+              setHeaderTitle={setHeaderTitle}
+              headerSubtitle={headerSubtitle}
+              setHeaderSubtitle={setHeaderSubtitle}
+              themeColor={themeColor}
+              setThemeColor={setThemeColor}
               tone={tone}
               setTone={setTone}
               defaultLevel={defaultLevel}
@@ -888,6 +924,7 @@ export default function GenerateReportPage() {
               onBack={handleBackStep}
               tx={tx}
             />
+
           )}
 
           {/* STEP 3: AI PROCESSING */}
@@ -921,6 +958,10 @@ export default function GenerateReportPage() {
               periodEnd={periodEnd}
               reportDetails={reportDetails}
               editedSummary={editedSummary}
+              chartCaptions={chartCaptions}
+              headerTitle={headerTitle}
+              headerSubtitle={headerSubtitle}
+              themeColor={themeColor}
               getPageText={getPageText}
               getPageTitle={getPageTitle}
               handleTextChange={handleTextChange}
@@ -929,6 +970,7 @@ export default function GenerateReportPage() {
               onNext={() => setShowTitlePrompt(true)}
               tx={tx}
             />
+
           )}
 
           <TitlePromptModal
