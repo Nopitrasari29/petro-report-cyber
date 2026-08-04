@@ -4,9 +4,11 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import ScrollReveal from "@/components/ScrollReveal";
 import { API_BASE_URL } from "@/utils/api";
+import { sanitizeFilename, downloadBlobAsFile } from "@/utils/downloadFile";
 
 interface Step5ExportProps {
   reportId: number | null;
+  reportTitle?: string;
   exportFormats: Record<string, boolean>;
   onReset: () => void;
   tx: (key: string, fallback: string) => string;
@@ -14,6 +16,7 @@ interface Step5ExportProps {
 
 async function downloadAuthorizedFile(
   reportId: number | null,
+  reportTitle: string | undefined,
   format: "pdf" | "pptx",
 ) {
   if (!reportId) return;
@@ -45,18 +48,20 @@ async function downloadAuthorizedFile(
   }
 
   const blob = await res.blob();
-  const downloadUrl = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = downloadUrl;
-  a.download = `soc_report_${reportId}.${format}`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.URL.revokeObjectURL(downloadUrl);
+  const filenameBase = sanitizeFilename(reportTitle, `soc_report_${reportId}`);
+  await downloadBlobAsFile(blob, `${filenameBase}.${format}`, {
+    description: format === "pdf" ? "PDF Document" : "PowerPoint Presentation",
+    mimeType:
+      format === "pdf"
+        ? "application/pdf"
+        : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    extension: format,
+  });
 }
 
 export default function Step5Export({
   reportId,
+  reportTitle,
   exportFormats,
   onReset,
   tx,
@@ -68,7 +73,7 @@ export default function Step5Export({
     setDownloadingFormat(format);
     setErrorMsg("");
     try {
-      await downloadAuthorizedFile(reportId, format);
+      await downloadAuthorizedFile(reportId, reportTitle, format);
     } catch (err: any) {
       setErrorMsg(err.message || "Gagal mengunduh file.");
     } finally {

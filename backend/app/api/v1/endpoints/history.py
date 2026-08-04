@@ -3,6 +3,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import io
+import re
+import urllib.parse
 
 from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
@@ -17,6 +19,30 @@ from app.services.chart_generator import ChartGenerator
 from datetime import datetime, date
 
 router = APIRouter()
+
+_ILLEGAL_FILENAME_CHARS_RE = re.compile(r'[\\/:*?"<>|]')
+
+
+def _sanitize_filename(title: str | None, fallback: str) -> str:
+    """Nama file download dari judul laporan — bukan cuma "soc_report_{id}" generik.
+    Karakter ilegal filesystem DIGANTI spasi (bukan dihapus) supaya kata tidak nyambung
+    (mis. "Q1/2024" -> "Q1_2024", bukan "Q12024"), lalu spasi dirapikan jadi underscore."""
+    if not title or not title.strip():
+        return fallback
+    name = _ILLEGAL_FILENAME_CHARS_RE.sub(" ", title.strip())
+    name = re.sub(r"\s+", "_", name.strip())
+    name = name.strip("._")
+    if len(name) > 80:
+        name = name[:80].rstrip("._")
+    return name or fallback
+
+
+def _content_disposition(filename_base: str, ext: str) -> str:
+    """filename (fallback ASCII, browser lama) + filename* RFC 5987 UTF-8 (browser modern) —
+    supaya judul berbahasa Indonesia dengan karakter non-ASCII tetap tampil benar."""
+    ascii_fallback = filename_base.encode("ascii", "ignore").decode("ascii").strip("._") or "report"
+    quoted_utf8 = urllib.parse.quote(f"{filename_base}.{ext}")
+    return f'attachment; filename="{ascii_fallback}.{ext}"; filename*=UTF-8\'\'{quoted_utf8}'
 
 @router.get("/ping")
 def ping():
@@ -242,11 +268,12 @@ def download_pdf_report(
     except Exception:
         pass
 
+    filename_base = _sanitize_filename(db_report.title, f"soc_report_{report_id}")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=soc_report_{report_id}.pdf"
+            "Content-Disposition": _content_disposition(filename_base, "pdf")
         }
     )
 
@@ -312,10 +339,11 @@ def download_pptx_report(
     except Exception:
         pass
 
+    filename_base = _sanitize_filename(db_report.title, f"soc_report_{report_id}")
     return Response(
         content=ppt_bytes,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={
-            "Content-Disposition": f"attachment; filename=soc_report_{report_id}.pptx"
+            "Content-Disposition": _content_disposition(filename_base, "pptx")
         }
     )

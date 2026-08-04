@@ -27,6 +27,10 @@ _CATEGORY_INTENTS: Dict[str, List[str]] = {
     "location": ["location", "lokasi", "site", "region", "cabang"],
     "action": ["action", "tindakan", "response"],
     "status": ["status", "state", "kondisi"],
+    # "asset" = ASET/TARGET yang diserang — beda makna dari "source_ip" (itu IP PENYERANG),
+    # dibutuhkan supaya slide "Aset paling sering jadi sasaran" tidak keliru pakai IP penyerang.
+    "asset": ["asset", "aset", "host", "hostname", "device", "server", "destination_ip",
+              "dst_ip", "destination_host", "target", "endpoint"],
 }
 
 _SEVERITY_KEYWORDS = ["severity", "level", "priority", "tingkat", "threat_level", "risk", "status"]
@@ -187,6 +191,15 @@ def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dic
     stats["top_categories"] = {
         label: _top_values(df, col) for label, col in category_cols.items()
     }
+    # Mapping label -> nama kolom ASLI (mis. "category_3" -> "jenis_insiden") — dipakai
+    # exporter (export_ppt.py/export_pdf.py) utk membaca nilai baris mentah per kolom yang
+    # tepat (mis. tabel insiden), tanpa perlu menebak ulang deteksi kolom yang sama persis.
+    # Prefix underscore = bukan bagian narasi AI (format_statistics_as_text tidak memakainya).
+    stats["_source_columns"] = {
+        "date": date_col,
+        "severity": sev_col,
+        **category_cols,
+    }
 
     if date_col and date_series is not None:
         stats["time_pattern"] = _compute_time_pattern(date_series)
@@ -286,3 +299,32 @@ def format_schema_as_text(schema: Dict[str, Any]) -> str:
         samples_str = ", ".join(col["sample_values"][:20])
         lines.append(f"- {col['name']} ({col['type']}): {samples_str}")
     return "\n".join(lines)
+
+
+def build_metrics_table_from_stats(stats: Dict[str, Any]) -> List[Dict[str, str]]:
+    """
+    Bangun metrics_table {label, value, percentage} LANGSUNG dari statistik terhitung
+    (compute_statistics) — dipakai sebagai fallback kartu KPI kalau AI tidak mengisi
+    metrics_table sendiri (qwen3:8b tidak konsisten mengisi field opsional ini), supaya
+    kartu KPI di laporan SELALU tampil dengan angka yang pasti benar, bukan tergantung AI.
+    """
+    total = stats.get("total_records", 0)
+    items: List[Dict[str, str]] = [
+        {"label": "Total Records", "value": str(total), "percentage": ""}
+    ]
+
+    sev = stats.get("severity_distribution") or {}
+    sev_total = sum(sev.values())
+    if sev_total:
+        for level, nice_label in [("critical", "Critical"), ("high", "High")]:
+            count = sev.get(level, 0)
+            if count:
+                pct = round(count / sev_total * 100, 1)
+                items.append({"label": nice_label, "value": str(count), "percentage": f"{pct}%"})
+
+    numeric_summary = stats.get("numeric_summary") or {}
+    if numeric_summary and len(items) < 4:
+        col_name, s = next(iter(numeric_summary.items()))
+        items.append({"label": f"Rata-rata {col_name}", "value": str(s.get("mean", "-")), "percentage": ""})
+
+    return items[:4]

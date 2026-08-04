@@ -4,7 +4,12 @@ import re
 import ollama
 import requests
 from app.core.config import settings
-from app.services.ai_engine.prompts import SYSTEM_PROMPT, get_analysis_prompt
+from app.services.ai_engine.prompts import (
+    SYSTEM_PROMPT,
+    get_analysis_prompt,
+    SECTION_SUGGESTION_SYSTEM_PROMPT,
+    get_section_suggestion_prompt,
+)
 from app.services.ai_engine.data_profiler import (
     compute_statistics,
     compute_schema_summary,
@@ -37,7 +42,136 @@ _KEY_ALIASES: dict[str, list[str]] = {
 
 # Fase B — key TAMBAHAN opsional (bukan bagian dari 6 key wajib): tidak memicu retry/fallback
 # di analysis.py kalau kosong, cuma disalin apa adanya kalau model AI menyertakannya.
-_OPTIONAL_KEYS = ["key_findings", "metrics_table", "chart_captions"]
+# "sections" (PART A3): array {id,title,content} dinamis, diisi HANYA kalau prompt menyertakan
+# daftar section terpilih (lihat get_analysis_prompt selected_sections) — additive, tidak
+# menggantikan 6 key wajib, supaya laporan lama & rendering lama tetap kompatibel.
+_OPTIONAL_KEYS = ["key_findings", "metrics_table", "chart_captions", "sections"]
+
+_NUMBERED_OR_BULLET_RE = re.compile(r"\s*(?:\d+[\)\.]|[•\-\*])\s+")
+_TITLE_DETAIL_RE = re.compile(r"^([A-Z][^:]{2,50}):\s*(.+)$", re.DOTALL)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-ZÀ-Ý])")
+_INTRO_LEADIN_RE = re.compile(r"^(berikut|adapun)\b.*:$", re.IGNORECASE)
+_LEADING_INTRO_RE = re.compile(r"^\s*(?:berikut(?:\s+ini)?(?:\s+adalah)?|adapun)\b[^:]{0,80}:\s*", re.IGNORECASE)
+
+_DASH_RE = re.compile(r"\s*[—–]\s*")
+_DOUBLE_PUNCT_RE = re.compile(r"([.,;])\s*\1+")
+# Frasa filler khas AI, dibuang di AWAL kalimat/paragraf — best-effort, tidak menangkap
+# semua variasi yang mungkin ("Perbaikan Rombak Total" brief, poin 2: buang frasa filler).
+_FILLER_PATTERNS = [
+    re.compile(r"^Secara keseluruhan,\s*", re.IGNORECASE),
+    re.compile(r"^Penting untuk dicatat bahwa\s*", re.IGNORECASE),
+    re.compile(r"^Perlu diketahui bahwa\s*", re.IGNORECASE),
+    re.compile(r"^Perlu dicatat bahwa\s*", re.IGNORECASE),
+    re.compile(r"^Perlu diingat bahwa\s*", re.IGNORECASE),
+    re.compile(r"^Dalam rangka\s+", re.IGNORECASE),
+    re.compile(r"^Sebagai catatan,\s*", re.IGNORECASE),
+]
+
+
+def sanitize_text(text) -> str:
+    """
+    Bersihkan teks narasi AI sebelum dirender ke laporan (dipakai export_ppt.py &
+    export_pdf.py): buang em dash "—"/en dash "–" (diganti ". ", berfungsi sebagai jeda
+    kalimat baru), buang frasa filler khas AI di awal kalimat, rapikan tanda baca ganda
+    hasil penggantian. Aman dipanggil dengan None/string kosong.
+    """
+    if not text:
+        return ""
+    result = _DASH_RE.sub(". ", str(text).strip())
+    for pattern in _FILLER_PATTERNS:
+        result = pattern.sub("", result)
+    result = _DOUBLE_PUNCT_RE.sub(r"\1", result)
+    result = re.sub(r"\s{2,}", " ", result).strip()
+    if result and result[0].islower():
+        result = result[0].upper() + result[1:]
+    return result
+
+
+def _split_multi_action_string(text: str) -> list:
+    """Pecah SATU string panjang jadi beberapa tindakan terpisah — model sering mengembalikan
+    beberapa tindakan digabung jadi satu paragraf/satu elemen list, bukan array yang sudah
+    terpisah per tindakan. Buang dulu kalimat pembuka generik yang MENEMPEL di awal teks
+    ("Berikut adalah rekomendasi: Perbarui firewall..." -> "Perbarui firewall...") SEBELUM
+    memecah, supaya kalimat pembuka itu tidak ikut terbawa jadi judul/kartu sendiri. Lalu coba
+    pola paling eksplisit dulu (bernomor/bullet), lalu titik-koma, lalu batas kalimat (otomatis
+    menangkap transisi "Selain itu, ..."/"Perlu juga ..." karena keduanya mengawali kalimat
+    baru) — dan buang lagi kalau ada fragmen yang TERNYATA cuma kalimat pembuka berdiri sendiri
+    (mis. hasil pemisahan bernomor/bullet). Kalau tidak ada pola manapun yang memecah jadi ≥2
+    bagian, kembalikan teks apa adanya (berarti ini genuinely satu tindakan/satu kalimat)."""
+    text = _LEADING_INTRO_RE.sub("", text.strip(), count=1).strip()
+    if not text:
+        return []
+    for splitter in (
+        lambda t: _NUMBERED_OR_BULLET_RE.split(t),
+        lambda t: t.split(";"),
+        lambda t: _SENTENCE_SPLIT_RE.split(t),
+    ):
+        parts = [p.strip() for p in splitter(text) if p.strip()]
+        parts = [p for p in parts if not _INTRO_LEADIN_RE.match(p)]
+        if len(parts) >= 2:
+            return parts
+    return [text]
+
+
+def _clean_recommendation_text(text: str) -> str:
+    """Buang sisa nomor manual di awal ('1) ', '2. ', '• ') dan tanda kurung yang tidak
+    berpasangan (mis. sisa '(' menggantung tanpa ')' penutup, atau sebaliknya) — biasanya
+    muncul karena kalimat lain "1) ... (2) ..." terpotong pas dipisah per poin."""
+    text = str(text).strip()
+    text = _NUMBERED_OR_BULLET_RE.sub("", text, count=1).strip()
+    if text.count("(") != text.count(")"):
+        if text.endswith("(") or text.endswith(" ("):
+            text = text.rsplit("(", 1)[0].strip()
+        elif text.startswith(")"):
+            text = text[1:].strip()
+        elif text.startswith("(") and ")" not in text:
+            text = text[1:].strip()
+        elif text.endswith(")") and "(" not in text:
+            text = text[:-1].strip()
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def _split_recommendation_item(text: str) -> dict:
+    """Pisah 'Judul singkat: detail' jadi {title, detail} kalau polanya jelas (judul pendek,
+    diawali huruf kapital, diakhiri titik dua) — kalau tidak, semua masuk ke detail saja."""
+    cleaned = _clean_recommendation_text(text)
+    m = _TITLE_DETAIL_RE.match(cleaned)
+    if m:
+        return {"title": m.group(1).strip(), "detail": m.group(2).strip()}
+    return {"title": None, "detail": cleaned}
+
+
+def normalize_recommendations(value) -> list:
+    """
+    Ubah "recommendations" APAPUN bentuknya (satu string gabungan, array string polos, array
+    campuran string/dict, atau sudah {title, detail}) jadi list[{title, detail}] yang bersih &
+    konsisten. Dipakai DUA tempat: (1) _normalize_json_keys saat parsing respons AI baru, dan
+    (2) langsung oleh export_ppt.py/export_pdf.py saat render — supaya laporan LAMA yang
+    recommendations-nya masih array string mentah (belum pernah lewat fungsi ini) tetap
+    dirender bersih & konsisten juga, tanpa perlu migrasi data.
+    """
+    if isinstance(value, str):
+        value = _split_multi_action_string(value)
+
+    if not isinstance(value, list):
+        return []
+
+    result = []
+    for item in value:
+        if isinstance(item, dict):
+            title = item.get("title")
+            detail = item.get("detail") or item.get("description") or ""
+            detail = _clean_recommendation_text(detail) if detail else ""
+            if detail:
+                result.append({"title": _clean_recommendation_text(title) if title else None, "detail": detail})
+        elif isinstance(item, str) and item.strip():
+            # Satu ITEM di dalam list bisa jadi masih berupa paragraf gabungan beberapa
+            # tindakan sekaligus (bukan cuma top-level value yang berupa satu string) —
+            # pecah lagi per item, bukan langsung dipakai apa adanya sebagai satu kartu.
+            for sub in _split_multi_action_string(item):
+                result.append(_split_recommendation_item(sub))
+    return result
+
 
 def get_ai_settings() -> dict:
     """
@@ -203,12 +337,9 @@ class OllamaClient:
 
             if found_key is not None:
                 value = search_data[found_key]
-                # Pastikan tipe data untuk recommendations adalah list
-                if key == "recommendations" and not isinstance(value, list):
-                    if isinstance(value, str):
-                        normalized[key] = [value]
-                    else:
-                        normalized[key] = default_val
+                if key == "recommendations":
+                    cleaned = normalize_recommendations(value)
+                    normalized[key] = cleaned if cleaned else default_val
                 else:
                     normalized[key] = value
             else:
@@ -261,6 +392,99 @@ class OllamaClient:
 
         raise ValueError(f"Tidak dapat mengekstrak JSON valid. Preview: {text[:300]}")
 
+    def suggest_sections(
+        self,
+        schema_text: str,
+        stats_text: str,
+        file_name: str | None = None,
+        domain_hint: str | None = None,
+    ) -> list[dict] | None:
+        """
+        PART A1 — usulkan struktur section laporan (bebas, boleh di luar preset 4-domain) lewat
+        AI, dipanggil section_suggester.py SEBELUM user masuk ke langkah Settings. SELALU return
+        None (bukan raise) kalau Ollama offline/timeout/JSON tidak valid/shape tidak sesuai —
+        caller (section_suggester.py) WAJIB fallback ke preset heuristik saat None, supaya upload
+        file tetap responsif & tidak pernah error walau AI gagal/lambat.
+        """
+        if not self.is_available():
+            return None
+
+        prompt = get_section_suggestion_prompt(
+            schema_text=schema_text,
+            stats_text=stats_text,
+            file_name=file_name,
+            domain_hint=domain_hint,
+        )
+        try:
+            raw_response = self.generate(
+                prompt, system_prompt=SECTION_SUGGESTION_SYSTEM_PROMPT, json_mode=True
+            )
+            text = raw_response.strip()
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+            text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.MULTILINE)
+            text = re.sub(r"\n?```\s*$", "", text, flags=re.MULTILINE).strip()
+
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+
+            # Ollama json_mode (format="json") memaksa root berupa OBJECT (mirip OpenAI json
+            # mode) — array telanjang di root ditolak/diabaikan oleh constrained decoding-nya,
+            # makanya kontraknya {"sections": [...]}. Tetap terima array telanjang sebagai
+            # fallback defensif kalau suatu saat perilaku model/versi Ollama berubah.
+            sections_list = None
+            if isinstance(parsed, dict):
+                sections_list = parsed.get("sections")
+            elif isinstance(parsed, list):
+                sections_list = parsed
+
+            if not isinstance(sections_list, list):
+                array_text = None
+                keyed_match = re.search(r'"sections"\s*:\s*(\[.*\])', text, re.DOTALL)
+                if keyed_match:
+                    array_text = keyed_match.group(1)
+                else:
+                    bare_match = re.search(r"\[.*\]", text, re.DOTALL)
+                    if bare_match:
+                        array_text = bare_match.group(0)
+                if not array_text:
+                    return None
+                try:
+                    sections_list = json.loads(array_text)
+                except json.JSONDecodeError:
+                    return None
+
+            if not isinstance(sections_list, list) or not sections_list:
+                return None
+            parsed = sections_list
+
+            result = []
+            for idx, item in enumerate(parsed):
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    continue
+                key = str(item.get("id") or item.get("key") or f"section_{idx}").strip() or f"section_{idx}"
+                recommended = item.get("recommended")
+                recommended = True if recommended is None else bool(recommended)
+                order_val = item.get("order")
+                order = order_val if isinstance(order_val, (int, float)) else idx
+                result.append({
+                    "key": key,
+                    "title": title,
+                    "description": str(item.get("description") or "").strip(),
+                    "order": order,
+                    "recommended": recommended,
+                    "enabled": recommended,
+                })
+
+            return result if result else None
+        except Exception as e:
+            print(f"[SECTION SUGGESTER] Gagal mendapatkan usulan section dari AI: {e}")
+            return None
+
     def analyze_security_data(
         self,
         data_type: str,
@@ -270,12 +494,19 @@ class OllamaClient:
         template_type: str | None = None,
         language: str | None = None,
         domain_type: str | None = None,
+        selected_sections: list[dict] | None = None,
+        tone: str | None = None,
+        default_level: str | None = None,
         on_progress=None,
     ) -> dict:
         """
         Mengonversi data (log keamanan, keuangan, KPI, atau data umum) ke string,
         memicu Ollama Qwen dengan prompt yang disesuaikan per domain data,
         dan memformat hasilnya kembali menjadi dictionary/JSON secara robust.
+
+        selected_sections: daftar section dinamis hasil pilihan user di Settings (PART A2/A3).
+        Diteruskan apa adanya ke get_analysis_prompt — None berarti jalur lama (checkbox preset
+        6-section), tidak ada perubahan perilaku apapun.
         """
         # Guard clause jika data log kosong
         if not parsed_data:
@@ -328,6 +559,9 @@ class OllamaClient:
             template_type=template_type,
             language=language,
             domain_type=domain_type,
+            selected_sections=selected_sections,
+            tone=tone,
+            default_level=default_level,
         )
 
         raw_response = None

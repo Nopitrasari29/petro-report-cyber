@@ -90,9 +90,10 @@ def detect_period_from_file(
 
         period_start, period_end = detect_period(parsed_data)
 
-        # AI & Heuristic Dynamic Section Suggester (Revisi Progress 2)
+        # Dynamic Section Suggester: coba AI dulu (butuh data LENGKAP untuk statistik akurat,
+        # bukan potongan 10 baris), fallback ke preset heuristik kalau AI offline/gagal.
         columns = list(parsed_data[0].keys()) if parsed_data and len(parsed_data) > 0 else []
-        suggestions = suggest_sections_for_file(columns=columns, sample_data=parsed_data[:10], file_name=file.filename)
+        suggestions = suggest_sections_for_file(columns=columns, sample_data=parsed_data, file_name=file.filename)
 
         return {
             "period_start": period_start,
@@ -128,6 +129,8 @@ def upload_security_file(
     header_subtitle: Optional[str] = Form("Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"),
     theme_color: Optional[str] = Form("green"),
     domain_type: Optional[str] = Form("general"),
+    tone: Optional[str] = Form("Professional"),  # Professional, Technical, Executive
+    default_level: Optional[str] = Form("Standard"),  # Standard, Detailed, Summary Only
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -202,11 +205,13 @@ def upload_security_file(
 
         # Parse pilihan section dari frontend. Kalau gagal/kosong, biarkan None (backward
         # compat: export_pdf.py/export_ppt.py menampilkan semua section kalau ini None).
+        # Bisa berbentuk dict (jalur lama: checkbox preset {key: bool}) ATAU list (jalur baru
+        # PART A2: section dinamis usulan AI yang dipilih user, tiap item {key,title,order,...}).
         parsed_sections = None
         if included_sections:
             try:
                 parsed_sections = json.loads(included_sections)
-                if not isinstance(parsed_sections, dict):
+                if not isinstance(parsed_sections, (dict, list)):
                     parsed_sections = None
             except (json.JSONDecodeError, TypeError):
                 parsed_sections = None
@@ -236,7 +241,9 @@ def upload_security_file(
             header_title=header_title,
             header_subtitle=header_subtitle,
             theme_color=theme_color,
-            domain_type=domain_type
+            domain_type=domain_type,
+            tone=tone,
+            default_level=default_level
         )
 
         

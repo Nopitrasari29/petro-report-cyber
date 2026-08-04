@@ -7,6 +7,8 @@ export interface DynamicSectionItem {
   title: string;
   description?: string;
   enabled: boolean;
+  order?: number;
+  recommended?: boolean;
 }
 
 interface Step2SettingsProps {
@@ -27,6 +29,7 @@ interface Step2SettingsProps {
   setSections: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   dynamicSections?: DynamicSectionItem[];
   setDynamicSections?: React.Dispatch<React.SetStateAction<DynamicSectionItem[]>>;
+  sectionsLoading?: boolean;
   headerTitle?: string;
   setHeaderTitle?: (val: string) => void;
   headerSubtitle?: string;
@@ -58,6 +61,7 @@ export default function Step2Settings({
   setSections,
   dynamicSections = [],
   setDynamicSections,
+  sectionsLoading = false,
   headerTitle = "PT PETROKIMIA GRESIK",
   setHeaderTitle,
   headerSubtitle = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
@@ -262,21 +266,39 @@ export default function Step2Settings({
           </h3>
 
           <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
-            {dynamicSections.length > 0
-              ? dynamicSections.map((sec, idx) => (
+            {sectionsLoading && dynamicSections.length === 0 ? (
+              <div className="flex items-center gap-2 py-4 text-stone-400">
+                <span className="w-3.5 h-3.5 border-2 border-stone-300 border-t-petro-green rounded-full animate-spin"></span>
+                <span className="text-xs font-semibold">
+                  {tx(
+                    "AI sedang menyusun usulan section...",
+                    "AI sedang menyusun usulan section...",
+                  )}
+                </span>
+              </div>
+            ) : dynamicSections.length > 0
+              ? [...dynamicSections]
+                  .map((sec, originalIdx) => ({ sec, originalIdx }))
+                  .sort((a, b) => (a.sec.order ?? a.originalIdx) - (b.sec.order ?? b.originalIdx))
+                  .map(({ sec, originalIdx }) => (
                   <label
-                    key={sec.key || idx}
+                    key={sec.key || originalIdx}
                     className="flex items-start gap-2.5 cursor-pointer py-1 select-none hover:bg-stone-50/80 p-1.5 rounded-lg transition-colors"
                   >
                     <input
                       type="checkbox"
                       checked={sec.enabled}
-                      onChange={() => handleToggleDynamicSection(idx)}
+                      onChange={() => handleToggleDynamicSection(originalIdx)}
                       className="w-4 h-4 rounded text-petro-green focus:ring-petro-green border-stone-300 mt-0.5"
                     />
                     <div className="flex flex-col text-left">
                       <span className="text-xs font-bold text-stone-800 leading-tight">
                         {sec.title}
+                        {sec.recommended === false && (
+                          <span className="ml-1.5 text-[9px] font-bold text-stone-400 uppercase tracking-wide">
+                            {tx("Opsional", "Optional")}
+                          </span>
+                        )}
                       </span>
                       {sec.description && (
                         <span className="text-[9.5px] text-stone-400 font-medium leading-tight mt-0.5">

@@ -103,6 +103,25 @@ def _run_analysis_job(report_id: int) -> None:
             db_report.tokens_generated = tokens_so_far
             db.commit()
 
+        # PART A3 — deteksi jalur section dinamis (list, hasil pilihan user di Settings dari
+        # usulan AI/A2) vs jalur lama (dict, checkbox preset 6-section tetap). None/dict = TIDAK
+        # ADA perubahan perilaku sama sekali (persis seperti sebelum PART A — backward compat).
+        selected_sections = None
+        if isinstance(db_report.included_sections, list):
+            selected_sections = sorted(
+                [
+                    {
+                        "key": s.get("key") or s.get("id"),
+                        "title": s.get("title"),
+                        "description": s.get("description", ""),
+                        "order": s.get("order", idx),
+                    }
+                    for idx, s in enumerate(db_report.included_sections)
+                    if isinstance(s, dict) and s.get("enabled", True) and s.get("title")
+                ],
+                key=lambda s: s["order"],
+            ) or None
+
         # Fix #7: Auto-retry logic — coba ulang hingga 2x dengan delay 5 detik
         # sebelum menyerah dan menandai laporan sebagai "failed"
         MAX_RETRIES = 2
@@ -137,6 +156,9 @@ def _run_analysis_job(report_id: int) -> None:
                     template_type=db_report.template_type,
                     language=db_report.language,
                     domain_type=db_report.domain_type,  # Domain AI (financial, kpi_hr, soc_security, general)
+                    selected_sections=selected_sections,  # PART A3 — None = jalur lama, tidak berubah
+                    tone=db_report.tone,  # Professional/Technical/Executive dari Report Settings
+                    default_level=db_report.default_level,  # Standard/Detailed/Summary Only
                     on_progress=on_progress,
                 )
 

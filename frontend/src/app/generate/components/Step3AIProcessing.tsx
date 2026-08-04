@@ -12,8 +12,10 @@ interface Step3AIProcessingProps {
   expectedTotalTokens: number | null;
   reportDetails: any;
   errorMsg: string;
+  canRetry?: boolean;
   onBack: () => void;
   onProceed: () => void;
+  onRetry?: () => void;
   tx: (key: string, fallback: string) => string;
 }
 
@@ -80,8 +82,10 @@ export default function Step3AIProcessing({
   expectedTotalTokens,
   reportDetails,
   errorMsg,
+  canRetry = false,
   onBack,
   onProceed,
+  onRetry,
   tx,
 }: Step3AIProcessingProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -378,6 +382,20 @@ export default function Step3AIProcessing({
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
               </svg>
+            </button>
+          ) : aiStatus === "pending" && !!errorMsg && canRetry ? (
+            // aiStatus balik ke "pending" cuma terjadi saat timeout/gagal (lihat errorMsg) —
+            // sebelumnya di sini cuma ada tombol "Processing..." yang disabled selamanya, jadi
+            // user mentok tanpa jalan keluar selain klik Back (mengulang dari Settings). Retry
+            // TIDAK upload ulang file — cuma cek status laporan yang sudah ada di server dulu.
+            <button
+              onClick={onRetry}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-petro-green hover:bg-petro-green-hover text-white font-bold text-sm shadow transition-all duration-200 cursor-pointer"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
+              {tx("Coba Lagi", "Retry")}
             </button>
           ) : (
             <button

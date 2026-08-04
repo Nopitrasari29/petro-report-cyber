@@ -3,17 +3,27 @@
 AI Section Suggester & Domain Detector.
 
 Membaca header kolom & sampel baris data mentah dari berkas yang diunggah (CSV, XLSX, PDF),
-lalu secara cerdas:
-1. Mendeteksi domain data (Keuangan, KPI/HR Mitra, Cyber Security SOC, Operasional, Umum).
-2. Menghasilkan 4-6 Rekomendasi Section Laporan yang Paling Relevan khusus untuk berkas tersebut.
-3. Menyediakan Kop Header bawaan yang cocok dengan domain data.
-
-Modul ini mendukung AI (Ollama qwen3:8b) dengan fallback heuristik berbasis kolom jika AI offline
-sehingga sistem SELALU cepat dan responsif.
+lalu:
+1. Mendeteksi domain data (Keuangan, KPI/HR Mitra, Cyber Security SOC, Operasional, Umum) —
+   heuristik berbasis nama kolom & nama berkas, dipakai juga sebagai hint domain untuk AI.
+2. Mencoba memanggil AI (Ollama qwen3:8b) untuk mengusulkan 5-8 section laporan paling relevan
+   BESERTA URUTANNYA — bebas mengusulkan judul section di luar daftar umum bila data menuntutnya
+   (lihat `OllamaClient.suggest_sections`).
+3. Kalau AI offline/gagal/timeout, fallback ke preset section heuristik per-domain di bawah
+   (4 preset domain, masing-masing 6 section tetap) supaya sistem SELALU cepat dan responsif.
+4. Menyediakan Kop Header bawaan yang cocok dengan domain data terdeteksi.
 """
 
 from typing import Any, Dict, List, Optional
 import re
+
+from app.services.ai_engine.data_profiler import (
+    compute_statistics,
+    compute_schema_summary,
+    format_statistics_as_text,
+    format_schema_as_text,
+)
+from app.services.ai_engine.ollama_client import ollama_client
 
 # Template Section bawaan per domain
 _DOMAIN_PRESETS: Dict[str, Dict[str, Any]] = {
@@ -222,11 +232,15 @@ def suggest_sections_for_file(
     file_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Menghasilkan usulan section laporan dinamis berbasis analisis data file.
+    Menghasilkan usulan section laporan dinamis berbasis analisis data file. Mencoba jalur AI
+    dulu (butuh `sample_data` berisi data yang cukup representatif — idealnya SELURUH baris yang
+    sudah di-parse, bukan cuma beberapa baris, supaya statistik yang dikirim ke AI akurat);
+    kalau AI offline/gagal/timeout/hasil tidak valid, fallback ke preset heuristik per-domain
+    supaya upload file tetap cepat & tidak pernah error.
     """
-    # 1. Detect Domain
+    # 1. Detect Domain (dipakai sbg hint utk AI + fallback key preset & label domain)
     domain = detect_domain_from_columns(columns, sample_data)
-    
+
     # 2. Check if file_name hints at domain
     if file_name:
         fn_lower = file_name.lower()
@@ -239,9 +253,42 @@ def suggest_sections_for_file(
 
     preset = _DOMAIN_PRESETS.get(domain, _DOMAIN_PRESETS["general"])
 
-    # 3. Dynamic Section Customization based on actual columns
-    custom_sections = [dict(s) for s in preset["sections"]]
-    
+    # 3. Coba usulan AI dulu — grounded pada skema & statistik terhitung (bukan data mentah)
+    ai_sections = None
+    if sample_data:
+        try:
+            schema_text = format_schema_as_text(compute_schema_summary(sample_data))
+            stats_text = format_statistics_as_text(compute_statistics(sample_data, domain))
+            ai_sections = ollama_client.suggest_sections(
+                schema_text=schema_text,
+                stats_text=stats_text,
+                file_name=file_name,
+                domain_hint=preset["domain_label"],
+            )
+        except Exception as e:
+            print(f"[SECTION SUGGESTER] Jalur AI gagal, fallback ke preset heuristik: {e}")
+            ai_sections = None
+
+    if ai_sections:
+        return {
+            "domain_type": domain,
+            "domain_label": preset["domain_label"],
+            "header_title": preset["default_header_title"],
+            "header_subtitle": preset["default_header_subtitle"],
+            "suggested_sections": ai_sections,
+            "source": "ai",
+        }
+
+    # 4. Fallback: preset heuristik per-domain — field order/recommended/enabled diseragamkan
+    # supaya BENTUKNYA SAMA dengan hasil AI di atas (frontend tidak perlu tahu jalur mana yang dipakai).
+    custom_sections = []
+    for idx, s in enumerate(preset["sections"]):
+        item = dict(s)
+        item.setdefault("order", idx)
+        item.setdefault("recommended", True)
+        item.setdefault("enabled", True)
+        custom_sections.append(item)
+
     # Append dynamic column-specific insight if applicable
     if domain == "general" and len(columns) > 0:
         # Custom section based on first 2 categorical columns
@@ -255,4 +302,5 @@ def suggest_sections_for_file(
         "header_title": preset["default_header_title"],
         "header_subtitle": preset["default_header_subtitle"],
         "suggested_sections": custom_sections,
+        "source": "heuristic",
     }

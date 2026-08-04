@@ -117,6 +117,7 @@ export default function GenerateReportPage() {
   const [themeColor, setThemeColor] = useState("green");
   const [domainType, setDomainType] = useState("general");
   const [dynamicSections, setDynamicSections] = useState<DynamicSectionItem[]>([]);
+  const [sectionsLoading, setSectionsLoading] = useState(false);
 
   const [tone, setTone] = useState("Professional");
   const [defaultLevel, setDefaultLevel] = useState("Standard");
@@ -243,6 +244,7 @@ export default function GenerateReportPage() {
   const detectPeriodFromFile = async (file: File) => {
     setPeriodDetecting(true);
     setPeriodAutoDetected(false);
+    setSectionsLoading(true);
     try {
       const token = localStorage.getItem("token");
       const authHeaders: Record<string, string> = {};
@@ -282,6 +284,7 @@ export default function GenerateReportPage() {
       console.warn("[PERIOD DETECT] Gagal mendeteksi periode otomatis:", err);
     } finally {
       setPeriodDetecting(false);
+      setSectionsLoading(false);
     }
   };
 
@@ -359,6 +362,117 @@ export default function GenerateReportPage() {
       );
     } catch {
       return null;
+    }
+  };
+
+  // Poll progress asli tiap 2 detik sampai job selesai (analyzed) atau gagal (failed), lalu
+  // ambil detail hasil akhirnya. Dipisah jadi fungsi sendiri supaya bisa dipanggil ulang oleh
+  // handleRetryAnalysis TANPA mengulang upload file / membuat report baru dari nol.
+  const pollAndFetchResult = async (generatedId: number) => {
+    const token = localStorage.getItem("token");
+    const authHeaders: Record<string, string> = {};
+    if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+
+    let finalStatus = "processing";
+    // Jaring pengaman sisi frontend — dinaikkan dari 15 ke 25 menit karena generation sekarang
+    // bisa lebih lama saat user memilih banyak section dinamis (PART A3 menambah muatan yang
+    // harus ditulis model dalam satu panggilan yang sama).
+    const pollDeadline = Date.now() + 1500 * 1000;
+    while (finalStatus === "processing") {
+      if (Date.now() > pollDeadline) {
+        throw new Error(
+          "Proses analisis AI melebihi batas waktu yang wajar di sisi frontend. Proses TETAP " +
+            'berjalan di server — klik "Coba Lagi" untuk memeriksa status terbaru tanpa mengulang dari awal.',
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const progRes = await fetch(
+        `${API_BASE_URL}/api/v1/analysis/${generatedId}/progress`,
+        { headers: authHeaders },
+      );
+      if (!progRes.ok) continue; // hiccup jaringan sesaat — coba lagi tick berikutnya
+      const prog = await progRes.json();
+      finalStatus = prog.status;
+      setTokensGenerated(prog.tokens_generated ?? 0);
+      setExpectedTotalTokens(prog.expected_total_tokens ?? null);
+    }
+
+    if (finalStatus === "failed") {
+      throw new Error(
+        "Proses analisis AI gagal karena kesalahan tak terduga di server. Silakan coba lagi.",
+      );
+    }
+
+    setProcessingStep("fetching");
+    const detailRes = await fetch(`${API_BASE_URL}/api/v1/history/${generatedId}`, {
+      headers: authHeaders,
+    });
+    if (detailRes.ok) {
+      const details = await detailRes.json();
+      setReportDetails(details);
+      setEditedSummary(details.ai_summary || {});
+    }
+    setProcessingStep("done");
+    setAiStatus("completed");
+  };
+
+  // Retry setelah timeout/gagal — TIDAK upload ulang file / bikin report baru. Cek dulu status
+  // TERKINI di server (job background sebelumnya tidak ikut dibatalkan saat frontend menyerah,
+  // jadi bisa jadi sudah selesai atau masih berjalan), baru putuskan: langsung tampilkan hasil,
+  // lanjut polling saja, atau trigger analisis baru (kalau memang sudah "failed" di server).
+  const handleRetryAnalysis = async () => {
+    if (!reportId) return;
+    setErrorMsg("");
+    setAiStatus("processing");
+    setProcessingStep("analyzing");
+    setLoading(true);
+
+    const token = localStorage.getItem("token");
+    const authHeaders: Record<string, string> = {};
+    if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+
+    try {
+      const statusRes = await fetch(`${API_BASE_URL}/api/v1/history/${reportId}`, {
+        headers: authHeaders,
+      });
+      if (statusRes.ok) {
+        const details = await statusRes.json();
+        if (details.status === "analyzed") {
+          setReportDetails(details);
+          setEditedSummary(details.ai_summary || {});
+          setProcessingStep("done");
+          setAiStatus("completed");
+          setLoading(false);
+          return;
+        }
+        if (details.status === "processing") {
+          await pollAndFetchResult(reportId);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Status "failed" (atau tidak diketahui) — trigger ulang analisisnya dari server.
+      const generateRes = await fetch(
+        `${API_BASE_URL}/api/v1/analysis/generate/${reportId}`,
+        { method: "POST", headers: authHeaders },
+      );
+      if (!generateRes.ok) {
+        let detail = "Gagal memicu ulang pemrosesan AI lokal (Ollama).";
+        try {
+          const errData = await generateRes.json();
+          detail = errData.detail || detail;
+        } catch {}
+        throw new Error(detail);
+      }
+      await pollAndFetchResult(reportId);
+      setLoading(false);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || "Terjadi kesalahan tidak terduga.");
+      setAiStatus("pending");
+      setProcessingStep("idle");
+      setLoading(false);
     }
   };
 
@@ -445,9 +559,14 @@ export default function GenerateReportPage() {
       formData.append("header_subtitle", headerSubtitle);
       formData.append("theme_color", themeColor);
       formData.append("domain_type", domainType);
+      formData.append("tone", tone);
+      formData.append("default_level", defaultLevel);
 
       if (dynamicSections.length > 0) {
-        formData.append("included_sections", JSON.stringify(dynamicSections));
+        // Kirim HANYA section yang dicentang user (bukan seluruh kandidat usulan AI),
+        // beserta urutannya — backend memakai ini utk menyusun ai_summary["sections"].
+        const selectedSections = dynamicSections.filter((s) => s.enabled);
+        formData.append("included_sections", JSON.stringify(selectedSections));
       } else {
         formData.append("included_sections", JSON.stringify(sections));
       }
@@ -511,51 +630,11 @@ export default function GenerateReportPage() {
         throw new Error(detail);
       }
 
-      // 2b. Poll progress asli tiap 2 detik sampai job selesai (analyzed) atau gagal (failed).
+      // 2b. Poll progress asli tiap 2 detik sampai job selesai (analyzed) atau gagal (failed) —
       // tokens_generated & expected_total_tokens dipakai Step3 buat menghitung sisa waktu yang
       // genuinely bereaksi ke kecepatan generate token — bukan cuma angka tetap dari riwayat.
-      let finalStatus = "processing";
-      // Jaring pengaman sisi frontend — backend sendiri sudah punya OLLAMA_TIMEOUT_SECONDS=600,
-      // ditambah buffer supaya tidak polling selamanya kalau ada yang benar-benar macet.
-      const pollDeadline = Date.now() + 900 * 1000;
-      while (finalStatus === "processing") {
-        if (Date.now() > pollDeadline) {
-          throw new Error(
-            "Proses analisis AI melebihi batas waktu yang wajar. Silakan cek status Ollama dan coba lagi.",
-          );
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        const progRes = await fetch(
-          `${API_BASE_URL}/api/v1/analysis/${generatedId}/progress`,
-          { headers: authHeaders },
-        );
-        if (!progRes.ok) continue; // hiccup jaringan sesaat — coba lagi tick berikutnya
-        const prog = await progRes.json();
-        finalStatus = prog.status;
-        setTokensGenerated(prog.tokens_generated ?? 0);
-        setExpectedTotalTokens(prog.expected_total_tokens ?? null);
-      }
-
-      if (finalStatus === "failed") {
-        throw new Error(
-          "Proses analisis AI gagal karena kesalahan tak terduga di server. Silakan coba lagi.",
-        );
-      }
-
-      setProcessingStep("fetching");
-      const detailRes = await fetch(
-        `${API_BASE_URL}/api/v1/history/${generatedId}`,
-        {
-          headers: authHeaders,
-        },
-      );
-      if (detailRes.ok) {
-        const details = await detailRes.json();
-        setReportDetails(details);
-        setEditedSummary(details.ai_summary || {});
-      }
-      setProcessingStep("done");
-      setAiStatus("completed");
+      // pollAndFetchResult sendiri sudah men-set aiStatus="completed" & processingStep="done".
+      await pollAndFetchResult(generatedId);
       setLoading(false);
     } catch (err: any) {
       console.error(err);
@@ -910,6 +989,7 @@ export default function GenerateReportPage() {
               setSections={setSections}
               dynamicSections={dynamicSections}
               setDynamicSections={setDynamicSections}
+              sectionsLoading={sectionsLoading}
               headerTitle={headerTitle}
               setHeaderTitle={setHeaderTitle}
               headerSubtitle={headerSubtitle}
@@ -938,8 +1018,10 @@ export default function GenerateReportPage() {
               expectedTotalTokens={expectedTotalTokens}
               reportDetails={reportDetails}
               errorMsg={errorMsg}
+              canRetry={!!reportId}
               onBack={handleBackStep}
               onProceed={handleProceedToEditor}
+              onRetry={handleRetryAnalysis}
               tx={tx}
             />
           )}
@@ -985,6 +1067,7 @@ export default function GenerateReportPage() {
           {currentStep === 5 && (
             <Step5Export
               reportId={reportId}
+              reportTitle={title}
               exportFormats={exportFormats}
               onReset={() => {
                 setCurrentStep(0);

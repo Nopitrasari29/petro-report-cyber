@@ -16,6 +16,8 @@ class ReportBase(BaseModel):
     header_subtitle: Optional[str] = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
     theme_color: Optional[str] = "green"
     domain_type: Optional[str] = "general"
+    tone: Optional[str] = "Professional"
+    default_level: Optional[str] = "Standard"
 
 class ReportCreate(ReportBase):
     input_file_name: Optional[str] = None
@@ -51,6 +53,8 @@ class ReportUpdate(BaseModel):
     header_subtitle: Optional[str] = None
     theme_color: Optional[str] = None
     domain_type: Optional[str] = None
+    tone: Optional[str] = None
+    default_level: Optional[str] = None
     ai_confidence: Optional[float] = None
     sla_met: Optional[bool] = None
     processing_time_sec: Optional[int] = None

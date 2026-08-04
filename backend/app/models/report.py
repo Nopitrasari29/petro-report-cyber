@@ -56,6 +56,11 @@ class Report(Base):
     theme_color = Column(String, nullable=True, default="green")  # green, navy, dark, gold
     domain_type = Column(String, nullable=True, default="general")  # soc_security, financial, kpi_hr, general
 
+    # Gaya penulisan & tingkat detail narasi AI (Report Settings) — dipakai di prompts.py utk
+    # menyesuaikan instruksi ke model, BUKAN cuma disimpan tanpa efek.
+    tone = Column(String, nullable=True, default="Professional")  # Professional, Technical, Executive
+    default_level = Column(String, nullable=True, default="Standard")  # Standard, Detailed, Summary Only
+
 
     # Jumlah token yang sudah dihasilkan Ollama sejauh ini selama status="processing" (di-update
     # live oleh background job lewat streaming /api/chat), dan jadi angka final (eval_count) begitu

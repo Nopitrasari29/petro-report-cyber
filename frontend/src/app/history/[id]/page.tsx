@@ -8,6 +8,7 @@ import Navbar from "@/components/Navbar";
 import { t, getLanguage } from "@/utils/i18n";
 import { getSectionTitle, getSectionContentKey } from "@/utils/reportSections";
 import { API_BASE_URL } from "@/utils/api";
+import { sanitizeFilename, downloadBlobAsFile } from "@/utils/downloadFile";
 import PagesSidebar from "./components/PagesSidebar";
 import CenterPreviewPanel from "./components/CenterPreviewPanel";
 import PropertiesPanel from "./components/PropertiesPanel";
@@ -248,14 +249,15 @@ export default function ReportDetailPage({
       }
 
       const blob = await res.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = downloadUrl;
-      a.download = `soc_report_${reportId}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      const filenameBase = sanitizeFilename(report?.title, `soc_report_${reportId}`);
+      await downloadBlobAsFile(blob, `${filenameBase}.${format}`, {
+        description: format === "pdf" ? "PDF Document" : "PowerPoint Presentation",
+        mimeType:
+          format === "pdf"
+            ? "application/pdf"
+            : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        extension: format,
+      });
     } catch (err: any) {
       setErrorMsg(err.message || "Terjadi kesalahan saat mengunduh file.");
     } finally {

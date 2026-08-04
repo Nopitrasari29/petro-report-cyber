@@ -8,6 +8,7 @@ import Navbar from "@/components/Navbar";
 import ScrollReveal from "@/components/ScrollReveal";
 import { t, getLanguage } from "@/utils/i18n";
 import { API_BASE_URL } from "@/utils/api";
+import { sanitizeFilename, downloadBlobAsFile } from "@/utils/downloadFile";
 import HistoryStatsCards from "./components/HistoryStatsCards";
 import HistoryFilterBar from "./components/HistoryFilterBar";
 import HistoryTable from "./components/HistoryTable";
@@ -471,14 +472,16 @@ export default function ReportHistoryPage() {
       }
 
       const blob = await res.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = downloadUrl;
-      a.download = `soc_report_${id}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      const reportTitle = reports.find((r) => r.id === id)?.title;
+      const filenameBase = sanitizeFilename(reportTitle, `soc_report_${id}`);
+      await downloadBlobAsFile(blob, `${filenameBase}.${format}`, {
+        description: format === "pdf" ? "PDF Document" : "PowerPoint Presentation",
+        mimeType:
+          format === "pdf"
+            ? "application/pdf"
+            : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        extension: format,
+      });
     } catch (err: any) {
       alert(err.message || "Terjadi kesalahan saat mengunduh file.");
     }

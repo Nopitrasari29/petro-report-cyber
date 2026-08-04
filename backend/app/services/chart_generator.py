@@ -200,7 +200,10 @@ class ChartGenerator:
                         labels={date_col: "Waktu / Periode", "jumlah_event": "Jumlah Event"}
                     )
                 fig_trend = _build_layout(fig_trend, fig_trend.layout.title.text)
-                charts.append(json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_trend)))
+                cfg = json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_trend))
+                cfg["kind"] = "trend"
+                cfg["source_column"] = date_col
+                charts.append(cfg)
 
             # --- GRAFIK 2: Distribusi Severity / Level Ancaman ---
             # Tahap 1: cocokkan nama kolom ke kata kunci umum dulu (cepat & presisi kalau
@@ -224,7 +227,10 @@ class ChartGenerator:
                     color_discrete_sequence=["#ef4444", "#f59e0b", "#eab308", "#10b981", "#3b82f6"]
                 )
                 fig_sev = _build_layout(fig_sev, "Distribusi Level Severity Ancaman")
-                charts.append(json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_sev)))
+                cfg = json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_sev))
+                cfg["kind"] = "severity"
+                cfg["source_column"] = sev_col
+                charts.append(cfg)
 
             # --- GRAFIK 3: Top 10 Kategori / Event Types / Actions / Ports / Lokasi ---
             cat_col = _find_col(df, ["kategori_alert", "kategori", "category", "alert_type", "type", "event_type", "action", "destination_port", "source_ip", "protocol", "lokasi", "location"])
@@ -249,7 +255,10 @@ class ChartGenerator:
                     margin={"l": 180, "r": 30, "t": 50, "b": 50},
                     yaxis={"categoryorder": "total ascending", "title_text": "", "automargin": True}
                 )
-                charts.append(json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_cat)))
+                cfg = json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_cat))
+                cfg["kind"] = "top_categories"
+                cfg["source_column"] = cat_col
+                charts.append(cfg)
 
             # Fallback jika tidak ada chart khusus yang terbentuk
             if not charts:
@@ -265,7 +274,9 @@ class ChartGenerator:
                     fig_fb = px.bar(title="Data Log Keamanan")
 
                 fig_fb = _build_layout(fig_fb, f"Visualisasi Data {data_type.replace('_', ' ').title()}")
-                charts.append(json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_fb)))
+                cfg = json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig_fb))
+                cfg["kind"] = "trend" if date_col else "top_categories"
+                charts.append(cfg)
 
             first_chart = charts[0] if charts else {}
             return {
@@ -276,6 +287,63 @@ class ChartGenerator:
 
         except Exception as e:
             return {"error": f"Gagal membuat visualisasi grafik: {str(e)}"}
+
+    @staticmethod
+    def _decode_plotly_array(value):
+        """
+        PlotlyJSONEncoder kadang mengompres array numerik (dari numpy, mis. hasil
+        value_counts()) jadi {"dtype": "i1", "bdata": "<base64>"} demi efisiensi, BUKAN list
+        Python polos — decode balik supaya bisa diproses seperti list biasa.
+        """
+        if isinstance(value, dict) and "bdata" in value and "dtype" in value:
+            import base64
+            import numpy as np
+            raw = base64.b64decode(value["bdata"])
+            return np.frombuffer(raw, dtype=value["dtype"]).tolist()
+        return value
+
+    @classmethod
+    def extract_top_data_points(cls, chart_dict: Dict[str, Any], top_n: int = 3):
+        """
+        Ambil (label, value) LANGSUNG dari data Plotly chart itu sendiri (trace pertama) —
+        tidak perlu tahu "jenis" chart-nya (trend/severity/top kategori dst), otomatis benar
+        untuk pie (labels/values) maupun bar/line/area (x/y, deteksi mana yang berisi angka).
+        Dipakai buat panel angka kategori & insight otomatis di export PDF/PPTX.
+
+        Return: (top_pairs, total) — top_pairs list [(label, value), ...] terurut turun
+        sepanjang top_n, total = jumlah SEMUA titik di trace (dasar persentase yang akurat,
+        bukan cuma dari top_n yang ditampilkan).
+        """
+        try:
+            traces = chart_dict.get("data") or []
+            if not traces:
+                return [], 0
+            trace = traces[0]
+
+            if "labels" in trace and "values" in trace:
+                labels, values = trace["labels"], trace["values"]
+            elif "x" in trace and "y" in trace:
+                x, y = trace["x"], trace["y"]
+
+                def _is_numeric_list(vals):
+                    return bool(vals) and all(isinstance(v, (int, float)) for v in vals[:5])
+
+                x_dec, y_dec = cls._decode_plotly_array(x), cls._decode_plotly_array(y)
+                if _is_numeric_list(x_dec) and not _is_numeric_list(y_dec):
+                    values, labels = x_dec, y_dec
+                else:
+                    labels, values = x_dec, y_dec
+            else:
+                return [], 0
+
+            values = cls._decode_plotly_array(values)
+            labels = cls._decode_plotly_array(labels)
+            pairs = [(str(l), v) for l, v in zip(labels, values) if isinstance(v, (int, float))]
+            total = sum(v for _, v in pairs)
+            pairs.sort(key=lambda p: p[1], reverse=True)
+            return pairs[:top_n], total
+        except Exception:
+            return [], 0
 
     @classmethod
     def render_png(cls, chart_data: Dict[str, Any], width: int, height: int, scale: float = 1.0, timeout_seconds: int = 45) -> bytes:
