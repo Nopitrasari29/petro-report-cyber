@@ -28,7 +28,9 @@ interface Step2SettingsProps {
   sections: Record<string, boolean>;
   setSections: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   dynamicSections?: DynamicSectionItem[];
-  setDynamicSections?: React.Dispatch<React.SetStateAction<DynamicSectionItem[]>>;
+  setDynamicSections?: React.Dispatch<
+    React.SetStateAction<DynamicSectionItem[]>
+  >;
   sectionsLoading?: boolean;
   headerTitle?: string;
   setHeaderTitle?: (val: string) => void;
@@ -205,7 +207,9 @@ export default function Step2Settings({
               <input
                 type="text"
                 value={headerTitle}
-                onChange={(e) => setHeaderTitle && setHeaderTitle(e.target.value)}
+                onChange={(e) =>
+                  setHeaderTitle && setHeaderTitle(e.target.value)
+                }
                 placeholder="PT PETROKIMIA GRESIK"
                 className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
               />
@@ -218,7 +222,9 @@ export default function Step2Settings({
               <input
                 type="text"
                 value={headerSubtitle}
-                onChange={(e) => setHeaderSubtitle && setHeaderSubtitle(e.target.value)}
+                onChange={(e) =>
+                  setHeaderSubtitle && setHeaderSubtitle(e.target.value)
+                }
                 placeholder="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
                 className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700 font-medium focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
               />
@@ -230,7 +236,11 @@ export default function Step2Settings({
               </label>
               <div className="grid grid-cols-4 gap-2">
                 {[
-                  { id: "green", name: "Corporate Green", color: "bg-[#004D25]" },
+                  {
+                    id: "green",
+                    name: "Corporate Green",
+                    color: "bg-[#004D25]",
+                  },
                   { id: "navy", name: "Slate Navy", color: "bg-[#0F172A]" },
                   { id: "dark", name: "Cyber Dark", color: "bg-[#111827]" },
                   { id: "gold", name: "Amber Gold", color: "bg-[#78350F]" },
@@ -245,7 +255,9 @@ export default function Step2Settings({
                         : "border-stone-200 bg-white hover:bg-stone-50"
                     }`}
                   >
-                    <span className={`w-4 h-4 rounded-full ${tItem.color} shadow-sm mb-1`}></span>
+                    <span
+                      className={`w-4 h-4 rounded-full ${tItem.color} shadow-sm mb-1`}
+                    ></span>
                     <span className="text-[9px] font-extrabold text-stone-700 truncate w-full text-center">
                       {tItem.name.split(" ")[0]}
                     </span>
@@ -276,11 +288,15 @@ export default function Step2Settings({
                   )}
                 </span>
               </div>
-            ) : dynamicSections.length > 0
-              ? [...dynamicSections]
-                  .map((sec, originalIdx) => ({ sec, originalIdx }))
-                  .sort((a, b) => (a.sec.order ?? a.originalIdx) - (b.sec.order ?? b.originalIdx))
-                  .map(({ sec, originalIdx }) => (
+            ) : dynamicSections.length > 0 ? (
+              [...dynamicSections]
+                .map((sec, originalIdx) => ({ sec, originalIdx }))
+                .sort(
+                  (a, b) =>
+                    (a.sec.order ?? a.originalIdx) -
+                    (b.sec.order ?? b.originalIdx),
+                )
+                .map(({ sec, originalIdx }) => (
                   <label
                     key={sec.key || originalIdx}
                     className="flex items-start gap-2.5 cursor-pointer py-1 select-none hover:bg-stone-50/80 p-1.5 rounded-lg transition-colors"
@@ -308,27 +324,29 @@ export default function Step2Settings({
                     </div>
                   </label>
                 ))
-              : REPORT_SECTIONS.map((sec) => (
-                  <label
-                    key={sec.key}
-                    className="flex items-center gap-2.5 cursor-pointer py-1 select-none"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={sections[sec.key]}
-                      onChange={(e) =>
-                        setSections((prev) => ({
-                          ...prev,
-                          [sec.key]: e.target.checked,
-                        }))
-                      }
-                      className="w-4 h-4 rounded text-petro-green focus:ring-petro-green border-stone-300"
-                    />
-                    <span className="text-xs font-semibold text-stone-700">
-                      {tx(sec.title, sec.title)}
-                    </span>
-                  </label>
-                ))}
+            ) : (
+              REPORT_SECTIONS.map((sec) => (
+                <label
+                  key={sec.key}
+                  className="flex items-center gap-2.5 cursor-pointer py-1 select-none"
+                >
+                  <input
+                    type="checkbox"
+                    checked={sections[sec.key]}
+                    onChange={(e) =>
+                      setSections((prev) => ({
+                        ...prev,
+                        [sec.key]: e.target.checked,
+                      }))
+                    }
+                    className="w-4 h-4 rounded text-petro-green focus:ring-petro-green border-stone-300"
+                  />
+                  <span className="text-xs font-semibold text-stone-700">
+                    {tx(sec.title, sec.title)}
+                  </span>
+                </label>
+              ))
+            )}
           </div>
 
           {/* Add Custom Section Button */}
@@ -354,7 +372,10 @@ export default function Step2Settings({
       {/* Bottom Wide Card: Export Formats & Preferences */}
       <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm text-left premium-card-hover transition-colors">
         <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2 mb-4">
-          {tx("Export Format & Output Options", "Export Format & Output Options")}
+          {tx(
+            "Export Format & Output Options",
+            "Export Format & Output Options",
+          )}
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -371,9 +392,12 @@ export default function Step2Settings({
               className="w-4 h-4 rounded text-petro-green focus:ring-petro-green border-stone-300"
             />
             <div className="flex flex-col text-left">
-              <span className="text-xs font-bold text-stone-800">PDF Document</span>
+              <span className="text-xs font-bold text-stone-800">
+                PDF Document
+              </span>
               <span className="text-[10px] text-stone-400 font-semibold">
-                Laporan cetak resmi format A4 dengan Kop Petrokimia & Lampiran Log
+                Laporan cetak resmi format A4 dengan Kop Petrokimia & Lampiran
+                Log
               </span>
             </div>
           </label>
@@ -391,9 +415,12 @@ export default function Step2Settings({
               className="w-4 h-4 rounded text-petro-green focus:ring-petro-green border-stone-300"
             />
             <div className="flex flex-col text-left">
-              <span className="text-xs font-bold text-stone-800">PowerPoint Presentation (PPTX)</span>
+              <span className="text-xs font-bold text-stone-800">
+                PowerPoint Presentation (PPTX)
+              </span>
               <span className="text-[10px] text-stone-400 font-semibold">
-                Slide presentasi eksekutif Widescreen 16:9 dengan grafik & teks visual
+                Slide presentasi eksekutif Widescreen 16:9 dengan grafik & teks
+                visual
               </span>
             </div>
           </label>
@@ -463,7 +490,7 @@ export default function Step2Settings({
           onClick={onNext}
           className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-petro-green hover:bg-petro-green-hover text-white font-bold text-sm shadow transition-all duration-200 group cursor-pointer"
         >
-          {tx("Next Export", "Next Export")}
+          {tx("Generate Report", "Generate Report")}
           <svg
             xmlns="http://www.w3.org/2000/svg"
             fill="none"

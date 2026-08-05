@@ -80,11 +80,12 @@ export default function FullscreenStudioModal({
   // Theme color map
   const themeMap: Record<string, { primary: string; accent: string }> = {
     green: { primary: "#004D25", accent: "#d9a700" },
-    navy:  { primary: "#0F172A", accent: "#38BDF8" },
-    dark:  { primary: "#111827", accent: "#818CF8" },
-    gold:  { primary: "#78350F", accent: "#F59E0B" },
+    navy: { primary: "#0F172A", accent: "#38BDF8" },
+    dark: { primary: "#111827", accent: "#818CF8" },
+    gold: { primary: "#78350F", accent: "#F59E0B" },
   };
-  const { primary: primaryColor, accent: accentColor } = themeMap[themeColor] ?? themeMap.green;
+  const { primary: primaryColor, accent: accentColor } =
+    themeMap[themeColor] ?? themeMap.green;
 
   const textVal = getPageText(activePage);
   const wordCount = textVal ? textVal.trim().split(/\s+/).length : 0;
@@ -98,12 +99,14 @@ export default function FullscreenStudioModal({
         <div className="flex items-center gap-4 min-w-0">
           <div className="flex items-center gap-2.5 px-3 py-1.5 bg-emerald-950/80 border border-emerald-500/30 rounded-xl text-emerald-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs font-black tracking-wide uppercase">Focus Studio</span>
+            <span className="text-xs font-black tracking-wide uppercase">
+              Focus Studio
+            </span>
           </div>
 
           <div className="hidden sm:flex flex-col text-left truncate">
             <h1 className="text-sm font-extrabold text-white truncate max-w-xs md:max-w-md">
-              {reportTitle || "Untitled Report"}
+              {reportTitle || tx("Untitled report", "Untitled report")}
             </h1>
             <p className="text-[10px] text-stone-400 font-bold uppercase tracking-wider">
               {dataType} • {inputFile}
@@ -136,7 +139,9 @@ export default function FullscreenStudioModal({
               <button
                 onClick={() => setPreviewFormat("pdf")}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                  previewFormat === "pdf" ? "bg-stone-800 text-white shadow-sm" : "text-stone-400 hover:text-white"
+                  previewFormat === "pdf"
+                    ? "bg-stone-800 text-white shadow-sm"
+                    : "text-stone-400 hover:text-white"
                 }`}
               >
                 <span className="w-2 h-2 rounded-full bg-red-500" />
@@ -145,7 +150,9 @@ export default function FullscreenStudioModal({
               <button
                 onClick={() => setPreviewFormat("pptx")}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                  previewFormat === "pptx" ? "bg-stone-800 text-white shadow-sm" : "text-stone-400 hover:text-white"
+                  previewFormat === "pptx"
+                    ? "bg-stone-800 text-white shadow-sm"
+                    : "text-stone-400 hover:text-white"
                 }`}
               >
                 <span className="w-2 h-2 rounded-full bg-amber-500" />
@@ -164,15 +171,31 @@ export default function FullscreenStudioModal({
               {isSaving ? (
                 <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
               ) : saveSuccess ? (
-                <svg className="w-4 h-4 text-white" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+                <svg
+                  className="w-4 h-4 text-white"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
+                    clipRule="evenodd"
+                  />
                 </svg>
               ) : (
-                <svg className="w-4 h-4 text-white" viewBox="0 0 20 20" fill="currentColor">
+                <svg
+                  className="w-4 h-4 text-white"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
                   <path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z" />
                 </svg>
               )}
-              {isSaving ? tx("Saving...", "Saving...") : saveSuccess ? tx("Saved!", "Saved!") : tx("Save Changes", "Save Changes")}
+              {isSaving
+                ? tx("Saving...", "Saving...")
+                : saveSuccess
+                  ? tx("Saved!", "Saved!")
+                  : tx("Save Changes", "Save Changes")}
             </button>
           )}
 
@@ -183,15 +206,35 @@ export default function FullscreenStudioModal({
               onChange={(e) => setZoomLevel(Number(e.target.value))}
               className="bg-transparent text-xs font-extrabold text-stone-100 appearance-none pr-5 py-0.5 outline-none cursor-pointer"
             >
-              <option value={50} className="bg-stone-900">50%</option>
-              <option value={75} className="bg-stone-900">75%</option>
-              <option value={100} className="bg-stone-900">100%</option>
-              <option value={125} className="bg-stone-900">125%</option>
-              <option value={150} className="bg-stone-900">150%</option>
-              <option value={200} className="bg-stone-900">200%</option>
+              <option value={50} className="bg-stone-900">
+                50%
+              </option>
+              <option value={75} className="bg-stone-900">
+                75%
+              </option>
+              <option value={100} className="bg-stone-900">
+                100%
+              </option>
+              <option value={125} className="bg-stone-900">
+                125%
+              </option>
+              <option value={150} className="bg-stone-900">
+                150%
+              </option>
+              <option value={200} className="bg-stone-900">
+                200%
+              </option>
             </select>
-            <svg className="w-3.5 h-3.5 absolute right-2.5 pointer-events-none text-stone-400" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+            <svg
+              className="w-3.5 h-3.5 absolute right-2.5 pointer-events-none text-stone-400"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path
+                fillRule="evenodd"
+                d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
+                clipRule="evenodd"
+              />
             </svg>
           </div>
 
@@ -201,8 +244,18 @@ export default function FullscreenStudioModal({
             className="p-2 rounded-xl bg-stone-800 hover:bg-red-500/20 hover:text-red-400 text-stone-300 transition-colors cursor-pointer border border-stone-700"
             title={tx("Exit Fullscreen (Esc)", "Keluar Layar Penuh (Esc)")}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.2}
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18L18 6M6 6l12 12"
+              />
             </svg>
           </button>
         </div>
@@ -228,7 +281,9 @@ export default function FullscreenStudioModal({
                       : "text-stone-400 hover:bg-stone-800/60 hover:text-stone-200 border border-transparent"
                   }`}
                 >
-                  <span className="truncate">{sec.page}. {tx(sec.title, sec.title)}</span>
+                  <span className="truncate">
+                    {sec.page}. {tx(sec.title, sec.title)}
+                  </span>
                   {activePage === sec.page && (
                     <span className="w-2 h-2 rounded-full bg-petro-green shrink-0" />
                   )}
@@ -249,7 +304,9 @@ export default function FullscreenStudioModal({
             >
               &lt; {tx("Prev", "Prev")}
             </button>
-            <span>{activePage} / {LAST_PAGE}</span>
+            <span>
+              {activePage} / {LAST_PAGE}
+            </span>
             <button
               disabled={activePage === LAST_PAGE}
               onClick={() => {
@@ -268,7 +325,8 @@ export default function FullscreenStudioModal({
           <div
             className="w-full max-w-5xl transition-transform duration-200 ease-out"
             style={{
-              transform: zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : "none",
+              transform:
+                zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : "none",
               transformOrigin: "top center",
             }}
           >
@@ -279,22 +337,36 @@ export default function FullscreenStudioModal({
                 {previewFormat === "pdf" && (
                   <div className="bg-white text-stone-900 rounded-2xl shadow-2xl shadow-black/80 border border-stone-800 p-8 sm:p-12 max-w-3xl mx-auto font-sans text-left space-y-6">
                     {/* Kop Header */}
-                    <div className="pb-4 flex justify-between items-center" style={{ borderBottom: `3px solid ${primaryColor}` }}>
+                    <div
+                      className="pb-4 flex justify-between items-center"
+                      style={{ borderBottom: `3px solid ${primaryColor}` }}
+                    >
                       <div>
-                        <h3 className="text-2xl font-black tracking-tight m-0" style={{ color: primaryColor }}>
+                        <h3
+                          className="text-2xl font-black tracking-tight m-0"
+                          style={{ color: primaryColor }}
+                        >
                           {headerTitle}
                         </h3>
-                        <p className="text-xs font-extrabold uppercase tracking-wider mt-1" style={{ color: accentColor }}>
+                        <p
+                          className="text-xs font-extrabold uppercase tracking-wider mt-1"
+                          style={{ color: accentColor }}
+                        >
                           {headerSubtitle}
                         </p>
                       </div>
-                      <img src="/LOGO_PETRO_DANANTARA.png" alt="Logo Petrokimia" className="h-14 w-auto object-contain" />
+                      <img
+                        src="/LOGO_PETRO_DANANTARA.png"
+                        alt="Logo Petrokimia"
+                        className="h-14 w-auto object-contain"
+                      />
                     </div>
 
                     {/* Document Title */}
                     <div>
                       <h2 className="text-3xl font-black text-stone-900 leading-tight">
-                        {reportTitle || "SOC Executive Summary"}
+                        {reportTitle ||
+                          tx("Untitled report", "Untitled report")}
                       </h2>
                       <p className="text-xs text-stone-500 font-extrabold uppercase mt-1">
                         Tipe Data: {dataType} | Sumber: {inputFile}
@@ -304,9 +376,16 @@ export default function FullscreenStudioModal({
                     {/* Section Box */}
                     <div className="space-y-6 pt-2">
                       <div className="p-6 rounded-2xl border border-stone-200 bg-stone-50/60 shadow-sm">
-                        <h4 className="text-base font-black pb-3 border-b border-stone-200 flex items-center justify-between" style={{ color: primaryColor }}>
-                          <span>{activePage}. {getPageTitle(activePage)}</span>
-                          <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-bold">Focus Mode</span>
+                        <h4
+                          className="text-base font-black pb-3 border-b border-stone-200 flex items-center justify-between"
+                          style={{ color: primaryColor }}
+                        >
+                          <span>
+                            {activePage}. {getPageTitle(activePage)}
+                          </span>
+                          <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-bold">
+                            Focus Mode
+                          </span>
                         </h4>
                         <p className="text-xs sm:text-sm text-stone-700 mt-4 font-medium leading-relaxed whitespace-pre-wrap">
                           {getPageText(activePage)}
@@ -316,7 +395,11 @@ export default function FullscreenStudioModal({
                       {/* Include Chart 2-Col Layout for Section 02 */}
                       {activePage === "02" && (
                         <div className="p-6 rounded-2xl border border-stone-200 bg-white shadow-sm">
-                          <ChartNarasiLayout reportId={reportId} chartCaptions={chartCaptions} tx={tx} />
+                          <ChartNarasiLayout
+                            reportId={reportId}
+                            chartCaptions={chartCaptions}
+                            tx={tx}
+                          />
                         </div>
                       )}
                     </div>
@@ -326,23 +409,43 @@ export default function FullscreenStudioModal({
                 {/* PPTX Widescreen Presentation Slide Canvas */}
                 {previewFormat === "pptx" && (
                   <div className="max-w-4xl mx-auto border-2 border-stone-800 rounded-2xl shadow-2xl shadow-black/80 bg-white aspect-[16/9] flex flex-col justify-between text-left p-8 font-sans text-stone-900">
-                    <div className="flex justify-between items-start border-b pb-3" style={{ borderColor: `${primaryColor}30` }}>
+                    <div
+                      className="flex justify-between items-start border-b pb-3"
+                      style={{ borderColor: `${primaryColor}30` }}
+                    >
                       <div>
-                        <h3 className="text-xl font-black m-0" style={{ color: primaryColor }}>
+                        <h3
+                          className="text-xl font-black m-0"
+                          style={{ color: primaryColor }}
+                        >
                           {activePage}. {getPageTitle(activePage)}
                         </h3>
-                        <div className="w-20 h-1.5 rounded-full mt-1" style={{ backgroundColor: accentColor }} />
+                        <div
+                          className="w-20 h-1.5 rounded-full mt-1"
+                          style={{ backgroundColor: accentColor }}
+                        />
                       </div>
-                      <img src="/LOGO_PETRO_DANANTARA.png" alt="Logo Petrokimia" className="h-9 w-auto object-contain" />
+                      <img
+                        src="/LOGO_PETRO_DANANTARA.png"
+                        alt="Logo Petrokimia"
+                        className="h-9 w-auto object-contain"
+                      />
                     </div>
 
                     {activePage === "02" ? (
                       <div className="my-auto overflow-y-auto max-h-[380px] p-2">
-                        <ChartNarasiLayout reportId={reportId} chartCaptions={chartCaptions} tx={tx} />
+                        <ChartNarasiLayout
+                          reportId={reportId}
+                          chartCaptions={chartCaptions}
+                          tx={tx}
+                        />
                       </div>
                     ) : (
                       <div className="my-auto flex items-stretch gap-4 pl-3 pr-4 py-4">
-                        <div className="w-1.5 rounded-full shrink-0" style={{ backgroundColor: primaryColor }} />
+                        <div
+                          className="w-1.5 rounded-full shrink-0"
+                          style={{ backgroundColor: primaryColor }}
+                        />
                         <p className="text-sm text-stone-800 font-medium leading-relaxed whitespace-pre-wrap">
                           {getPageText(activePage)}
                         </p>
@@ -351,7 +454,9 @@ export default function FullscreenStudioModal({
 
                     <div className="flex justify-between items-center border-t border-stone-200 pt-3 text-xs font-bold text-stone-400">
                       <span>{headerTitle} • Fullscreen Widescreen View</span>
-                      <span className="font-extrabold text-stone-700">Slide {activePage} of {LAST_PAGE}</span>
+                      <span className="font-extrabold text-stone-700">
+                        Slide {activePage} of {LAST_PAGE}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -372,9 +477,13 @@ export default function FullscreenStudioModal({
                   </div>
 
                   <div className="flex items-center gap-4 text-xs font-bold text-stone-400">
-                    <span>{wordCount} {tx("words", "kata")}</span>
+                    <span>
+                      {wordCount} {tx("words", "kata")}
+                    </span>
                     <span>•</span>
-                    <span>{charCount} {tx("chars", "karakter")}</span>
+                    <span>
+                      {charCount} {tx("chars", "karakter")}
+                    </span>
                   </div>
                 </div>
 
@@ -395,10 +504,16 @@ export default function FullscreenStudioModal({
                 <div className="flex items-center justify-between bg-stone-900 p-5 rounded-2xl border border-stone-800">
                   <div>
                     <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                      {tx("Chart Visualization & Insight Narasi", "Chart Visualization & Insight Narasi")}
+                      {tx(
+                        "Chart Visualization & Insight Narasi",
+                        "Chart Visualization & Insight Narasi",
+                      )}
                     </h3>
                     <p className="text-xs text-stone-400 mt-0.5 font-medium">
-                      {tx("Visualisasi grafik beserta narasi analisis AI berdampingan.", "Visualisasi grafik beserta narasi analisis AI berdampingan.")}
+                      {tx(
+                        "Visualisasi grafik beserta narasi analisis AI berdampingan.",
+                        "Visualisasi grafik beserta narasi analisis AI berdampingan.",
+                      )}
                     </p>
                   </div>
                   <span className="text-xs bg-amber-950/80 text-amber-300 border border-amber-500/40 px-3 py-1 rounded-full font-bold">
@@ -407,7 +522,11 @@ export default function FullscreenStudioModal({
                 </div>
 
                 <div className="bg-white p-6 rounded-3xl shadow-2xl border border-stone-800">
-                  <ChartNarasiLayout reportId={reportId} chartCaptions={chartCaptions} tx={tx} />
+                  <ChartNarasiLayout
+                    reportId={reportId}
+                    chartCaptions={chartCaptions}
+                    tx={tx}
+                  />
                 </div>
               </div>
             )}

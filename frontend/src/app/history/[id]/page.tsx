@@ -12,6 +12,7 @@ import { sanitizeFilename, downloadBlobAsFile } from "@/utils/downloadFile";
 import PagesSidebar from "./components/PagesSidebar";
 import CenterPreviewPanel from "./components/CenterPreviewPanel";
 import PropertiesPanel from "./components/PropertiesPanel";
+import EditableReportTitle from "@/components/EditableReportTitle";
 
 interface ReportDetails {
   id: number;
@@ -108,12 +109,9 @@ export default function ReportDetailPage({
           headers["Authorization"] = `Bearer ${token}`;
         }
 
-        const res = await fetch(
-          `${API_BASE_URL}/api/v1/history/${reportId}`,
-          {
-            headers,
-          },
-        );
+        const res = await fetch(`${API_BASE_URL}/api/v1/history/${reportId}`, {
+          headers,
+        });
 
         if (res.status === 401 || res.status === 403) {
           router.push("/login");
@@ -198,16 +196,13 @@ export default function ReportDetailPage({
         authHeaders["Authorization"] = `Bearer ${token}`;
       }
 
-      const res = await fetch(
-        `${API_BASE_URL}/api/v1/analysis/${reportId}`,
-        {
-          method: "PUT",
-          headers: authHeaders,
-          body: JSON.stringify({
-            ai_summary: editedSummary,
-          }),
-        },
-      );
+      const res = await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({
+          ai_summary: editedSummary,
+        }),
+      });
       if (res.ok) {
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2000);
@@ -219,11 +214,39 @@ export default function ReportDetailPage({
     }
   };
 
-  const [downloadingFormat, setDownloadingFormat] = useState<"pdf" | "pptx" | null>(null);
+  // Rename laporan inline (pensil di judul) — dipakai juga di halaman ini, bukan cuma di
+  // alur Generate, supaya nama yang tampil di History list ikut ter-update.
+  const handleRenameReport = async (newTitle: string) => {
+    if (!reportId) return;
+    const prevTitle = report?.title;
+    setReport((prev) => (prev ? { ...prev, title: newTitle } : prev));
+    try {
+      const token = localStorage.getItem("token");
+      const authHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({ title: newTitle }),
+      });
+      if (!res.ok) throw new Error("Gagal menyimpan nama laporan.");
+    } catch (err) {
+      console.error(err);
+      setReport((prev) => (prev ? { ...prev, title: prevTitle! } : prev));
+    }
+  };
+
+  const [downloadingFormat, setDownloadingFormat] = useState<
+    "pdf" | "pptx" | null
+  >(null);
 
   const handleDownloadFile = async (format: "pdf" | "pptx") => {
     if (!reportId || downloadingFormat) return;
-    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
     if (!token) {
       setErrorMsg("Token akses tidak ditemukan. Silakan login ulang.");
       return;
@@ -249,15 +272,11 @@ export default function ReportDetailPage({
       }
 
       const blob = await res.blob();
-      const filenameBase = sanitizeFilename(report?.title, `soc_report_${reportId}`);
-      await downloadBlobAsFile(blob, `${filenameBase}.${format}`, {
-        description: format === "pdf" ? "PDF Document" : "PowerPoint Presentation",
-        mimeType:
-          format === "pdf"
-            ? "application/pdf"
-            : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        extension: format,
-      });
+      const filenameBase = sanitizeFilename(
+        report?.title,
+        `soc_report_${reportId}`,
+      );
+      await downloadBlobAsFile(blob, `${filenameBase}.${format}`);
     } catch (err: any) {
       setErrorMsg(err.message || "Terjadi kesalahan saat mengunduh file.");
     } finally {
@@ -360,10 +379,13 @@ export default function ReportDetailPage({
 
           {/* Header Row */}
           <div className="flex justify-between items-center">
-            <div className="text-left">
-              <h2 className="text-2xl font-extrabold text-stone-900">
-                {report.title}
-              </h2>
+            <div className="text-left min-w-0">
+              <EditableReportTitle
+                title={report.title}
+                onSave={handleRenameReport}
+                className="text-2xl font-extrabold text-stone-900"
+                tx={tx}
+              />
               {/* Metadata Info Bar */}
               <div className="flex flex-wrap gap-5 text-[10px] font-bold text-stone-500 mt-2">
                 <span className="flex items-center gap-1.5">
@@ -421,7 +443,9 @@ export default function ReportDetailPage({
                     />
                   </svg>
                   {tx("Format:", "Format:")}{" "}
-                  <strong>{report.output_format || "PDF"}</strong>
+                  <strong>
+                    {report.output_format || tx("Unknown", "Unknown")}
+                  </strong>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <svg
@@ -438,7 +462,10 @@ export default function ReportDetailPage({
                       d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
                     />
                   </svg>
-                  {tx("Size:", "Size:")} <strong>{formatFileSize(report.total_file_size_bytes)}</strong>
+                  {tx("Size:", "Size:")}{" "}
+                  <strong>
+                    {formatFileSize(report.total_file_size_bytes)}
+                  </strong>
                 </span>
               </div>
             </div>
@@ -457,8 +484,19 @@ export default function ReportDetailPage({
                     fill="none"
                     viewBox="0 0 24 24"
                   >
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
                   </svg>
                 ) : (
                   <svg
@@ -476,7 +514,9 @@ export default function ReportDetailPage({
                     />
                   </svg>
                 )}
-                {downloadingFormat === "pdf" ? tx("Exporting PDF...", "Exporting PDF...") : tx("Download PDF", "Download PDF")}
+                {downloadingFormat === "pdf"
+                  ? tx("Exporting PDF...", "Exporting PDF...")
+                  : tx("Download PDF", "Download PDF")}
               </button>
 
               <button
@@ -491,8 +531,19 @@ export default function ReportDetailPage({
                     fill="none"
                     viewBox="0 0 24 24"
                   >
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
                   </svg>
                 ) : (
                   <svg
@@ -510,7 +561,9 @@ export default function ReportDetailPage({
                     />
                   </svg>
                 )}
-                {downloadingFormat === "pptx" ? tx("Exporting PPTX...", "Exporting PPTX...") : tx("Download PPTX", "Download PPTX")}
+                {downloadingFormat === "pptx"
+                  ? tx("Exporting PPTX...", "Exporting PPTX...")
+                  : tx("Download PPTX", "Download PPTX")}
               </button>
             </div>
           </div>

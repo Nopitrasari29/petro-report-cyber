@@ -88,10 +88,10 @@ export default function ReportHistoryPage() {
       if (statusFilter && statusFilter !== "All Statuses") {
         // Map UI label ke backend status value
         const statusMap: Record<string, string> = {
-          "Completed": "analyzed",
+          Completed: "analyzed",
           "In Review": "processing",
-          "Draft": "draft",
-          "Failed": "failed",
+          Draft: "draft",
+          Failed: "failed",
         };
         const backendStatus = statusMap[statusFilter];
         if (backendStatus) params.set("status", backendStatus);
@@ -142,8 +142,17 @@ export default function ReportHistoryPage() {
   }, []);
 
   // Toast notification state
-  const [toasts, setToasts] = useState<Array<{ id: string; type: "success" | "error" | "info" | "warning"; message: string }>>([]);
-  const addToast = (message: string, type: "success" | "error" | "info" | "warning" = "info") => {
+  const [toasts, setToasts] = useState<
+    Array<{
+      id: string;
+      type: "success" | "error" | "info" | "warning";
+      message: string;
+    }>
+  >([]);
+  const addToast = (
+    message: string,
+    type: "success" | "error" | "info" | "warning" = "info",
+  ) => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, type, message }]);
     setTimeout(() => {
@@ -234,7 +243,7 @@ export default function ReportHistoryPage() {
 
   // Helper formatting dates
   const formatPeriod = (start: string, end: string) => {
-    if (!start || !end) return "July 2026";
+    if (!start || !end) return "-";
     const parseMonthYear = (dateStr: string) => {
       const d = new Date(dateStr);
       return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
@@ -293,7 +302,7 @@ export default function ReportHistoryPage() {
 
   // Template/DataType mapping to dynamic display label
   const getDataTypeLabel = (item: any) => {
-    if (!item) return "SOC Report";
+    if (!item) return tx("Unknown", "Unknown");
     if (typeof item === "string") {
       switch (item.toLowerCase()) {
         case "firewall":
@@ -305,7 +314,7 @@ export default function ReportHistoryPage() {
         case "ids_ips":
           return "IDS/IPS Report";
         default:
-          return item || "SOC Report";
+          return item || tx("Unknown", "Unknown");
       }
     }
     if (item.template_type) {
@@ -326,14 +335,17 @@ export default function ReportHistoryPage() {
       case "ids_ips":
         return "IDS/IPS Report";
       default:
-        return item.data_type || "SOC Report";
+        return item.data_type || tx("Unknown", "Unknown");
     }
   };
 
   // Dynamic Statistics Calculation
   const totalCount = reports.length;
   const approvedCount = reports.filter(
-    (r) => r.status === "completed" || r.status === "analyzed" || r.status === "approved",
+    (r) =>
+      r.status === "completed" ||
+      r.status === "analyzed" ||
+      r.status === "approved",
   ).length;
   const inReviewCount = reports.filter(
     (r) => r.status === "processing" || r.status === "in review",
@@ -341,7 +353,11 @@ export default function ReportHistoryPage() {
   const draftCount = reports.filter(
     (r) => r.status === "draft" || r.status === "parsed",
   ).length;
-  const exportedCount = approvedCount; // Statically equal to approved for demo consistency
+  const exportedCount = reports.filter(
+    (r) =>
+      typeof r.output_format === "string" &&
+      (r.output_format.includes("PDF") || r.output_format.includes("PPTX")),
+  ).length;
 
   const approvedPercent = totalCount
     ? ((approvedCount / totalCount) * 100).toFixed(1)
@@ -361,8 +377,8 @@ export default function ReportHistoryPage() {
     new Set(
       reports
         .map((r) => formatPeriod(r.period_start, r.period_end))
-        .filter((p) => p && p !== "N/A")
-    )
+        .filter((p) => p && p !== "N/A"),
+    ),
   );
 
   // Filtered reports
@@ -373,11 +389,14 @@ export default function ReportHistoryPage() {
       !searchQuery ||
       item.title.toLowerCase().includes(searchLower) ||
       getDataTypeLabel(item).toLowerCase().includes(searchLower) ||
-      (item.template_type && item.template_type.toLowerCase().includes(searchLower)) ||
+      (item.template_type &&
+        item.template_type.toLowerCase().includes(searchLower)) ||
       (item.data_type && item.data_type.toLowerCase().includes(searchLower)) ||
       (item.status && item.status.toLowerCase().includes(searchLower)) ||
       getStatusDetails(item.status).label.toLowerCase().includes(searchLower) ||
-      formatPeriod(item.period_start, item.period_end).toLowerCase().includes(searchLower) ||
+      formatPeriod(item.period_start, item.period_end)
+        .toLowerCase()
+        .includes(searchLower) ||
       formatDateString(item.created_at).toLowerCase().includes(searchLower);
 
     // Status filter
@@ -390,10 +409,18 @@ export default function ReportHistoryPage() {
 
     // Period filter
     let matchesPeriod = true;
-    if (periodFilter && periodFilter !== "Select Periods" && periodFilter !== "All Periods") {
-      const pFormatted = formatPeriod(item.period_start, item.period_end).toLowerCase();
+    if (
+      periodFilter &&
+      periodFilter !== "Select Periods" &&
+      periodFilter !== "All Periods"
+    ) {
+      const pFormatted = formatPeriod(
+        item.period_start,
+        item.period_end,
+      ).toLowerCase();
       const pTarget = periodFilter.toLowerCase();
-      matchesPeriod = pFormatted.includes(pTarget) || pTarget.includes(pFormatted);
+      matchesPeriod =
+        pFormatted.includes(pTarget) || pTarget.includes(pFormatted);
     }
 
     return matchesSearch && matchesStatus && matchesPeriod;
@@ -402,7 +429,10 @@ export default function ReportHistoryPage() {
   // Sorting reports based on sortOrder
   const sortedReports = [...filteredReports].sort((a, b) => {
     if (sortOrder === "oldest") {
-      return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+      return (
+        new Date(a.created_at || 0).getTime() -
+        new Date(b.created_at || 0).getTime()
+      );
     }
     if (sortOrder === "title_asc") {
       return (a.title || "").localeCompare(b.title || "");
@@ -411,7 +441,10 @@ export default function ReportHistoryPage() {
       return (b.title || "").localeCompare(a.title || "");
     }
     // Default: newest
-    return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    return (
+      new Date(b.created_at || 0).getTime() -
+      new Date(a.created_at || 0).getTime()
+    );
   });
 
   // Pagination logic
@@ -421,7 +454,7 @@ export default function ReportHistoryPage() {
   const totalPages = Math.ceil(sortedReports.length / rowsPerPage) || 1;
 
   const handleExportList = () => {
-    // Mock export list as CSV
+    // Export current filtered report set as CSV
     const headers =
       "Report Name,Period,Report Type,Created By,Status,Created At\n";
     const rows = filteredReports
@@ -447,7 +480,8 @@ export default function ReportHistoryPage() {
   };
 
   const handleDownloadFile = async (id: number, format: "pdf" | "pptx") => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
     if (!token) {
       alert("Token akses tidak ditemukan. Silakan login ulang.");
       return;
@@ -474,14 +508,7 @@ export default function ReportHistoryPage() {
       const blob = await res.blob();
       const reportTitle = reports.find((r) => r.id === id)?.title;
       const filenameBase = sanitizeFilename(reportTitle, `soc_report_${id}`);
-      await downloadBlobAsFile(blob, `${filenameBase}.${format}`, {
-        description: format === "pdf" ? "PDF Document" : "PowerPoint Presentation",
-        mimeType:
-          format === "pdf"
-            ? "application/pdf"
-            : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        extension: format,
-      });
+      await downloadBlobAsFile(blob, `${filenameBase}.${format}`);
     } catch (err: any) {
       alert(err.message || "Terjadi kesalahan saat mengunduh file.");
     }

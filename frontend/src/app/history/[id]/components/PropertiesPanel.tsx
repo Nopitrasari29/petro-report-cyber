@@ -69,7 +69,7 @@ export default function PropertiesPanel({ report }: PropertiesPanelProps) {
             {tx("Input File", "Input File")}
           </span>
           <span className="text-xs font-bold text-stone-700 mt-1 block truncate">
-            {report.input_file_name || "firewall_logs.csv"}
+            {report.input_file_name || tx("Unknown", "Unknown")}
           </span>
         </div>
 
@@ -88,13 +88,22 @@ export default function PropertiesPanel({ report }: PropertiesPanelProps) {
           <span className="text-[10px] font-extrabold text-stone-400 uppercase tracking-wider block">
             {tx("Supported Exports", "Supported Exports")}
           </span>
-          <div className="flex gap-2 mt-1.5">
-            <span className="px-2 py-0.5 bg-red-50 text-red-600 font-extrabold text-[10px] rounded border border-red-150">
-              PDF
-            </span>
-            <span className="px-2 py-0.5 bg-amber-50 text-amber-600 font-extrabold text-[10px] rounded border border-amber-150">
-              PPTX
-            </span>
+          <div className="flex gap-2 mt-1.5 flex-wrap">
+            {report.output_format?.toLowerCase().includes("pdf") ? (
+              <span className="px-2 py-0.5 bg-red-50 text-red-600 font-extrabold text-[10px] rounded border border-red-150">
+                PDF
+              </span>
+            ) : null}
+            {report.output_format?.toLowerCase().includes("pptx") ? (
+              <span className="px-2 py-0.5 bg-amber-50 text-amber-600 font-extrabold text-[10px] rounded border border-amber-150">
+                PPTX
+              </span>
+            ) : null}
+            {!report.output_format ? (
+              <span className="px-2 py-0.5 bg-stone-100 text-stone-500 font-extrabold text-[10px] rounded border border-stone-200">
+                {tx("None", "None")}
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -107,11 +116,14 @@ export default function PropertiesPanel({ report }: PropertiesPanelProps) {
             <div className="flex-1 h-2 bg-stone-200 rounded-full overflow-hidden">
               <div
                 className="h-full bg-petro-green rounded-full"
-                style={{ width: `${report.ai_confidence ?? 95}%` }}
+                style={{ width: `${report.ai_confidence ?? 0}%` }}
               ></div>
             </div>
             <span className="text-xs font-black text-petro-green">
-              {report.ai_confidence ?? 95}%
+              {report.ai_confidence !== undefined &&
+              report.ai_confidence !== null
+                ? `${report.ai_confidence}%`
+                : tx("N/A", "N/A")}
             </span>
           </div>
         </div>

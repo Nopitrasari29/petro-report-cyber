@@ -49,14 +49,7 @@ async function downloadAuthorizedFile(
 
   const blob = await res.blob();
   const filenameBase = sanitizeFilename(reportTitle, `soc_report_${reportId}`);
-  await downloadBlobAsFile(blob, `${filenameBase}.${format}`, {
-    description: format === "pdf" ? "PDF Document" : "PowerPoint Presentation",
-    mimeType:
-      format === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    extension: format,
-  });
+  await downloadBlobAsFile(blob, `${filenameBase}.${format}`);
 }
 
 export default function Step5Export({

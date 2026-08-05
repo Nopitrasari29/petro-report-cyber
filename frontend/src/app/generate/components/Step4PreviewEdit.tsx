@@ -4,6 +4,10 @@ import ReportChartPanel from "./ReportChartPanel";
 import ChartNarasiLayout from "./ChartNarasiLayout";
 import RichTextEditor from "./RichTextEditor";
 import FullscreenStudioModal from "./FullscreenStudioModal";
+import EditableReportTitle from "@/components/EditableReportTitle";
+import ReportBlockRenderer from "@/components/ReportBlockRenderer";
+import { fetchReportBlocks } from "@/utils/reportBlocksApi";
+import type { ReportBlock } from "@/utils/reportTheme";
 import { REPORT_SECTIONS } from "@/utils/reportSections";
 
 const LAST_PAGE = REPORT_SECTIONS[REPORT_SECTIONS.length - 1].page;
@@ -24,6 +28,7 @@ interface Step4PreviewEditProps {
   periodStart: string;
   periodEnd: string;
   reportDetails: any;
+  reportTitle?: string;
   editedSummary: any;
   chartCaptions?: string[];
   headerTitle?: string;
@@ -35,6 +40,7 @@ interface Step4PreviewEditProps {
   handleSaveEdits: () => void;
   onBack: () => void;
   onNext: () => void;
+  onRenameTitle: (newTitle: string) => void | Promise<void>;
   tx: (key: string, fallback: string) => string;
 }
 
@@ -49,6 +55,7 @@ export default function Step4PreviewEdit({
   periodStart,
   periodEnd,
   reportDetails,
+  reportTitle = "",
   editedSummary,
   chartCaptions = [],
   headerTitle = "PT PETROKIMIA GRESIK",
@@ -60,29 +67,44 @@ export default function Step4PreviewEdit({
   handleSaveEdits,
   onBack,
   onNext,
+  onRenameTitle,
   tx,
 }: Step4PreviewEditProps) {
-  const [previewFormat, setPreviewFormat] = React.useState<"pdf" | "pptx">("pdf");
+  const [previewFormat, setPreviewFormat] = React.useState<"pdf" | "pptx">(
+    "pdf",
+  );
   const [zoomLevel, setZoomLevel] = React.useState<number>(100);
   const [isFullscreen, setIsFullscreen] = React.useState<boolean>(false);
 
-  // Theme color map untuk preview (sama dengan export_pdf.py)
-  const themeMap: Record<string, { primary: string; accent: string }> = {
-    green: { primary: "#004D25", accent: "#d9a700" },
-    navy:  { primary: "#0F172A", accent: "#38BDF8" },
-    dark:  { primary: "#111827", accent: "#818CF8" },
-    gold:  { primary: "#78350F", accent: "#F59E0B" },
-  };
-  const { primary: primaryColor, accent: accentColor } = themeMap[themeColor] ?? themeMap.green;
+  // Blocks yang SAMA PERSIS dipakai backend untuk merender PDF/PPTX (build_report_blocks) —
+  // supaya tab Preview ini dijamin menampilkan section & angka yang sama dengan file yang
+  // benar-benar diunduh, bukan implementasi tampilan yang dikarang terpisah.
+  const [blocks, setBlocks] = React.useState<ReportBlock[]>([]);
+  const [blocksLoading, setBlocksLoading] = React.useState(true);
+  const [blocksError, setBlocksError] = React.useState("");
 
   React.useEffect(() => {
-    if (activePage && previewFormat === "pdf") {
-      const el = document.getElementById(`step-pdf-section-${activePage}`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    }
-  }, [activePage, previewFormat]);
+    const reportId = reportDetails?.id;
+    if (!reportId) return;
+    let cancelled = false;
+    setBlocksLoading(true);
+    setBlocksError("");
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    fetchReportBlocks(reportId, token)
+      .then((b) => {
+        if (!cancelled) setBlocks(b);
+      })
+      .catch((err) => {
+        if (!cancelled) setBlocksError(err.message || "Gagal memuat preview.");
+      })
+      .finally(() => {
+        if (!cancelled) setBlocksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reportDetails?.id]);
 
   // Listener tombol Escape untuk keluar dari mode Fullscreen
   React.useEffect(() => {
@@ -98,9 +120,16 @@ export default function Step4PreviewEdit({
   return (
     <ScrollReveal animation="fadeInUp" className="space-y-6">
       <div className="text-left">
-        <h2 className="text-2xl font-extrabold text-stone-900">
-          {tx("Preview & Edit", "Preview & Edit")}
-        </h2>
+        <EditableReportTitle
+          title={
+            reportTitle ||
+            reportDetails?.title ||
+            tx("Untitled report", "Untitled report")
+          }
+          onSave={onRenameTitle}
+          className="text-2xl font-extrabold text-stone-900"
+          tx={tx}
+        />
         <p className="text-sm text-stone-500 font-semibold mt-1">
           {tx(
             "Review AI generated content and make any necessary edits",
@@ -255,7 +284,10 @@ export default function Step4PreviewEdit({
               {/* Fullscreen Toggle Button */}
               <button
                 onClick={() => setIsFullscreen(true)}
-                title={tx("Fullscreen Edit/Preview Mode", "Mode Layar Penuh Edit/Preview")}
+                title={tx(
+                  "Fullscreen Edit/Preview Mode",
+                  "Mode Layar Penuh Edit/Preview",
+                )}
                 className="p-1.5 rounded-xl bg-white text-stone-600 hover:bg-stone-100 hover:text-stone-900 border border-stone-200/80 shadow-sm transition-all cursor-pointer"
               >
                 <svg
@@ -280,7 +312,8 @@ export default function Step4PreviewEdit({
           <div
             className="min-h-[350px] transition-transform duration-200 ease-out"
             style={{
-              transform: zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : "none",
+              transform:
+                zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : "none",
               transformOrigin: "top center",
             }}
           >
@@ -314,263 +347,41 @@ export default function Step4PreviewEdit({
                   </div>
                 </div>
 
-                 {/* MODE 1: PDF DOCUMENT VIEW (A4 Portrait) */}
-                {previewFormat === "pdf" && (
-                  <div className="border border-stone-300 rounded-lg p-6 shadow-lg bg-white max-w-lg mx-auto flex flex-col justify-between min-h-[580px] animate-fadeIn text-left font-sans max-h-[550px] overflow-y-auto scroll-smooth">
-                    <div className="space-y-4">
-                      {/* Official PDF Document Header Kop — DINAMIS sesuai pilihan user */}
-                      <div
-                        className="pb-3 flex justify-between items-center"
-                        style={{ borderBottom: `3px solid ${primaryColor}` }}
-                      >
-                        <div>
-                          <h3
-                            className="text-base font-black tracking-tight m-0"
-                            style={{ color: primaryColor }}
-                          >
-                            {headerTitle}
-                          </h3>
-                          <p
-                            className="text-[9px] font-extrabold uppercase tracking-wider mt-0.5"
-                            style={{ color: accentColor }}
-                          >
-                            {headerSubtitle}
-                          </p>
-                        </div>
-                        <img
-                          src="/LOGO_PETRO_DANANTARA.png"
-                          alt="Logo Petrokimia"
-                          className="h-10 w-auto object-contain"
-                        />
-                      </div>
-
-                      {/* Document Title */}
-                      <h2 className="text-lg font-black text-stone-900 leading-tight">
-                        {reportDetails?.title || "SOC Executive Summary"}
-                      </h2>
-
-                      {/* Metadata Block Table */}
-                      <table className="w-full text-[10px] text-stone-600 border-collapse">
-                        <tbody>
-                          <tr>
-                            <td className="font-extrabold text-stone-400 uppercase w-28 py-0.5">Jenis Data:</td>
-                            <td className="font-extrabold text-stone-800 uppercase">{reportDetails?.data_type || "FIREWALL"}</td>
-                          </tr>
-                          <tr>
-                            <td className="font-extrabold text-stone-400 uppercase py-0.5">Tanggal Cetak:</td>
-                            <td className="font-extrabold text-stone-800">{new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</td>
-                          </tr>
-                          <tr>
-                            <td className="font-extrabold text-stone-400 uppercase py-0.5">Berkas Sumber:</td>
-                            <td className="font-mono font-bold text-stone-700">{reportDetails?.input_file_name || "-"}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-
-                      {/* Confidentiality Notice Alert Box */}
-                      <div className="bg-stone-50 border-l-4 border-[#d9a700] p-3 rounded-r-lg text-[9.5px] text-stone-600 leading-relaxed font-medium">
-                        <strong className="text-stone-900 font-bold block mb-0.5">Pemberitahuan Kerahasiaan siber:</strong>
-                        Dokumen ini berisi rekaman aktivitas operasional keamanan siber internal PT Petrokimia Gresik. Dilarang keras menyebarluaskan isi laporan ini di luar otoritas SOC.
-                      </div>
-
-                      {/* Section 1: Executive Summary */}
-                      <div id="step-pdf-section-01" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "01" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                        <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                          <span>1. Ringkasan Eksekutif (Executive Summary)</span>
-                          {activePage === "01" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                        </h4>
-                        <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                          {getPageText("01")}
-                        </p>
-                      </div>
-
-                      {/* Section 2: Visualisasi Data Analitik — Layout 2-kolom Chart + Narasi */}
-                      <div id="step-pdf-section-02" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "02" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                        <h4
-                          className="text-xs font-black border-b border-stone-150 pb-1 mb-3 flex items-center justify-between"
-                          style={{ color: primaryColor }}
-                        >
-                          <span>2. Visualisasi Data & Infografis Analitik</span>
-                          {activePage === "02" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                        </h4>
-                        {/* 2-kolom: kiri chart, kanan narasi AI per chart */}
-                        <ChartNarasiLayout
-                          reportId={reportDetails?.id}
-                          chartCaptions={chartCaptions}
-                          tx={tx}
-                        />
-                      </div>
-
-                      {/* Section 3: Trend Analysis */}
-                      <div id="step-pdf-section-03" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "03" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                        <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                          <span>3. Analisis Tren Ancaman (Trend Analysis)</span>
-                          {activePage === "03" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                        </h4>
-                        <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                          {getPageText("03")}
-                        </p>
-                      </div>
-
-                      {/* Section 4: Severity Analysis */}
-                      <div id="step-pdf-section-04" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "04" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                        <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                          <span>4. Analisis Tingkat Keparahan (Severity Analysis)</span>
-                          {activePage === "04" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                        </h4>
-                        <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                          {getPageText("04")}
-                        </p>
-                      </div>
-
-                      {/* Section 5: Risk Assessment */}
-                      <div id="step-pdf-section-05" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "05" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                        <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                          <span>5. Penilaian Risiko (Risk Assessment)</span>
-                          {activePage === "05" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                        </h4>
-                        <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                          {getPageText("05")}
-                        </p>
-                      </div>
-
-                      {/* Section 6: Recommendations & Conclusion */}
-                      <div id="step-pdf-section-06" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "06" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                        <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                          <span>6. Kesimpulan & Rekomendasi</span>
-                          {activePage === "06" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                        </h4>
-                        <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                          {getPageText("06")}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Page Footer */}
-                    <div className="flex justify-between items-center border-t border-stone-200 pt-3 mt-6 text-[8px] text-stone-400">
-                      <span className="font-bold uppercase tracking-wider">
-                        {tx("PT Petrokimia Gresik • SOC Security Reports", "PT Petrokimia Gresik • SOC Security Reports")}
-                      </span>
-                    </div>
+                {/* Loading / error states — sama utk kedua mode */}
+                {blocksLoading && (
+                  <div className="max-w-lg mx-auto flex items-center justify-center gap-2 py-16 text-stone-400">
+                    <div className="w-4 h-4 border-2 border-stone-300 border-t-petro-green rounded-full animate-spin" />
+                    <span className="text-xs font-bold">
+                      {tx("Memuat preview...", "Memuat preview...")}
+                    </span>
+                  </div>
+                )}
+                {!blocksLoading && blocksError && (
+                  <div className="max-w-lg mx-auto bg-red-50 border border-red-200 text-red-700 text-xs font-medium p-4 rounded-xl">
+                    {blocksError}
                   </div>
                 )}
 
-                {/* MODE 2: PPTX PRESENTATION SLIDE VIEW (16:9 Landscape Widescreen matching export_ppt.py 1-to-1) */}
-                {previewFormat === "pptx" && (
-                  <div className="max-w-lg mx-auto border-2 border-stone-300 rounded-2xl shadow-xl bg-white aspect-[16/9] flex flex-col justify-between text-left relative animate-fadeIn overflow-hidden font-sans p-6">
-                     {activePage === "01" ? (
-                      /* Slide 1: Cover Slide — Dinamis sesuai tema dan kop header */
-                      <div className="h-full flex flex-col justify-between relative">
-                        {/* Top Accent Bar (warna tema) */}
-                        <div
-                          className="absolute -top-6 -left-6 -right-6 h-3"
-                          style={{ backgroundColor: primaryColor }}
-                        />
+                {/* MODE 1: PDF DOCUMENT VIEW — tumpukan halaman, isi PERSIS sama dgn build_report_blocks */}
+                {!blocksLoading && !blocksError && previewFormat === "pdf" && (
+                  <div className="max-w-lg mx-auto space-y-4">
+                    {blocks.map((block, i) => (
+                      <ReportBlockRenderer key={i} block={block} />
+                    ))}
+                  </div>
+                )}
 
-                        {/* Top Header Logo */}
-                        <div className="flex justify-between items-start pt-2">
-                          <div />
-                          <img
-                            src="/LOGO_PETRO_DANANTARA.png"
-                            alt="Logo Petrokimia"
-                            className="h-9 w-auto object-contain"
-                          />
-                        </div>
-
-                        {/* Cover Title Box */}
-                        <div className="my-auto space-y-2 pl-2">
-                          <h4
-                            className="text-xs font-black tracking-wide uppercase"
-                            style={{ color: primaryColor }}
-                          >
-                            {headerTitle}
-                          </h4>
-                          <h2
-                            className="text-xl font-black leading-tight"
-                            style={{ color: primaryColor }}
-                          >
-                            {reportDetails?.title || "Executive Summary"}
-                          </h2>
-                          <p className="text-[10.5px] font-black pt-1" style={{ color: accentColor }}>
-                            {headerSubtitle} | Laporan {(reportDetails?.data_type || "DATA").toUpperCase()} |{" "}
-                            {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
-                          </p>
-                        </div>
-
-                        {/* Cover Slide Footer */}
-                        <div className="flex justify-between items-center border-t border-stone-200 pt-2 text-[8px] font-bold text-stone-400">
-                          <span>{headerTitle} • Operations</span>
-                          <span className="font-extrabold text-stone-700">Slide 01 of {LAST_PAGE}</span>
-                        </div>
+                {/* MODE 2: PPTX SLIDE VIEW — tiap block jadi 1 "slide" 16:9, tumpukan bisa di-scroll */}
+                {!blocksLoading && !blocksError && previewFormat === "pptx" && (
+                  <div className="max-w-lg mx-auto space-y-6">
+                    {blocks.map((block, i) => (
+                      <div
+                        key={i}
+                        className="aspect-video rounded-2xl border-2 border-stone-300 shadow-xl overflow-y-auto"
+                      >
+                        <ReportBlockRenderer block={block} />
                       </div>
-                    ) : activePage === "02" ? (
-                      /* Slide 2: Visualisasi Chart + Narasi AI — 2-kolom seperti PPTX export */
-                      <div className="h-full flex flex-col justify-between relative overflow-y-auto">
-                        <div>
-                          <div
-                            className="flex justify-between items-start border-b pb-2 mb-2"
-                            style={{ borderColor: `${primaryColor}30` }}
-                          >
-                            <div>
-                              <h3 className="text-sm font-black m-0" style={{ color: primaryColor }}>
-                                Visualisasi Data & Infografis Analitik
-                              </h3>
-                              <div className="w-12 h-1 rounded mt-1" style={{ backgroundColor: accentColor }} />
-                            </div>
-                            <img
-                              src="/LOGO_PETRO_DANANTARA.png"
-                              alt="Logo Petrokimia"
-                              className="h-6 w-auto object-contain"
-                            />
-                          </div>
-                          {/* Layout 2-kolom Chart + Narasi AI */}
-                          <ChartNarasiLayout
-                            reportId={reportDetails?.id}
-                            chartCaptions={chartCaptions}
-                            tx={tx}
-                          />
-                        </div>
-                        <div className="flex justify-between items-center border-t border-stone-200 pt-2 mt-2 text-[8px] font-bold text-stone-400">
-                          <span>{headerTitle} • Operations</span>
-                          <span className="font-extrabold text-stone-700">Slide {activePage} of {LAST_PAGE}</span>
-                        </div>
-                      </div>
-                    ) : (
-                      /* Content Slide Layout (Slide 3+) */
-                      <div className="h-full flex flex-col justify-between relative">
-                        {/* Slide Header */}
-                        <div
-                          className="flex justify-between items-start border-b pb-2"
-                          style={{ borderColor: `${primaryColor}20` }}
-                        >
-                          <div>
-                            <h3 className="text-sm font-black m-0" style={{ color: primaryColor }}>
-                              {getPageTitle(activePage)}
-                            </h3>
-                            <div className="w-12 h-1 rounded mt-1" style={{ backgroundColor: accentColor }} />
-                          </div>
-                          <img
-                            src="/LOGO_PETRO_DANANTARA.png"
-                            alt="Logo Petrokimia"
-                            className="h-6 w-auto object-contain"
-                          />
-                        </div>
-
-                        {/* Content Box with Left Accent Bar */}
-                        <div className="my-auto flex items-stretch gap-3 pl-1 pr-2 py-2 flex-1 overflow-y-auto">
-                          <div className="w-1 rounded shrink-0" style={{ backgroundColor: primaryColor }} />
-                          <p className="text-[10.5px] text-stone-700 font-medium leading-relaxed whitespace-pre-wrap">
-                            {getPageText(activePage)}
-                          </p>
-                        </div>
-
-                        {/* Content Slide Footer */}
-                        <div className="flex justify-between items-center border-t border-stone-200 pt-2 text-[8px] font-bold text-stone-400">
-                          <span>{headerTitle} • Operations</span>
-                          <span className="font-extrabold text-stone-700">Slide {activePage} of {LAST_PAGE}</span>
-                        </div>
-                      </div>
-                    )}
+                    ))}
                   </div>
                 )}
               </div>
@@ -593,7 +404,10 @@ export default function Step4PreviewEdit({
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-black text-stone-755 uppercase tracking-wider">
-                    {tx("Chart Visualization & Insight Narasi", "Chart Visualization & Insight Narasi")}
+                    {tx(
+                      "Chart Visualization & Insight Narasi",
+                      "Chart Visualization & Insight Narasi",
+                    )}
                   </h4>
                   <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200">
                     💡 AI Chart Captions
@@ -610,7 +424,6 @@ export default function Step4PreviewEdit({
             )}
           </div>
         </div>
-
       </div>
 
       {/* Bottom Nav Bar */}
@@ -640,7 +453,7 @@ export default function Step4PreviewEdit({
           onClick={onNext}
           className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-petro-green hover:bg-petro-green-hover text-white font-bold text-sm shadow transition-all duration-200 group cursor-pointer"
         >
-          {tx("Next Export", "Next Export")}
+          {tx("Proceed to Export", "Proceed to Export")}
           <svg
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
@@ -661,8 +474,12 @@ export default function Step4PreviewEdit({
       <FullscreenStudioModal
         isOpen={isFullscreen}
         onClose={() => setIsFullscreen(false)}
-        reportTitle={reportDetails?.title}
-        dataType={reportDetails?.data_type || "DATA"}
+        reportTitle={
+          reportTitle ||
+          reportDetails?.title ||
+          tx("Untitled report", "Untitled report")
+        }
+        dataType={reportDetails?.data_type || tx("Unknown", "Unknown")}
         activePage={activePage}
         setActivePage={setActivePage}
         activeTab={activeTab}

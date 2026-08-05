@@ -131,6 +131,17 @@ def _clean_recommendation_text(text: str) -> str:
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
+def coerce_finding_text(item) -> str:
+    """Model AI kadang salah format "key_findings" — harusnya array teks polos (1 kalimat per
+    poin), tapi kadang malah diisi objek section ({"id","title","content"}, bentuk yang
+    sebenarnya untuk field "sections"). Kalau item ternyata dict, ambil "content"/"title"-nya
+    saja — JANGAN str()-kan seluruh dict apa adanya (dulu bug-nya begitu: repr Python mentah
+    seperti "{'id': ..., 'title': ...}" muncul di laporan)."""
+    if isinstance(item, dict):
+        return str(item.get("content") or item.get("title") or "").strip()
+    return str(item or "").strip()
+
+
 def _split_recommendation_item(text: str) -> dict:
     """Pisah 'Judul singkat: detail' jadi {title, detail} kalau polanya jelas (judul pendek,
     diawali huruf kapital, diakhiri titik dua) — kalau tidak, semua masuk ke detail saja."""
@@ -350,7 +361,12 @@ class OllamaClient:
         for opt_key in _OPTIONAL_KEYS:
             found_key = self._find_source_key(lookup, opt_key)
             value = search_data.get(found_key) if found_key is not None else None
-            normalized[opt_key] = value if isinstance(value, list) else []
+            value = value if isinstance(value, list) else []
+            if opt_key == "key_findings":
+                # Jaga-jaga di sumber juga (bukan cuma saat render) — model kadang mengisi
+                # key_findings dengan objek section {"id","title","content"} yang salah bentuk.
+                value = [coerce_finding_text(v) for v in value if coerce_finding_text(v)]
+            normalized[opt_key] = value
 
         return normalized
 

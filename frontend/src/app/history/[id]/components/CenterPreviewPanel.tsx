@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { t } from "@/utils/i18n";
-import { REPORT_SECTIONS } from "@/utils/reportSections";
 import ChartNarasiLayout from "@/app/generate/components/ChartNarasiLayout";
 import RichTextEditor from "@/app/generate/components/RichTextEditor";
 import FullscreenStudioModal from "@/app/generate/components/FullscreenStudioModal";
-
-const LAST_PAGE = REPORT_SECTIONS[REPORT_SECTIONS.length - 1].page;
+import ReportBlockRenderer from "@/components/ReportBlockRenderer";
+import { fetchReportBlocks } from "@/utils/reportBlocksApi";
+import type { ReportBlock } from "@/utils/reportTheme";
 
 interface ReportDetails {
   id: number;
@@ -65,14 +65,34 @@ export default function CenterPreviewPanel({
     setMounted(true);
   }, []);
 
+  // Blocks yang SAMA PERSIS dipakai backend untuk merender PDF/PPTX (build_report_blocks) —
+  // supaya tab Preview ini dijamin menampilkan section & angka yang sama dengan file yang
+  // benar-benar diunduh, bukan implementasi tampilan yang dikarang terpisah.
+  const [blocks, setBlocks] = useState<ReportBlock[]>([]);
+  const [blocksLoading, setBlocksLoading] = useState(true);
+  const [blocksError, setBlocksError] = useState("");
+
   useEffect(() => {
-    if (activePage && previewFormat === "pdf") {
-      const el = document.getElementById(`pdf-section-${activePage}`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    }
-  }, [activePage, previewFormat]);
+    if (!report?.id) return;
+    let cancelled = false;
+    setBlocksLoading(true);
+    setBlocksError("");
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    fetchReportBlocks(report.id, token)
+      .then((b) => {
+        if (!cancelled) setBlocks(b);
+      })
+      .catch((err) => {
+        if (!cancelled) setBlocksError(err.message || "Gagal memuat preview.");
+      })
+      .finally(() => {
+        if (!cancelled) setBlocksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [report?.id]);
 
   // Listener tombol Escape untuk melepaskan mode Fullscreen
   useEffect(() => {
@@ -85,7 +105,9 @@ export default function CenterPreviewPanel({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFullscreen]);
 
-  const chartCaptions: string[] = Array.isArray(report?.ai_summary?.chart_captions)
+  const chartCaptions: string[] = Array.isArray(
+    report?.ai_summary?.chart_captions,
+  )
     ? report.ai_summary.chart_captions
     : [];
 
@@ -174,339 +196,161 @@ export default function CenterPreviewPanel({
             transformOrigin: "top center",
           }}
         >
-        {/* PREVIEW TAB */}
-        {activeTab === "preview" && (
-          <div className="space-y-4">
-            {/* Format Preview Toggle (PDF / PPTX) */}
-            <div className="flex justify-center">
-              <div className="inline-flex p-1 bg-white rounded-xl border border-stone-200/80 shadow-sm gap-1">
-                <button
-                  onClick={() => setPreviewFormat("pdf")}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
-                    previewFormat === "pdf"
-                      ? "bg-petro-green text-white shadow-sm"
-                      : "text-stone-500 hover:text-stone-800"
-                  }`}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
-                  {tx("PDF Document View", "PDF Document View")}
-                </button>
-                <button
-                  onClick={() => setPreviewFormat("pptx")}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
-                    previewFormat === "pptx"
-                      ? "bg-petro-green text-white shadow-sm"
-                      : "text-stone-500 hover:text-stone-800"
-                  }`}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                  {tx("PPTX Slide View", "PPTX Slide View")}
-                </button>
-              </div>
-            </div>
-
-            {/* MODE 1: PDF DOCUMENT VIEW */}
-            {previewFormat === "pdf" && (
-              <div className="max-w-[540px] mx-auto bg-white border border-stone-300 rounded-lg shadow-lg p-6 min-h-[620px] text-left relative flex flex-col justify-between animate-fadeIn font-sans">
-                <div className="space-y-4">
-                  {/* Official PDF Document Header Kop */}
-                  <div className="border-b-3 border-[#004D25] pb-3 flex justify-between items-center">
-                    <div>
-                      <h3 className="text-base font-black text-[#004D25] tracking-tight m-0">
-                        PT PETROKIMIA GRESIK
-                      </h3>
-                      <p className="text-[9px] font-extrabold text-[#d9a700] uppercase tracking-wider mt-0.5">
-                        Sistem Otomasi Report Bulanan SOC Berbasis AI
-                      </p>
-                    </div>
-                    <img
-                      src="/LOGO_PETRO_DANANTARA.png"
-                      alt="Logo Petrokimia"
-                      className="h-10 w-auto object-contain"
-                    />
-                  </div>
-
-                  {/* Document Title */}
-                  <h2 className="text-lg font-black text-stone-900 leading-tight">
-                    {report.title || "SOC Executive Summary"}
-                  </h2>
-
-                  {/* Metadata Block Table */}
-                  <table className="w-full text-[10px] text-stone-600 border-collapse">
-                    <tbody>
-                      <tr>
-                        <td className="font-extrabold text-stone-400 uppercase w-28 py-0.5">Jenis Data:</td>
-                        <td className="font-extrabold text-stone-800 uppercase">{report.data_type || "FIREWALL"}</td>
-                      </tr>
-                      <tr>
-                        <td className="font-extrabold text-stone-400 uppercase py-0.5">Tanggal Cetak:</td>
-                        <td className="font-extrabold text-stone-800">{report.created_at ? new Date(report.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }) : "22 Juli 2026"}</td>
-                      </tr>
-                      <tr>
-                        <td className="font-extrabold text-stone-400 uppercase py-0.5">Berkas Sumber:</td>
-                        <td className="font-mono font-bold text-stone-700">{report.input_file_name || "-"}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  {/* Confidentiality Notice Alert Box */}
-                  <div className="bg-stone-50 border-l-4 border-[#d9a700] p-3 rounded-r-lg text-[9.5px] text-stone-600 leading-relaxed font-medium">
-                    <strong className="text-stone-900 font-bold block mb-0.5">Pemberitahuan Kerahasiaan siber:</strong>
-                    Dokumen ini berisi rekaman aktivitas operasional keamanan siber internal PT Petrokimia Gresik. Dilarang keras menyebarluaskan isi laporan ini di luar otoritas SOC.
-                  </div>
-
-                  {/* Section 1: Executive Summary */}
-                  <div id="pdf-section-01" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "01" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                    <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                      <span>1. Ringkasan Eksekutif (Executive Summary)</span>
-                      {activePage === "01" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                    </h4>
-                    <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                      {getPageText("01")}
-                    </p>
-                  </div>
-
-                  {/* Section 2: Visualisasi Data & Infografis Analitik */}
-                  <div id="pdf-section-02" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "02" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                    <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 mb-3 flex items-center justify-between">
-                      <span>2. Visualisasi Data & Infografis Analitik</span>
-                      {activePage === "02" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                    </h4>
-                    <ChartNarasiLayout reportId={report.id} chartCaptions={chartCaptions} tx={tx} />
-                  </div>
-
-                  {/* Section 3: Trend Analysis */}
-                  <div id="pdf-section-03" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "03" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                    <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                      <span>3. Analisis Tren Ancaman (Trend Analysis)</span>
-                      {activePage === "03" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                    </h4>
-                    <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                      {getPageText("03")}
-                    </p>
-                  </div>
-
-                  {/* Section 4: Severity Analysis */}
-                  <div id="pdf-section-04" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "04" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                    <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                      <span>4. Analisis Tingkat Keparahan (Severity Analysis)</span>
-                      {activePage === "04" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                    </h4>
-                    <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                      {getPageText("04")}
-                    </p>
-                  </div>
-
-                  {/* Section 5: Risk Assessment */}
-                  <div id="pdf-section-05" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "05" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                    <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                      <span>5. Penilaian Risiko (Risk Assessment)</span>
-                      {activePage === "05" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                    </h4>
-                    <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                      {getPageText("05")}
-                    </p>
-                  </div>
-
-                  {/* Section 6: Recommendations & Conclusion */}
-                  <div id="pdf-section-06" className={`p-4 rounded-xl transition-all duration-300 ${activePage === "06" ? "bg-emerald-50/80 border-2 border-petro-green shadow-sm ring-2 ring-emerald-200" : "border border-stone-150"}`}>
-                    <h4 className="text-xs font-black text-[#004D25] border-b border-stone-150 pb-1 flex items-center justify-between">
-                      <span>6. Kesimpulan & Rekomendasi</span>
-                      {activePage === "06" && <span className="text-[9px] bg-petro-green text-white px-2 py-0.5 rounded-full font-extrabold">Active Section</span>}
-                    </h4>
-                    <p className="text-[10px] text-stone-700 mt-2 font-medium leading-relaxed whitespace-pre-wrap">
-                      {getPageText("06")}
-                    </p>
-                  </div>
+          {/* PREVIEW TAB */}
+          {activeTab === "preview" && (
+            <div className="space-y-4">
+              {/* Format Preview Toggle (PDF / PPTX) */}
+              <div className="flex justify-center">
+                <div className="inline-flex p-1 bg-white rounded-xl border border-stone-200/80 shadow-sm gap-1">
+                  <button
+                    onClick={() => setPreviewFormat("pdf")}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
+                      previewFormat === "pdf"
+                        ? "bg-petro-green text-white shadow-sm"
+                        : "text-stone-500 hover:text-stone-800"
+                    }`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                    {tx("PDF Document View", "PDF Document View")}
+                  </button>
+                  <button
+                    onClick={() => setPreviewFormat("pptx")}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
+                      previewFormat === "pptx"
+                        ? "bg-petro-green text-white shadow-sm"
+                        : "text-stone-500 hover:text-stone-800"
+                    }`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                    {tx("PPTX Slide View", "PPTX Slide View")}
+                  </button>
                 </div>
+              </div>
 
-                {/* Footer Kop */}
-                <div className="flex justify-between items-center text-[8px] font-bold text-stone-400 border-t border-stone-100 pt-4 mt-6">
-                  <span>{tx("PT Petrokimia Gresik • SOC Security Reports", "PT Petrokimia Gresik • SOC Security Reports")}</span>
-                  <span>
-                    {tx("Page", "Page")} {activePage}
+              {/* Loading / error states — sama utk kedua mode */}
+              {blocksLoading && (
+                <div className="max-w-2xl mx-auto flex items-center justify-center gap-2 py-16 text-stone-400">
+                  <div className="w-4 h-4 border-2 border-stone-300 border-t-petro-green rounded-full animate-spin" />
+                  <span className="text-xs font-bold">
+                    {tx("Memuat preview...", "Memuat preview...")}
                   </span>
                 </div>
+              )}
+              {!blocksLoading && blocksError && (
+                <div className="max-w-2xl mx-auto bg-red-50 border border-red-200 text-red-700 text-xs font-medium p-4 rounded-xl">
+                  {blocksError}
+                </div>
+              )}
+
+              {/* MODE 1: PDF DOCUMENT VIEW — tumpukan halaman, isi PERSIS sama dgn build_report_blocks */}
+              {!blocksLoading && !blocksError && previewFormat === "pdf" && (
+                <div className="max-w-2xl mx-auto space-y-4">
+                  {blocks.map((block, i) => (
+                    <ReportBlockRenderer key={i} block={block} />
+                  ))}
+                </div>
+              )}
+
+              {/* MODE 2: PPTX SLIDE VIEW — tiap block jadi 1 "slide" 16:9, tumpukan bisa di-scroll */}
+              {!blocksLoading && !blocksError && previewFormat === "pptx" && (
+                <div className="max-w-2xl mx-auto space-y-6">
+                  {blocks.map((block, i) => (
+                    <div
+                      key={i}
+                      className="aspect-video rounded-2xl border-2 border-stone-300 shadow-xl overflow-y-auto"
+                    >
+                      <ReportBlockRenderer block={block} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* EDIT TEXT TAB */}
+          {activeTab === "edit" && (
+            <div className="w-full h-full flex flex-col justify-between text-left space-y-4">
+              <div className="flex-1 min-h-[300px] flex flex-col">
+                <label className="text-[11px] font-black text-stone-700 uppercase tracking-wider mb-2">
+                  {tx(
+                    "Modify Section Narrative AI",
+                    "Modify Section Narrative AI",
+                  )}{" "}
+                  ({tx(getPageTitle(activePage), getPageTitle(activePage))})
+                </label>
+                <RichTextEditor
+                  value={getPageText(activePage)}
+                  onChange={handleTextChange}
+                  tx={tx}
+                />
               </div>
-            )}
 
-            {/* MODE 2: PPTX SLIDE VIEW (16:9 Landscape Widescreen matching export_ppt.py 1-to-1) */}
-            {previewFormat === "pptx" && (
-              <div className="max-w-[540px] mx-auto border-2 border-stone-300 rounded-2xl shadow-xl bg-white aspect-[16/9] flex flex-col justify-between text-left relative animate-fadeIn overflow-hidden font-sans p-6">
-                {activePage === "01" ? (
-                  /* Slide 1: Cover Slide (Matching python-pptx cover 1-to-1) */
-                  <div className="h-full flex flex-col justify-between relative">
-                    {/* Top Green Accent Bar */}
-                    <div className="absolute -top-6 -left-6 -right-6 h-3 bg-[#004D25]"></div>
+              {/* Action buttons save edits */}
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={handleSaveEdits}
+                  disabled={isSaving}
+                  className="px-5 py-2.5 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-xs shadow-md transition-colors flex items-center gap-2 disabled:opacity-60 cursor-pointer"
+                >
+                  {isSaving ? (
+                    <>
+                      <svg
+                        className="animate-spin h-3.5 w-3.5 text-white"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        ></circle>
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        ></path>
+                      </svg>
+                      {tx("Saving...", "Saving...")}
+                    </>
+                  ) : (
+                    tx("Save Changes", "Save Changes")
+                  )}
+                </button>
 
-                    {/* Top Header Logo */}
-                    <div className="flex justify-between items-start pt-2">
-                      <div></div>
-                      <img
-                        src="/LOGO_PETRO_DANANTARA.png"
-                        alt="Logo Petrokimia"
-                        className="h-9 w-auto object-contain"
-                      />
-                    </div>
-
-                    {/* Cover Title Box */}
-                    <div className="my-auto space-y-2 pl-2">
-                      <h4 className="text-xs font-black text-[#004D25] tracking-wide uppercase">
-                        PT PETROKIMIA GRESIK
-                      </h4>
-                      <h2 className="text-xl font-black text-[#004D25] leading-tight">
-                        {report.title || "SOC Executive Summary"}
-                      </h2>
-                      <p className="text-[10.5px] font-black text-[#d9a700] pt-1">
-                        Sistem Otomasi Report SOC | Laporan {(report.data_type || "FIREWALL").toUpperCase()} | {report.created_at ? new Date(report.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }) : "22 Juli 2026"}
-                      </p>
-                    </div>
-
-                    {/* Cover Slide Footer */}
-                    <div className="flex justify-between items-center border-t border-stone-200 pt-2 text-[8px] font-bold text-stone-400">
-                      <span>PT Petrokimia Gresik • SOC Operations</span>
-                      <span className="font-extrabold text-stone-700">Slide 01 of {LAST_PAGE}</span>
-                    </div>
-                  </div>
-                ) : activePage === "02" ? (
-                  /* Slide 2: Visualisasi Chart + Narasi AI Slide */
-                  <div className="h-full flex flex-col justify-between relative overflow-y-auto">
-                    <div>
-                      <div className="flex justify-between items-start border-b border-stone-150 pb-2 mb-2">
-                        <div>
-                          <h3 className="text-sm font-black text-[#004D25] m-0">
-                            Visualisasi Data & Infografis Analitik
-                          </h3>
-                          <div className="w-12 h-1 bg-[#d9a700] rounded mt-1"></div>
-                        </div>
-                        <img
-                          src="/LOGO_PETRO_DANANTARA.png"
-                          alt="Logo Petrokimia"
-                          className="h-6 w-auto object-contain"
-                        />
-                      </div>
-                      <ChartNarasiLayout reportId={report.id} chartCaptions={chartCaptions} tx={tx} />
-                    </div>
-                    <div className="flex justify-between items-center border-t border-stone-200 pt-2 mt-2 text-[8px] font-bold text-stone-400">
-                      <span>PT Petrokimia Gresik • SOC Operations</span>
-                      <span className="font-extrabold text-stone-700">Slide {activePage} of {LAST_PAGE}</span>
-                    </div>
-                  </div>
-                ) : (
-                  /* Content Slide Layout (Slide 3+: Executive Summary, Trend, Severity, Risk, Recommendations) */
-                  <div className="h-full flex flex-col justify-between relative">
-                    {/* Slide Header */}
-                    <div className="flex justify-between items-start border-b border-stone-150 pb-2">
-                      <div>
-                        <h3 className="text-sm font-black text-[#004D25] m-0">
-                          {getPageTitle(activePage)}
-                        </h3>
-                        <div className="w-12 h-1 bg-[#d9a700] rounded mt-1"></div>
-                      </div>
-                      <img
-                        src="/LOGO_PETRO_DANANTARA.png"
-                        alt="Logo Petrokimia"
-                        className="h-6 w-auto object-contain"
-                      />
-                    </div>
-
-                    {/* Content Box with Left Accent Bar */}
-                    <div className="my-auto flex items-stretch gap-3 pl-1 pr-2 py-2 flex-1 overflow-y-auto">
-                      <div className="w-1 bg-[#004D25] rounded shrink-0"></div>
-                      <p className="text-[10.5px] text-stone-700 font-medium leading-relaxed whitespace-pre-wrap">
-                        {getPageText(activePage)}
-                      </p>
-                    </div>
-
-                    {/* Content Slide Footer */}
-                    <div className="flex justify-between items-center border-t border-stone-200 pt-2 text-[8px] font-bold text-stone-400">
-                      <span>PT Petrokimia Gresik • SOC Operations</span>
-                      <span className="font-extrabold text-stone-700">Slide {activePage} of {LAST_PAGE}</span>
-                    </div>
-                  </div>
+                {saveSuccess && (
+                  <span className="text-xs text-emerald-600 font-extrabold flex items-center gap-1 animate-fade-in">
+                    ✓ {tx("Saved Successfully!", "Saved Successfully!")}
+                  </span>
                 )}
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
 
-        {/* EDIT TEXT TAB */}
-        {activeTab === "edit" && (
-          <div className="w-full h-full flex flex-col justify-between text-left space-y-4">
-            <div className="flex-1 min-h-[300px] flex flex-col">
-              <label className="text-[11px] font-black text-stone-700 uppercase tracking-wider mb-2">
-                {tx(
-                  "Modify Section Narrative AI",
-                  "Modify Section Narrative AI",
-                )}{" "}
-                ({tx(getPageTitle(activePage), getPageTitle(activePage))})
-              </label>
-              <RichTextEditor
-                value={getPageText(activePage)}
-                onChange={handleTextChange}
+          {/* CHARTS TAB */}
+          {activeTab === "charts" && (
+            <div className="w-full text-left space-y-4">
+              <div className="flex items-center justify-between">
+                <h5 className="font-extrabold text-stone-855 text-xs uppercase tracking-wide">
+                  {tx(
+                    "Chart Visualization & Insight Narasi",
+                    "Chart Visualization & Insight Narasi",
+                  )}
+                </h5>
+                <span className="text-[10px] bg-amber-50 text-amber-700 px-2.5 py-0.5 rounded-full font-bold border border-amber-200">
+                  💡 AI Chart Captions
+                </span>
+              </div>
+              <ChartNarasiLayout
+                reportId={report.id}
+                chartCaptions={chartCaptions}
                 tx={tx}
               />
             </div>
-
-            {/* Action buttons save edits */}
-            <div className="flex items-center gap-4">
-              <button
-                onClick={handleSaveEdits}
-                disabled={isSaving}
-                className="px-5 py-2.5 rounded-xl bg-petro-green hover:bg-petro-green-hover text-white font-extrabold text-xs shadow-md transition-colors flex items-center gap-2 disabled:opacity-60 cursor-pointer"
-              >
-                {isSaving ? (
-                  <>
-                    <svg
-                      className="animate-spin h-3.5 w-3.5 text-white"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                    {tx("Saving...", "Saving...")}
-                  </>
-                ) : (
-                  tx("Save Changes", "Save Changes")
-                )}
-              </button>
-
-              {saveSuccess && (
-                <span className="text-xs text-emerald-600 font-extrabold flex items-center gap-1 animate-fade-in">
-                  ✓ {tx("Saved Successfully!", "Saved Successfully!")}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* CHARTS TAB */}
-        {activeTab === "charts" && (
-          <div className="w-full text-left space-y-4">
-            <div className="flex items-center justify-between">
-              <h5 className="font-extrabold text-stone-855 text-xs uppercase tracking-wide">
-                {tx("Chart Visualization & Insight Narasi", "Chart Visualization & Insight Narasi")}
-              </h5>
-              <span className="text-[10px] bg-amber-50 text-amber-700 px-2.5 py-0.5 rounded-full font-bold border border-amber-200">
-                💡 AI Chart Captions
-              </span>
-            </div>
-            <ChartNarasiLayout reportId={report.id} chartCaptions={chartCaptions} tx={tx} />
-          </div>
-        )}
+          )}
         </div>
       </div>
 
@@ -514,8 +358,8 @@ export default function CenterPreviewPanel({
       <FullscreenStudioModal
         isOpen={isFullscreen}
         onClose={() => setIsFullscreen(false)}
-        reportTitle={report?.title || "SOC Executive Summary"}
-        dataType={report?.data_type || "DATA"}
+        reportTitle={report?.title || tx("Untitled report", "Untitled report")}
+        dataType={report?.data_type || tx("Unknown", "Unknown")}
         activePage={activePage}
         setActivePage={setActivePage}
         activeTab={activeTab}

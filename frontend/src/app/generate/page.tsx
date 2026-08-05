@@ -15,12 +15,13 @@ import {
 } from "@/utils/reportSections";
 import Step0Overview from "./components/Step0Overview";
 import Step1Upload from "./components/Step1Upload";
-import Step2Settings, { type DynamicSectionItem } from "./components/Step2Settings";
+import Step2Settings, {
+  type DynamicSectionItem,
+} from "./components/Step2Settings";
 import Step3AIProcessing from "./components/Step3AIProcessing";
 
 import Step4PreviewEdit from "./components/Step4PreviewEdit";
 import Step5Export from "./components/Step5Export";
-import TitlePromptModal from "./components/TitlePromptModal";
 
 interface UploadedFile {
   name: string;
@@ -63,14 +64,12 @@ export default function GenerateReportPage() {
   const [rawFiles, setRawFiles] = useState<File[]>([]);
 
   // Form States (Step 2)
-  const [title, setTitle] = useState("SOC Executive Summary - July 2026");
+  const [title, setTitle] = useState("");
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [periodAutoDetected, setPeriodAutoDetected] = useState(false);
   const [periodDetecting, setPeriodDetecting] = useState(false);
-  const [templateType, setTemplateType] = useState(
-    "SOC Executive Summary (Monthly)",
-  );
+  const [templateType, setTemplateType] = useState("");
   const [outputFormat, setOutputFormat] = useState("PDF");
   const [language, setLanguage] = useState("English");
   const [includeAI, setIncludeAI] = useState(true);
@@ -90,10 +89,9 @@ export default function GenerateReportPage() {
         if (token) {
           headers["Authorization"] = `Bearer ${token}`;
         }
-        const res = await fetch(
-          `${API_BASE_URL}/api/v1/settings/profile`,
-          { headers },
-        );
+        const res = await fetch(`${API_BASE_URL}/api/v1/settings/profile`, {
+          headers,
+        });
         if (res.ok) {
           const profile = await res.json();
           if (profile.language) {
@@ -116,7 +114,9 @@ export default function GenerateReportPage() {
   );
   const [themeColor, setThemeColor] = useState("green");
   const [domainType, setDomainType] = useState("general");
-  const [dynamicSections, setDynamicSections] = useState<DynamicSectionItem[]>([]);
+  const [dynamicSections, setDynamicSections] = useState<DynamicSectionItem[]>(
+    [],
+  );
   const [sectionsLoading, setSectionsLoading] = useState(false);
 
   const [tone, setTone] = useState("Professional");
@@ -128,7 +128,6 @@ export default function GenerateReportPage() {
     pdf: false,
     pptx: false,
   });
-
 
   // Stepper Status (Step 3)
   const [aiStatus, setAiStatus] = useState<
@@ -156,7 +155,9 @@ export default function GenerateReportPage() {
   // menghitung kecepatan generate token asli dan sisa waktu yang genuinely bereaksi terhadapnya
   // — mirip ETA download yang dihitung dari bytes/detik yang benar-benar terukur, bukan animasi.
   const [tokensGenerated, setTokensGenerated] = useState<number | null>(null);
-  const [expectedTotalTokens, setExpectedTotalTokens] = useState<number | null>(null);
+  const [expectedTotalTokens, setExpectedTotalTokens] = useState<number | null>(
+    null,
+  );
 
   // Report details state (Step 4 & 5)
   const [reportDetails, setReportDetails] = useState<any>(null);
@@ -255,14 +256,11 @@ export default function GenerateReportPage() {
       const fd = new FormData();
       fd.append("file", file);
 
-      const res = await fetch(
-        `${API_BASE_URL}/api/v1/upload/detect-period`,
-        {
-          method: "POST",
-          headers: authHeaders,
-          body: fd,
-        },
-      );
+      const res = await fetch(`${API_BASE_URL}/api/v1/upload/detect-period`, {
+        method: "POST",
+        headers: authHeaders,
+        body: fd,
+      });
 
       if (res.ok) {
         const data = await res.json();
@@ -278,7 +276,6 @@ export default function GenerateReportPage() {
           setDynamicSections(data.suggested_sections);
         }
       }
-
     } catch (err) {
       // Deteksi gagal itu bukan error fatal — user tetap bisa isi periode manual di Step 2.
       console.warn("[PERIOD DETECT] Gagal mendeteksi periode otomatis:", err);
@@ -404,13 +401,19 @@ export default function GenerateReportPage() {
     }
 
     setProcessingStep("fetching");
-    const detailRes = await fetch(`${API_BASE_URL}/api/v1/history/${generatedId}`, {
-      headers: authHeaders,
-    });
+    const detailRes = await fetch(
+      `${API_BASE_URL}/api/v1/history/${generatedId}`,
+      {
+        headers: authHeaders,
+      },
+    );
     if (detailRes.ok) {
       const details = await detailRes.json();
       setReportDetails(details);
       setEditedSummary(details.ai_summary || {});
+      if (!title && details.title) {
+        setTitle(details.title);
+      }
     }
     setProcessingStep("done");
     setAiStatus("completed");
@@ -432,14 +435,20 @@ export default function GenerateReportPage() {
     if (token) authHeaders["Authorization"] = `Bearer ${token}`;
 
     try {
-      const statusRes = await fetch(`${API_BASE_URL}/api/v1/history/${reportId}`, {
-        headers: authHeaders,
-      });
+      const statusRes = await fetch(
+        `${API_BASE_URL}/api/v1/history/${reportId}`,
+        {
+          headers: authHeaders,
+        },
+      );
       if (statusRes.ok) {
         const details = await statusRes.json();
         if (details.status === "analyzed") {
           setReportDetails(details);
           setEditedSummary(details.ai_summary || {});
+          if (!title && details.title) {
+            setTitle(details.title);
+          }
           setProcessingStep("done");
           setAiStatus("completed");
           setLoading(false);
@@ -480,7 +489,7 @@ export default function GenerateReportPage() {
   const handleStartGeneration = async () => {
     if (!periodStart || !periodEnd) {
       setErrorMsg(
-        "Periode laporan belum terisi. Silakan isi Report Period secara manual di Step 2."
+        "Periode laporan belum terisi. Silakan isi Report Period secara manual di Step 2.",
       );
       return;
     }
@@ -570,7 +579,6 @@ export default function GenerateReportPage() {
       } else {
         formData.append("included_sections", JSON.stringify(sections));
       }
-
 
       // Step1Upload menonaktifkan tombol Next selama belum ada file, jadi ini seharusnya
       // tidak pernah kejadian lewat alur normal — tapi kalau sampai kejadian (state gak
@@ -662,28 +670,33 @@ export default function GenerateReportPage() {
     setCurrentStep(4);
   };
 
-  const [showTitlePrompt, setShowTitlePrompt] = useState(false);
-
-  const handleConfirmTitle = async (newTitle: string) => {
+  // Rename inline (pensil di judul, Step 4) — murni simpan nama, tidak memindah step apa pun.
+  const handleRenameTitle = async (newTitle: string) => {
+    const prevTitle = title;
     setTitle(newTitle);
-    setShowTitlePrompt(false);
-    if (reportId) {
-      try {
-        const token = localStorage.getItem("token");
-        const authHeaders: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (token) authHeaders["Authorization"] = `Bearer ${token}`;
-        await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
-          method: "PUT",
-          headers: authHeaders,
-          body: JSON.stringify({ title: newTitle }),
-        });
-      } catch (e) {
-        console.error(e);
-      }
+    setReportDetails((prev: any) =>
+      prev ? { ...prev, title: newTitle } : prev,
+    );
+    if (!reportId) return;
+    try {
+      const token = localStorage.getItem("token");
+      const authHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+      const res = await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({ title: newTitle }),
+      });
+      if (!res.ok) throw new Error("Gagal menyimpan nama laporan.");
+    } catch (e) {
+      console.error(e);
+      setTitle(prevTitle);
+      setReportDetails((prev: any) =>
+        prev ? { ...prev, title: prevTitle } : prev,
+      );
     }
-    handleNextStep();
   };
 
   const handleSaveEdits = async () => {
@@ -699,16 +712,13 @@ export default function GenerateReportPage() {
         authHeaders["Authorization"] = `Bearer ${token}`;
       }
 
-      const res = await fetch(
-        `${API_BASE_URL}/api/v1/analysis/${reportId}`,
-        {
-          method: "PUT",
-          headers: authHeaders,
-          body: JSON.stringify({
-            ai_summary: editedSummary,
-          }),
-        },
-      );
+      const res = await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({
+          ai_summary: editedSummary,
+        }),
+      });
       if (res.ok) {
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2000);
@@ -1004,7 +1014,6 @@ export default function GenerateReportPage() {
               onBack={handleBackStep}
               tx={tx}
             />
-
           )}
 
           {/* STEP 3: AI PROCESSING */}
@@ -1039,6 +1048,7 @@ export default function GenerateReportPage() {
               periodStart={periodStart}
               periodEnd={periodEnd}
               reportDetails={reportDetails}
+              reportTitle={title}
               editedSummary={editedSummary}
               chartCaptions={chartCaptions}
               headerTitle={headerTitle}
@@ -1049,19 +1059,11 @@ export default function GenerateReportPage() {
               handleTextChange={handleTextChange}
               handleSaveEdits={handleSaveEdits}
               onBack={handleBackStep}
-              onNext={() => setShowTitlePrompt(true)}
+              onNext={handleNextStep}
+              onRenameTitle={handleRenameTitle}
               tx={tx}
             />
-
           )}
-
-          <TitlePromptModal
-            isOpen={showTitlePrompt}
-            initialTitle={title}
-            onConfirm={handleConfirmTitle}
-            onClose={() => setShowTitlePrompt(false)}
-            tx={tx}
-          />
 
           {/* STEP 5: EXPORT */}
           {currentStep === 5 && (
@@ -1077,6 +1079,29 @@ export default function GenerateReportPage() {
                 setAiStatus("pending");
                 setProcessingStep("idle");
                 setProcessingStartedAt(null);
+                setFiles([]);
+                setRawFiles([]);
+                setPeriodStart("");
+                setPeriodEnd("");
+                setPeriodAutoDetected(false);
+                setTemplateType("");
+                setLanguage("English");
+                setIncludeAI(true);
+                setIncludeRaw(true);
+                setDynamicSections([]);
+                setSectionsLoading(false);
+                setHeaderTitle("PT PETROKIMIA GRESIK");
+                setHeaderSubtitle(
+                  "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
+                );
+                setThemeColor("green");
+                setDomainType("general");
+                setTone("Professional");
+                setDefaultLevel("Standard");
+                setSections(
+                  Object.fromEntries(REPORT_SECTIONS.map((s) => [s.key, true])),
+                );
+                setExportFormats({ pdf: false, pptx: false });
               }}
               tx={tx}
             />

@@ -19,6 +19,24 @@ from app.utils.sanitizer import sanitize_for_json
 
 router = APIRouter()
 
+_MONTH_NAMES_EN = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
+
+
+def _default_report_title(template_type: Optional[str]) -> str:
+    """
+    Judul template dipakai saat pengguna belum mengisi nama laporan sendiri — supaya laporan
+    tidak pernah tersimpan dengan judul kosong. Formatnya "{Jenis Template} - {Bulan Tahun}",
+    mis. "SOC Executive Summary - July 2026", bisa diganti pengguna kapan saja lewat halaman
+    Preview & Edit atau History.
+    """
+    base = (template_type or "Laporan Analisis").split(" (")[0].strip()
+    now = datetime.now()
+    return f"{base} - {_MONTH_NAMES_EN[now.month - 1]} {now.year}"
+
+
 def count_threats(parsed_data: list) -> dict:
     """
     Menghitung jumlah insiden keamanan berdasarkan level keparahan (severity) dari data log.
@@ -140,6 +158,12 @@ def upload_security_file(
     dengan konfigurasi awal (status Draft/Uploaded) untuk siap diproses di Step 3 oleh AI.
     """
     try:
+        # Judul belum tentu diisi pengguna di form upload — pakai nama template otomatis
+        # supaya tidak pernah tersimpan kosong (bisa diganti belakangan di Preview & Edit/History).
+        title = title.strip() if title else ""
+        if not title:
+            title = _default_report_title(template_type)
+
         # Konversi tanggal periode log dengan validasi string kosong (Next.js Form safe)
         p_start = None
         p_end = None

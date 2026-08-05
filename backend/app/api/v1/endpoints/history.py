@@ -15,6 +15,7 @@ from app.models.report import Report
 from app.services.export_pdf import PDFExporter
 from app.services.export_ppt import PPTXExporter
 from app.services.chart_generator import ChartGenerator
+from app.services.report_render_logic import build_report_blocks
 
 from datetime import datetime, date
 
@@ -110,6 +111,31 @@ def read_report_detail(
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
     return db_report
+
+@router.get("/{report_id}/preview")
+def get_report_preview_blocks(
+    report_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Mengembalikan struktur "block" (bagian, judul, angka, isi) yang SAMA PERSIS dipakai
+    export_pdf.py/export_ppt.py untuk merender PDF/PPTX — dipakai tab Preview di frontend
+    supaya tampilannya dijamin konsisten dengan file yang benar-benar diunduh, bukan
+    implementasi tampilan terpisah yang bisa diam-diam beda.
+    """
+    db_report = get_owned_report(db, report_id, current_user.id)
+    if not db_report:
+        raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
+
+    if not db_report.ai_summary:
+        raise HTTPException(
+            status_code=400,
+            detail="Laporan belum dianalisis oleh AI. Silakan jalankan analisis terlebih dahulu sebelum melihat preview."
+        )
+
+    blocks = build_report_blocks(db_report)
+    return {"blocks": blocks}
 
 @router.delete("/{report_id}")
 def remove_report(

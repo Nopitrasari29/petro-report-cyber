@@ -1,5 +1,5 @@
-// Nama file download dari judul laporan (bukan "soc_report_{id}" generik) + dialog "Save As"
-// bawaan OS lewat File System Access API, dipakai bersama oleh history/page.tsx dan
+// Nama file download dari judul laporan (bukan "soc_report_{id}" generik, dan bisa diganti
+// user kapan saja lewat pensil di judul) — dipakai bersama oleh history/page.tsx dan
 // history/[id]/page.tsx supaya logikanya tidak terduplikasi di 2 tempat.
 
 export function sanitizeFilename(title: string | undefined | null, fallback: string): string {
@@ -12,46 +12,14 @@ export function sanitizeFilename(title: string | undefined | null, fallback: str
   return name || fallback;
 }
 
-interface SaveOptions {
-  description: string;
-  mimeType: string;
-  extension: string;
-}
-
 /**
- * Coba dialog "Save As" bawaan OS via File System Access API (Chrome/Edge, secure context) —
- * user bisa ganti nama & folder di situ. Firefox/Safari (tidak dukung API ini) atau error
- * selain user membatalkan -> fallback ke metode <a download> lama. AbortError (user klik
- * Cancel di dialog) -> berhenti diam-diam, TIDAK error, TIDAK memaksa fallback download —
- * kalau user Cancel, mereka memang tidak ingin filenya tersimpan.
+ * Langsung download ke folder Downloads browser (tanpa dialog "Save As" apa pun) memakai
+ * nama file yang sudah disiapkan (`suggestedName`, dari judul laporan).
  */
 export async function downloadBlobAsFile(
   blob: Blob,
   suggestedName: string,
-  options: SaveOptions,
 ): Promise<void> {
-  const picker = (window as any).showSaveFilePicker;
-  if (typeof picker === "function") {
-    try {
-      const handle = await picker({
-        suggestedName,
-        types: [
-          {
-            description: options.description,
-            accept: { [options.mimeType]: [`.${options.extension}`] },
-          },
-        ],
-      });
-      const writable = await handle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-      return;
-    } catch (err: any) {
-      if (err?.name === "AbortError") return;
-      // lanjut ke fallback di bawah utk error lain (mis. permission ditolak)
-    }
-  }
-
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
