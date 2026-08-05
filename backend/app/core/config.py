@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     # App
     APP_NAME: str = "AI Security Analysis & Reporting Platform"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # Database — default SQLite untuk dev lokal, ganti ke Postgres lewat .env
     DATABASE_URL: str = "sqlite:///./sql_app.db"
@@ -50,7 +50,8 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 100
 
     # Ambang waktu proses analisis AI (detik) yang dianggap "SLA met" di dashboard/riwayat.
-    SLA_THRESHOLD_SECONDS: int = 25
+    # Disesuaikan ke 300s (5 menit) agar realistis dengan waktu generasi LLM lokal.
+    SLA_THRESHOLD_SECONDS: int = 300
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""

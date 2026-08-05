@@ -55,35 +55,54 @@ _LEADING_INTRO_RE = re.compile(r"^\s*(?:berikut(?:\s+ini)?(?:\s+adalah)?|adapun)
 
 _DASH_RE = re.compile(r"\s*[—–]\s*")
 _DOUBLE_PUNCT_RE = re.compile(r"([.,;])\s*\1+")
-# Frasa filler khas AI, dibuang di AWAL kalimat/paragraf — best-effort, tidak menangkap
-# semua variasi yang mungkin ("Perbaikan Rombak Total" brief, poin 2: buang frasa filler).
+# Frasa filler khas AI, dibuang di AWAL kalimat/paragraf
 _FILLER_PATTERNS = [
-    re.compile(r"^Secara keseluruhan,\s*", re.IGNORECASE),
+    re.compile(r"^Berdasarkan analisis di atas,\s*", re.IGNORECASE),
+    re.compile(r"^Berdasarkan data yang ada,\s*", re.IGNORECASE),
+    re.compile(r"^Sebagaimana telah disebutkan,\s*", re.IGNORECASE),
+    re.compile(r"^Mengacu pada data tersebut,\s*", re.IGNORECASE),
     re.compile(r"^Penting untuk dicatat bahwa\s*", re.IGNORECASE),
+    re.compile(r"^Dapat disimpulkan bahwa\s*", re.IGNORECASE),
+    re.compile(r"^Hal ini menunjukkan bahwa\s*", re.IGNORECASE),
     re.compile(r"^Perlu diketahui bahwa\s*", re.IGNORECASE),
+    re.compile(r"^Perlu diperhatikan bahwa\s*", re.IGNORECASE),
     re.compile(r"^Perlu dicatat bahwa\s*", re.IGNORECASE),
     re.compile(r"^Perlu diingat bahwa\s*", re.IGNORECASE),
-    re.compile(r"^Dalam rangka\s+", re.IGNORECASE),
+    re.compile(r"^Secara keseluruhan,\s*", re.IGNORECASE),
     re.compile(r"^Sebagai catatan,\s*", re.IGNORECASE),
+    re.compile(r"^Dalam rangka\s+", re.IGNORECASE),
+    re.compile(r"^Dengan demikian,\s*", re.IGNORECASE),
+    re.compile(r"^Secara umum,\s*", re.IGNORECASE),
+    re.compile(r"^Pada dasarnya,\s*", re.IGNORECASE),
 ]
 
 
 def sanitize_text(text) -> str:
     """
-    Bersihkan teks narasi AI sebelum dirender ke laporan (dipakai export_ppt.py &
-    export_pdf.py): buang em dash "—"/en dash "–" (diganti ". ", berfungsi sebagai jeda
-    kalimat baru), buang frasa filler khas AI di awal kalimat, rapikan tanda baca ganda
-    hasil penggantian. Aman dipanggil dengan None/string kosong.
+    Bersihkan teks narasi AI sebelum dirender ke laporan: buang em dash/en dash,
+    buang frasa filler khas AI di AWAL SETIAP KALIMAT (bukan hanya kalimat pertama),
+    dan rapikan tanda baca ganda.
     """
     if not text:
         return ""
-    result = _DASH_RE.sub(". ", str(text).strip())
-    for pattern in _FILLER_PATTERNS:
-        result = pattern.sub("", result)
+    
+    raw = _DASH_RE.sub(". ", str(text).strip())
+    
+    # RCA-03: Pecah per kalimat agar filler di tengah paragraf juga terbuang
+    sentences = re.split(r"(?<=[.!?])\s+", raw)
+    cleaned_sentences = []
+    for s in sentences:
+        s_clean = s.strip()
+        for pattern in _FILLER_PATTERNS:
+            s_clean = pattern.sub("", s_clean)
+        if s_clean:
+            if s_clean[0].islower():
+                s_clean = s_clean[0].upper() + s_clean[1:]
+            cleaned_sentences.append(s_clean)
+
+    result = " ".join(cleaned_sentences)
     result = _DOUBLE_PUNCT_RE.sub(r"\1", result)
     result = re.sub(r"\s{2,}", " ", result).strip()
-    if result and result[0].islower():
-        result = result[0].upper() + result[1:]
     return result
 
 
@@ -540,16 +559,16 @@ class OllamaClient:
 
         if not self.is_available():
             return {
-                "executive_summary": "Gagal merumuskan ringkasan otomatis karena service Ollama tidak aktif.",
-                "trend_analysis": "Ollama offline. Silakan pastikan aplikasi Ollama berjalan di server atau local VM Anda.",
-                "severity_analysis": "Pengecekan koneksi ke host Ollama gagal.",
-                "risk_assessment": "Penilaian risiko terhenti.",
+                "executive_summary": "Gagal merumuskan ringkasan otomatis karena layanan AI Ollama sedang tidak aktif.",
+                "trend_analysis": "Layanan Ollama offline. Pastikan aplikasi Ollama berjalan di server atau lingkungan lokal Anda.",
+                "severity_analysis": "Pengecekan koneksi ke host Ollama tidak berhasil.",
+                "risk_assessment": "Penilaian risiko dan analisis data terhenti sementara.",
                 "recommendations": [
-                    "Buka aplikasi Ollama di server/komputer Anda.",
-                    "Pastikan port default 11434 aktif.",
-                    "Jalankan command 'ollama pull qwen3:8b' jika model belum diunduh."
+                    "Buka dan jalankan aplikasi Ollama di server/komputer Anda.",
+                    "Pastikan port default 11434 aktif dan dapat diakses.",
+                    "Jalankan perintah 'ollama pull qwen3:8b' bila model belum terunduh."
                 ],
-                "conclusion": "Ollama service connection failed."
+                "conclusion": "Koneksi ke layanan AI Ollama gagal."
             }
 
         # Precompute statistik & schema dari SELURUH data (bukan sampel) via pandas — deterministik,
@@ -586,7 +605,14 @@ class OllamaClient:
                 prompt, system_prompt=SYSTEM_PROMPT, json_mode=True, on_progress=on_progress
             )
             print(f"[OLLAMA RAW]\n{raw_response[:2000]}")
-            return self._extract_json_robust(raw_response)
+            result_json = self._extract_json_robust(raw_response)
+            
+            # Fallback jika chart_captions kosong
+            if not result_json.get("chart_captions"):
+                from app.services.ai_engine.data_profiler import build_chart_captions_from_stats
+                result_json["chart_captions"] = build_chart_captions_from_stats(stats, domain_type or "general")
+                
+            return result_json
         except Exception as e:
             preview = raw_response[:300] if raw_response else "Tidak ada respon"
             return {

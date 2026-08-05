@@ -221,8 +221,12 @@ def format_statistics_as_text(stats: Dict[str, Any]) -> str:
 
     sev = stats.get("severity_distribution")
     if sev:
-        sev_str = ", ".join(f"{k}: {v}" for k, v in sev.items())
-        lines.append(f"Distribusi severity: {sev_str}")
+        sev_total = sum(sev.values())
+        if sev_total > 0:
+            sev_str = ", ".join(f"{k}: {v} ({round(v/sev_total*100, 1)}%)" for k, v in sev.items() if v > 0)
+        else:
+            sev_str = ", ".join(f"{k}: {v}" for k, v in sev.items())
+        lines.append(f"Distribusi severity/kategori: {sev_str}")
 
     for label, items in (stats.get("top_categories") or {}).items():
         if not items:
@@ -328,3 +332,62 @@ def build_metrics_table_from_stats(stats: Dict[str, Any]) -> List[Dict[str, str]
         items.append({"label": f"Rata-rata {col_name}", "value": str(s.get("mean", "-")), "percentage": ""})
 
     return items[:4]
+
+
+def build_chart_captions_from_stats(stats: Dict[str, Any], domain_type: str = "general") -> List[str]:
+    """
+    Fallback otomatis untuk chart_captions jika AI tidak menghasilkan narasi grafik.
+    Membuat caption bermakna berbasis data statistik terhitung.
+    """
+    captions = []
+    total = stats.get("total_records", 0)
+
+    # Caption 1: Tren waktu / total record
+    tp = stats.get("time_pattern") or {}
+    if "peak_hour" in tp:
+        captions.append(
+            f"Aktivitas atau transaksi tertinggi terjadi pada jam {tp['peak_hour']}:00 dengan total {total} rekaman data. "
+            f"Hal ini menunjukkan jam sibuk operasional yang memerlukan pengawasan kapasitas lebih intensif."
+        )
+    elif "peak_day_of_week" in tp:
+        captions.append(
+            f"Puncak aktivitas terdeteksi pada hari {tp['peak_day_of_week']}. "
+            f"Pola ini memberikan panduan alokasi sumber daya operasional yang lebih terukur."
+        )
+    else:
+        captions.append(
+            f"Total {total} data berhasil dianalisis pada periode ini. "
+            f"Distribusi data menunjukkan stabilitas operasional tanpa lonjakan ekstrem."
+        )
+
+    # Caption 2: Severity / Kategori distribusi
+    sev = stats.get("severity_distribution") or {}
+    crit_high = sev.get("critical", 0) + sev.get("high", 0)
+    sev_total = sum(sev.values())
+    if sev_total > 0 and crit_high > 0:
+        pct = round(crit_high / sev_total * 100, 1)
+        captions.append(
+            f"Kategori prioritas tinggi/kritis mencakup {crit_high} dari {sev_total} kejadian ({pct}%). "
+            f"Tingginya proporsi ini memerlukan tindakan mitigasi prioritas untuk menjaga keandalan sistem."
+        )
+    else:
+        top_cats = stats.get("top_categories") or {}
+        if top_cats:
+            first_key, items = next(iter(top_cats.items()))
+            if items:
+                top_item = items[0]
+                captions.append(
+                    f"Kategori '{top_item['value']}' mendominasi dengan {top_item['count']} entri. "
+                    f"Dominasi ini menandakan fokus perhatian utama untuk evaluasi kebijakan operasional."
+                )
+
+    # Caption 3: Numeric summary / Kategori sekunder
+    numeric = stats.get("numeric_summary") or {}
+    if numeric:
+        col_name, s = next(iter(numeric.items()))
+        captions.append(
+            f"Nilai rata-rata pada indikator '{col_name}' tercatat sebesar {s.get('mean', 0)} (kisaran {s.get('min', 0)} - {s.get('max', 0)}). "
+            f"Variasi ini mencerminkan fluktuasi kinerja yang perlu dipantau secara berkala."
+        )
+
+    return captions

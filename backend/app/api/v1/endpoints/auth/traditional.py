@@ -23,7 +23,10 @@ RED = "\033[91m"  # Red
 async def register(user_in: UserCreate, db: Session = Depends(get_db)):
     """
     Mendaftarkan user baru ke database dan memicu pengiriman email verifikasi.
+    Dibatasi 3 percobaan per 5 menit per email untuk mencegah penyalahgunaan.
     """
+    rate_limiter.check(key=f"register:{user_in.email.lower()}", max_attempts=3, window_seconds=300)
+
     print(f"\n[AUTH] 🔵 {C}Mencoba registrasi manual:{R} {user_in.email}")
     db_email = get_user_by_email(db, email=user_in.email)
     if db_email:

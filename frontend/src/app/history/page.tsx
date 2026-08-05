@@ -83,12 +83,13 @@ export default function ReportHistoryPage() {
       // Fix #10: Server-side filtering — kirim parameter ke backend, bukan filter semua di client
       // Backend sudah mendukung ?search=&status=&skip=&limit= secara native
       const params = new URLSearchParams();
-      params.set("limit", "500"); // Ambil semua untuk stats cards, pagination dilakukan di client
+      params.set("limit", "100"); // Dynamic page load limit
       if (searchQuery) params.set("search", searchQuery);
       if (statusFilter && statusFilter !== "All Statuses") {
-        // Map UI label ke backend status value
+        // Map UI label ke backend status value (RCA-22: Konsistensi label Approved/Completed)
         const statusMap: Record<string, string> = {
           Completed: "analyzed",
+          Approved: "analyzed",
           "In Review": "processing",
           Draft: "draft",
           Failed: "failed",

@@ -41,6 +41,22 @@ async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
         print(f"{G}[DB]{R} Database tables created or validated.")
+        
+        # RCA-24: Bersihkan status 'processing' yang terhenti akibat restart server
+        from app.db.session import SessionLocal
+        from app.models.report import Report
+        db = SessionLocal()
+        try:
+            stuck_reports = db.query(Report).filter(Report.status == "processing").all()
+            if stuck_reports:
+                for r in stuck_reports:
+                    r.status = "failed"
+                db.commit()
+                print(f"{Y}[RECOVERY]{R} {len(stuck_reports)} laporan yang terhenti akibat restart di-reset ke status 'failed'.")
+        except Exception as rec_err:
+            print(f"{Y}[RECOVERY WARNING]{R} Gagal reset status processing: {rec_err}")
+        finally:
+            db.close()
     except Exception as db_err:
         print(f"\033[91m[DB ERROR]\033[0m Gagal membuat tabel: {db_err}")
     print_banner()

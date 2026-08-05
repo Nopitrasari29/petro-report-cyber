@@ -17,6 +17,20 @@ router = APIRouter()
 def ping():
     return {"message": "analysis module ready"}
 
+@router.get("/ollama-status")
+def get_ollama_status(current_user = Depends(get_current_user)):
+    """
+    RCA-12: Endpoint health check proaktif untuk memantau ketersediaan Ollama LLM
+    tanpa perlu melakukan pemanggilan inference yang berat.
+    """
+    available = ollama_client.is_available()
+    return {
+        "status": "online" if available else "offline",
+        "host": settings.OLLAMA_HOST,
+        "model": settings.OLLAMA_MODEL,
+        "available": available
+    }
+
 @router.get("/test-llm")
 def test_llm(current_user = Depends(get_current_user)):
     """
@@ -95,6 +109,10 @@ def _run_analysis_job(report_id: int) -> None:
         def on_progress(tokens_so_far: int, done: bool = False) -> None:
             nonlocal last_write_at
             now = time.time()
+            # RCA-06: Watchdog timeout jika total job berjalan lebih lama dari OLLAMA_TIMEOUT_SECONDS
+            if (now - start_time) > settings.OLLAMA_TIMEOUT_SECONDS:
+                raise TimeoutError(f"Waktu eksekusi job melebihi batas maksimum {settings.OLLAMA_TIMEOUT_SECONDS} detik.")
+
             # Throttle penulisan DB supaya tidak commit tiap token (bisa >1x/detik) — kecuali
             # ini update TERAKHIR (done=True), yang harus selalu tersimpan (angka eval_count final).
             if not done and (now - last_write_at) < 1.5:
@@ -148,7 +166,7 @@ def _run_analysis_job(report_id: int) -> None:
                         print(f"[ANALYSIS] ⚠️ Gagal baca parsed_data dari file ({db_report.parsed_data_path}), fallback ke DB column: {fs_read_err}")
                         parsed_data_to_use = db_report.parsed_data
 
-                analysis_result = ollama_client.analyze_security_data(
+                raw_result = ollama_client.analyze_security_data(
                     data_type=db_report.data_type,
                     parsed_data=parsed_data_to_use,
                     period_start=db_report.period_start.strftime("%Y-%m-%d") if db_report.period_start else None,
@@ -162,6 +180,11 @@ def _run_analysis_job(report_id: int) -> None:
                     on_progress=on_progress,
                 )
 
+                # RCA-04: Validasi bahwa respon AI benar-benar berupa dictionary valid
+                if not isinstance(raw_result, dict):
+                    raise ValueError("Respon dari AI Engine bukan berupa objek JSON/dictionary valid.")
+
+                analysis_result = raw_result
 
                 # Kalau setengah atau lebih dari 6 field wajib cuma teks default (artinya
                 # AI tidak menjawab dengan key yang dikenali sama sekali), perlakukan
@@ -308,12 +331,11 @@ def generate_ai_analysis(
     if db_report.status == "processing":
         raise HTTPException(status_code=429, detail="Proses analisis AI untuk laporan ini sedang berjalan di background. Silakan tunggu hingga selesai.")
 
-    # Fix #3: GLOBAL Rate Limiting — tolak jika user LAIN laporan juga sedang diproses
-    # Mencegah crash Ollama akibat request paralel yang menghabiskan RAM
+    # RCA-08: Truly GLOBAL Rate Limiting — tolak jika ada laporan MANAPUN (siapapun usernya)
+    # yang sedang diproses AI di server ini, untuk mencegah crash Ollama akibat request paralel.
     other_active_job = (
         db.query(Report)
         .filter(
-            Report.user_id == current_user.id,
             Report.status == "processing",
             Report.id != report_id,
         )
@@ -322,7 +344,7 @@ def generate_ai_analysis(
     if other_active_job:
         raise HTTPException(
             status_code=429,
-            detail=f"Analisis AI untuk laporan lain (ID: {other_active_job.id}) masih berjalan. Tunggu sampai selesai sebelum memulai analisis baru."
+            detail=f"Sistem sedang memproses analisis AI untuk laporan lain (ID: {other_active_job.id}). Mohon tunggu sebentar sebelum memulai analisis baru."
         )
 
     updated_report = update_report(
