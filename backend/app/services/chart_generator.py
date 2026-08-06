@@ -3,6 +3,7 @@ import plotly.express as px
 import plotly.utils
 import json
 import os
+import re
 import tempfile
 import pandas as pd
 import concurrent.futures
@@ -100,6 +101,46 @@ def _find_categorical_col(df: pd.DataFrame, exclude: List[str] = None) -> Option
     return None
 
 
+_INDO_THOUSANDS_RE = re.compile(r"^-?\d{1,3}(\.\d{3})+(,\d+)?$")
+
+
+def _looks_numeric_series(series: "pd.Series") -> bool:
+    """True kalau HAMPIR SEMUA nilai di `series` sebenarnya angka yang disimpan sebagai teks
+    (mis. "99.9%", "1,234", "$500", atau format Rupiah Indonesia "40.000.000") — kolom seperti
+    ini BUKAN kategori sungguhan walau kardinalitasnya kebetulan rendah (mis. kolom persentase
+    uptime cuma punya segelintir nilai unik di antara puluhan baris), itu murni karena parser
+    sumber (PDF/CSV) menyimpannya sebagai teks, bukan tipe angka asli. Tanpa cek ini, kolom
+    seperti itu keliru terpilih jadi "kategori" di laporan (mis. "Distribusi Event Berdasarkan
+    Kategori" menampilkan "99.9%", "98.5%", atau nilai Rupiah mentah sebagai nama kategori).
+
+    Format Indonesia (titik = pemisah ribuan, koma = pemisah desimal, mis. "40.000.000" atau
+    "1.234.567,89") dicoba TERPISAH dari pembersihan angka gaya Barat di atas — dan HANYA kalau
+    formatnya cocok pola ketat "kelompok 3 digit dipisah titik" (_INDO_THOUSANDS_RE), supaya
+    tidak salah menafsirkan desimal biasa seperti "42.5" (bukan format ribuan) sebagai Rupiah.
+    """
+    if len(series) == 0:
+        return False
+    numeric_count = 0
+    for val in series:
+        raw = str(val).strip()
+        cleaned = raw.replace("%", "").replace(",", "").replace("$", "")
+        is_numeric = False
+        try:
+            float(cleaned)
+            is_numeric = True
+        except ValueError:
+            pass
+        if not is_numeric and _INDO_THOUSANDS_RE.match(raw):
+            try:
+                float(raw.replace(".", "").replace(",", "."))
+                is_numeric = True
+            except ValueError:
+                pass
+        if is_numeric:
+            numeric_count += 1
+    return (numeric_count / len(series)) >= 0.9
+
+
 def _rank_categorical_candidates(
     df: pd.DataFrame, exclude: List[str] = None, max_unique: int = 30, max_unique_ratio: float = 0.7
 ) -> List[str]:
@@ -113,6 +154,8 @@ def _rank_categorical_candidates(
     TEKS yang nilainya BERULANG di banyak baris (kardinalitas rendah relatif terhadap jumlah
     baris) — itu ciri khas kolom kategorikal apapun namanya, sementara kolom teks bebas
     (deskripsi, nama unik per baris, dst) akan hampir semua nilainya unik sehingga tidak lolos.
+    Kolom yang isinya angka-disimpan-sebagai-teks (persentase, mata uang, dll — lihat
+    _looks_numeric_series) juga dibuang di sini, walau kardinalitasnya kebetulan rendah.
 
     Dikembalikan terurut dari kardinalitas PALING RENDAH (paling "kategorikal") ke paling
     tinggi, supaya pemanggil bisa ambil kandidat berikutnya kalau kandidat pertama sudah
@@ -128,6 +171,8 @@ def _rank_categorical_candidates(
         series = df[col].dropna()
         n_total = len(series)
         if n_total == 0:
+            continue
+        if _looks_numeric_series(series):
             continue
         n_unique = series.nunique()
         if n_unique < 2 or n_unique > max_unique:

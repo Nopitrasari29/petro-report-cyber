@@ -24,7 +24,7 @@ import os
 import random
 
 from pptx import Presentation
-from pptx.util import Inches, Pt
+from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE
@@ -32,7 +32,7 @@ from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
 
 from app.models.report import Report
-from app.services.report_render_logic import build_report_blocks
+from app.services.report_render_logic import build_report_blocks, is_english
 
 # ============================================================================
 # Palet & font — persis sesuai brief, dipakai di SETIAP elemen (termasuk chart/tabel)
@@ -212,6 +212,8 @@ def add_badge_circle(slide, x, y, diameter, text, badge_color, text_color=WHITE,
 
 def add_badge_row(slide, x, y, w, number_text, title_text, detail_text, badge_color,
                    badge_d=Inches(0.42), on_dark=False, title_size=Pt(15), detail_size=Pt(12)):
+    """Return: perkiraan tinggi konten (title+detail, dalam inci) — dipakai add_badge_list
+    untuk menggeser baris berikutnya sesuai tinggi SEBENARNYA, bukan jarak tetap."""
     add_badge_circle(slide, x, y, badge_d, number_text, badge_color, font_size=Pt(14))
     text_x = x + badge_d + Inches(0.2)
     text_w = w - badge_d - Inches(0.2)
@@ -221,22 +223,72 @@ def add_badge_row(slide, x, y, w, number_text, title_text, detail_text, badge_co
     p1 = tf.paragraphs[0]
     p1.text = title_text
     _set_font(p1, BODY_FONT, title_size, bold=True, color=(WHITE if on_dark else TEXT_DARK))
+    text_w_in = Emu(text_w).inches
+    content_height_in = _estimate_wrapped_height_in(title_text, title_size.pt, text_w_in)
     if detail_text:
         p2 = tf.add_paragraph()
         p2.text = detail_text
         _set_font(p2, BODY_FONT, detail_size, color=(GOLD_LIGHT if on_dark else GRAY_TEXT))
         p2.space_before = Pt(2)
-    return box
+        content_height_in += _estimate_wrapped_height_in(detail_text, detail_size.pt, text_w_in) + 2 / 72
+    return content_height_in
 
 
-def add_badge_list(slide, x, y, w, items, badge_color=GREEN_MAIN, row_h=Inches(0.95), on_dark=False):
+def _estimate_badge_row_height_in(w_in, badge_d_in, title_text, detail_text, title_pt, detail_pt):
+    """Estimasi tinggi 1 add_badge_row TANPA menggambar apapun (fungsi murni) — dipakai
+    add_badge_list utk pre-pass menghitung total tinggi SEMUA item SEBELUM mulai render."""
+    text_w_in = w_in - badge_d_in - 0.2
+    h = _estimate_wrapped_height_in(title_text, title_pt, text_w_in)
+    if detail_text:
+        h += _estimate_wrapped_height_in(detail_text, detail_pt, text_w_in) + 2 / 72
+    return h
+
+
+def add_badge_list(slide, x, y, w, items, badge_color=GREEN_MAIN, row_h=Inches(0.95), on_dark=False, max_y=None):
     """items: list of (number_or_letter, title, detail). badge_color: RGBColor tetap ATAU
-    fungsi(idx, item)->RGBColor supaya bisa mem-variasi warna (mis. merah utk 1 item kritis)."""
+    fungsi(idx, item)->RGBColor supaya bisa mem-variasi warna (mis. merah utk 1 item kritis).
+    `row_h` dipakai sebagai jarak MINIMUM antar baris saja — kalau title/detail dari AI
+    kebetulan lebih panjang dan wrap ke banyak baris, jaraknya digeser sesuai perkiraan tinggi
+    sebenarnya (dulu selalu jarak tetap, baris berikutnya bisa menimpa baris ini).
+
+    `max_y` (opsional, disarankan selalu diisi) = batas bawah yang TIDAK BOLEH dilewati (mis.
+    SLIDE_H dikurangi margin footer). BUG YANG DIPERBAIKI: sebelum ini tidak ada pengecekan
+    apapun terhadap tinggi slide — laporan dengan item lebih banyak (mis. 6 Temuan Utama)
+    membuat item ke-5/6 punya posisi Y melebihi slide_height, jadi tidak terlihat sama sekali
+    saat dibuka di PowerPoint (bukan error, cuma diam-diam hilang). Sekarang total tinggi
+    SEMUA item diperkirakan DULU (pre-pass, tanpa menggambar) sebelum mulai render — kalau
+    ternyata bakal melebihi `max_y`, seluruh baris (badge, judul, detail, jarak antar baris)
+    dikecilkan skalanya secara proporsional supaya SEMUA item pasti muat di dalam slide."""
+    if not items:
+        return y
+    row_h_in = row_h.inches
+    w_in = Emu(w).inches
+    default_badge_d_in = 0.42
+    default_title_pt, default_detail_pt = 15, 12
+
+    scale = 1.0
+    if max_y is not None:
+        available_in = Emu(max_y - y).inches
+        est_total_in = sum(
+            max(row_h_in, _estimate_badge_row_height_in(w_in, default_badge_d_in, item[1], item[2], default_title_pt, default_detail_pt) + 0.15)
+            for item in items
+        )
+        if available_in > 0 and est_total_in > available_in:
+            scale = max(available_in / est_total_in, 0.55)
+
+    title_size = Pt(default_title_pt * scale)
+    detail_size = Pt(default_detail_pt * scale)
+    badge_d = Inches(default_badge_d_in * scale)
+    row_h_scaled_in = row_h_in * scale
+    row_gap_in = 0.15 * scale
+
     cur_y = y
     for idx, item in enumerate(items):
         color = badge_color(idx, item) if callable(badge_color) else badge_color
-        add_badge_row(slide, x, cur_y, w, item[0], item[1], item[2], color, on_dark=on_dark)
-        cur_y += row_h
+        content_height_in = add_badge_row(slide, x, cur_y, w, item[0], item[1], item[2], color,
+                                           badge_d=badge_d, on_dark=on_dark,
+                                           title_size=title_size, detail_size=detail_size)
+        cur_y += Inches(max(row_h_scaled_in, content_height_in + row_gap_in))
     return cur_y
 
 
@@ -246,10 +298,22 @@ def add_stat_card_grid(slide, x, y, w, h, items, cols=3, dark=True):
         return y
     rows = math.ceil(len(items) / cols)
     gap = Inches(0.2)
-    card_w = (w - gap * (cols - 1)) / cols
-    card_h = (h - gap * (rows - 1)) / rows
+    # card_h dibatasi maksimum 1.6in — TANPA batas ini, laporan dengan sedikit stat item (mis.
+    # cuma 2 kartu KPI utk domain yang tidak punya konsep severity/status) membuat 1 baris itu
+    # meregang mengisi SELURUH `h` yang dialokasikan pemanggil (mis. 4.3in), menghasilkan
+    # kartu raksasa nyaris kosong untuk cuma 1 angka + label pendek. Sisa `h` di bawah grid
+    # sekarang dibiarkan kosong (dipakai pemanggil utk elemen lain, mis. caption ringkasan).
+    natural_card_h = (h - gap * (rows - 1)) / rows
+    card_h = min(natural_card_h, Inches(1.6))
     for idx, (value, label) in enumerate(items):
-        r, c = idx // cols, idx % cols
+        r = idx // cols
+        row_start = r * cols
+        # Lebar kartu dihitung dari JUMLAH ITEM DI BARIS INI, bukan `cols` tetap — supaya
+        # baris terakhir yang isinya lebih sedikit dari `cols` (mis. cuma 1 kartu tersisa)
+        # melebar mengisi ruang, bukan tampil sempit dengan sisa ruang kosong di sampingnya.
+        row_items_count = min(cols, len(items) - row_start)
+        c = idx - row_start
+        card_w = (w - gap * (row_items_count - 1)) / row_items_count
         cx = x + c * (card_w + gap)
         cy = y + r * (card_h + gap)
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, cy, card_w, card_h)
@@ -294,20 +358,43 @@ def add_ivory_panel(slide, x, y, w, h, icon_text, title_text, rows, mode="kv", f
     _set_font(tp, BODY_FONT, Pt(11.5), bold=True, color=GREEN_MAIN)
     cur_y += Inches(0.55)
 
+    # BUG YANG DIPERBAIKI: dulu tidak ada pengecekan terhadap `h` (tinggi panel tetap dari
+    # pemanggil) — panel dengan banyak baris (mis. legend 6 kategori + footnote) berisiko
+    # baris terakhirnya meluber ke luar panel. Total tinggi SEMUA baris diperkirakan DULU
+    # (pre-pass), lalu kalau bakal melebihi sisa ruang panel, jarak antar baris & ukuran
+    # font dikecilkan proporsional supaya semua baris tetap muat di dalam panel.
+    available_in = Emu(h).inches - Emu(cur_y - y).inches - 0.2 - (0.3 if footnote else 0)
+    scale = 1.0
+    inner_w_in = Emu(inner_w).inches
     if mode == "kv":
+        est_total_in = sum(max(0.62, 0.22 + _estimate_wrapped_height_in(str(v), 10.5, inner_w_in) + 0.16) for _, v in rows)
+    else:
+        label_w_in_est = Emu(inner_w - Inches(1.0)).inches
+        est_total_in = sum(max(0.34, _estimate_wrapped_height_in(label, 11, label_w_in_est) + 0.06) for _, label, _ in rows)
+    if available_in > 0 and est_total_in > available_in:
+        scale = max(available_in / est_total_in, 0.55)
+
+    if mode == "kv":
+        # Jarak antar baris menyesuaikan tinggi VALUE sebenarnya (bukan 0.62in tetap) — value
+        # bisa berisi teks bebas dengan panjang tidak menentu (mis. nama file yang diunggah
+        # pengguna), yang tanpa ini berisiko menimpa baris berikutnya kalau kebetulan panjang.
+        label_pt, value_pt = 10.5 * scale, 10.5 * scale
         for label, value in rows:
             lbl_box = slide.shapes.add_textbox(inner_x, cur_y, inner_w, Inches(0.24))
             lp = lbl_box.text_frame.paragraphs[0]
             lp.text = label
-            _set_font(lp, BODY_FONT, Pt(10.5), bold=True, color=GREEN_MAIN)
-            val_box = slide.shapes.add_textbox(inner_x, cur_y + Inches(0.22), inner_w, Inches(0.42))
+            _set_font(lp, BODY_FONT, Pt(label_pt), bold=True, color=GREEN_MAIN)
+            val_box = slide.shapes.add_textbox(inner_x, cur_y + Inches(0.22 * scale), inner_w, Inches(0.42))
             vtf = val_box.text_frame
             vtf.word_wrap = True
             vp = vtf.paragraphs[0]
             vp.text = str(value)
-            _set_font(vp, BODY_FONT, Pt(10.5), color=GRAY_TEXT)
-            cur_y += Inches(0.62)
+            _set_font(vp, BODY_FONT, Pt(value_pt), color=GRAY_TEXT)
+            value_height_in = _estimate_wrapped_height_in(str(value), value_pt, inner_w_in)
+            cur_y += Inches(max(0.62 * scale, (0.22 + value_height_in + 0.16) * scale))
     else:
+        label_w_in = Emu(inner_w - Inches(1.0)).inches
+        label_pt = 11 * scale
         for color, label, pct in rows:
             sw = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, inner_x, cur_y + Inches(0.03), Inches(0.14), Inches(0.14))
             sw.fill.solid()
@@ -317,13 +404,14 @@ def add_ivory_panel(slide, x, y, w, h, icon_text, title_text, rows, mode="kv", f
             lbl_box = slide.shapes.add_textbox(inner_x + Inches(0.22), cur_y, inner_w - Inches(1.0), Inches(0.28))
             lp = lbl_box.text_frame.paragraphs[0]
             lp.text = label
-            _set_font(lp, BODY_FONT, Pt(11), color=TEXT_DARK)
+            _set_font(lp, BODY_FONT, Pt(label_pt), color=TEXT_DARK)
             val_box = slide.shapes.add_textbox(inner_x + inner_w - Inches(0.8), cur_y, Inches(0.8), Inches(0.28))
             vp = val_box.text_frame.paragraphs[0]
             vp.text = pct
             vp.alignment = PP_ALIGN.RIGHT
-            _set_font(vp, BODY_FONT, Pt(11), bold=True, color=GREEN_MAIN)
-            cur_y += Inches(0.34)
+            _set_font(vp, BODY_FONT, Pt(label_pt), bold=True, color=GREEN_MAIN)
+            label_height_in = _estimate_wrapped_height_in(label, label_pt, label_w_in)
+            cur_y += Inches(max(0.34 * scale, (label_height_in + 0.06) * scale))
 
     if footnote:
         cur_y += Inches(0.12)
@@ -361,7 +449,8 @@ def add_critical_highlight_panel(slide, x, y, w, h, pct_text, sub_text, detail_t
     bp.alignment = PP_ALIGN.CENTER
     _set_font(bp, TITLE_FONT, Pt(42), bold=True, color=GOLD_MAIN)
 
-    sub_box = slide.shapes.add_textbox(x + pad, y + Inches(1.35), w - pad * 2, Inches(0.7))
+    sub_top_in = 1.35
+    sub_box = slide.shapes.add_textbox(x + pad, y + Inches(sub_top_in), w - pad * 2, Inches(0.7))
     stf = sub_box.text_frame
     stf.word_wrap = True
     sp = stf.paragraphs[0]
@@ -370,7 +459,13 @@ def add_critical_highlight_panel(slide, x, y, w, h, pct_text, sub_text, detail_t
     _set_font(sp, BODY_FONT, Pt(12.5), color=WHITE)
 
     if detail_text:
-        det_box = slide.shapes.add_textbox(x + pad, y + Inches(2.15), w - pad * 2, h - Inches(2.15) - Inches(0.25))
+        # Posisi detail_text dihitung dari perkiraan tinggi sub_text sebenarnya (bukan y+2.15
+        # tetap) — sub_text panjangnya tidak menentu (kalimat dari data), jadi tanpa ini
+        # detail_text (daftar kategori insiden Critical, bisa sampai 6 nama) berisiko tertimpa.
+        text_w_in = Emu(w - pad * 2).inches
+        sub_height_in = _estimate_wrapped_height_in(sub_text, 12.5, text_w_in)
+        detail_top_in = max(sub_top_in + sub_height_in + 0.15, 2.15)
+        det_box = slide.shapes.add_textbox(x + pad, y + Inches(detail_top_in), w - pad * 2, h - Inches(detail_top_in) - Inches(0.25))
         dtf = det_box.text_frame
         dtf.word_wrap = True
         dp = dtf.paragraphs[0]
@@ -386,16 +481,51 @@ def add_priority_panel(slide, x, y, w, h, title_text, items):
     tp = title_box.text_frame.paragraphs[0]
     tp.text = title_text.upper()
     _set_font(tp, BODY_FONT, Pt(11.5), bold=True, color=GOLD_MAIN)
-    cur_y = y + Inches(0.7)
+    if not items:
+        return
+    content_start_y_in = Emu(y).inches + 0.7
+    available_in = Emu(h).inches - 0.7 - 0.2
+    text_box_w_in = Emu(w - pad * 2 - Inches(0.5)).inches
+
+    # BUG YANG DIPERBAIKI: tidak ada pengecekan sebelumnya terhadap tinggi panel `h` (fixed,
+    # dari pemanggil) — item yang cukup banyak/panjang bisa membuat baris terakhir meluber ke
+    # luar panel (bahkan ke luar slide). Sekarang total tinggi diperkirakan DULU (pre-pass),
+    # dan kalau bakal melebihi `h`, badge+teks+jarak antar baris dikecilkan proporsional.
+    scale = 1.0
+    est_total_in = sum(max(0.62, _estimate_wrapped_height_in(text, 12, text_box_w_in) + 0.2) for _, text in items)
+    if available_in > 0 and est_total_in > available_in:
+        scale = max(available_in / est_total_in, 0.55)
+
+    badge_d = Inches(0.36 * scale)
+    font_pt = 12 * scale
+    row_min_in = 0.62 * scale
+    cur_y = Inches(content_start_y_in)
     for letter, text in items:
-        add_badge_circle(slide, x + pad, cur_y, Inches(0.36), letter, GOLD_MAIN, font_size=Pt(13))
+        add_badge_circle(slide, x + pad, cur_y, badge_d, letter, GOLD_MAIN, font_size=Pt(13 * scale))
         box = slide.shapes.add_textbox(x + pad + Inches(0.5), cur_y + Inches(0.02), w - pad * 2 - Inches(0.5), Inches(0.55))
         btf = box.text_frame
         btf.word_wrap = True
         bp = btf.paragraphs[0]
         bp.text = text
-        _set_font(bp, BODY_FONT, Pt(12), color=WHITE)
-        cur_y += Inches(0.62)
+        _set_font(bp, BODY_FONT, Pt(font_pt), color=WHITE)
+        # Baris berikutnya digeser sesuai perkiraan tinggi teks yang SEBENARNYA (bukan jarak
+        # tetap) — teks rekomendasi dari AI panjangnya tidak menentu, dan jarak tetap bikin
+        # baris berikutnya menimpa baris ini kalau teksnya wrap lebih dari ~2 baris.
+        text_height_in = _estimate_wrapped_height_in(text, font_pt, text_box_w_in)
+        cur_y += Inches(max(row_min_in, text_height_in * scale + 0.2 * scale))
+
+
+def add_ai_insight_strip(slide, x, y, w, text):
+    """Kotak singkat "Insight AI" di bawah chart — menampilkan chart_captions dari AI, yang
+    SEBELUMNYA dihasilkan AI (lihat prompts.py) tapi tidak pernah ditampilkan di PDF/PPT
+    sama sekali. Cuma dipanggil kalau ai_caption benar-benar ada isinya."""
+    box = slide.shapes.add_textbox(x, y, w, Inches(0.6))
+    tf = box.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.text = f"\U0001F4A1 {text}"
+    _set_font(p, BODY_FONT, Pt(10), italic=True, color=GRAY_TEXT)
+    return box
 
 
 def add_pill_stat(slide, x, y, w, h, text):
@@ -548,8 +678,12 @@ class PPTXExporter:
         stat_cols = rnd.choice([2, 3])
         card_cols = rnd.choice([2, 3])
         flourish_corner = rnd.choice(["bottom_right", "top_right", "bottom_left"])
-        kicker_ringkasan = rnd.choice(["RINGKASAN EKSEKUTIF", "SNAPSHOT UTAMA", "IKHTISAR EKSEKUTIF"])
-        kicker_analisis = rnd.choice(["ANALISIS DATA", "TINJAUAN DATA", "ANALISIS TEMUAN"])
+        if is_english(report):
+            kicker_ringkasan = rnd.choice(["EXECUTIVE SUMMARY", "KEY SNAPSHOT", "EXECUTIVE OVERVIEW"])
+            kicker_analisis = rnd.choice(["DATA ANALYSIS", "DATA REVIEW", "FINDINGS ANALYSIS"])
+        else:
+            kicker_ringkasan = rnd.choice(["RINGKASAN EKSEKUTIF", "SNAPSHOT UTAMA", "IKHTISAR EKSEKUTIF"])
+            kicker_analisis = rnd.choice(["ANALISIS DATA", "TINJAUAN DATA", "ANALISIS TEMUAN"])
 
         content_slides: list = []  # dipakai utk stamping footer di akhir (kecuali cover/penutup)
 
@@ -565,7 +699,7 @@ class PPTXExporter:
                 add_corner_flourish(cover, flourish_corner)
                 add_logo(cover, logo_path)
 
-                add_kicker(cover, "LAPORAN ANALISIS", color=GOLD_MAIN, y=Inches(1.7))
+                add_kicker(cover, block["kicker"], color=GOLD_MAIN, y=Inches(1.7))
 
                 # Ukuran font judul menyesuaikan panjangnya (laporan bisa dari domain apa saja
                 # - SOC, keuangan, KPI, dll - judulnya bisa jauh lebih panjang/pendek dari
@@ -602,10 +736,10 @@ class PPTXExporter:
                 itf = info_box.text_frame
                 itf.word_wrap = True
                 p1 = itf.paragraphs[0]
-                p1.text = f'Periode data. {block["period_text"]}'
+                p1.text = f'{block["period_label"]} {block["period_text"]}'
                 _set_font(p1, BODY_FONT, Pt(12.5), color=WHITE)
                 p2 = itf.add_paragraph()
-                p2.text = f'{block["total_records"]} entri log, {block["category_count"]} kategori kejadian, {block["critical_count"]} insiden Critical'
+                p2.text = block["info_line"]
                 _set_font(p2, BODY_FONT, Pt(12.5), color=GOLD_LIGHT)
                 p2.space_before = Pt(6)
 
@@ -620,8 +754,8 @@ class PPTXExporter:
             elif kind == "intro":
                 bg_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 add_logo(bg_slide, logo_path)
-                add_kicker(bg_slide, "PENDAHULUAN", color=GREEN_MAIN)
-                add_title(bg_slide, "Latar Belakang dan Tujuan Analisis")
+                add_kicker(bg_slide, block["kicker"], color=GREEN_MAIN)
+                add_title(bg_slide, block["title"])
 
                 left_w = Inches(7.0) if panel_side == "right" else Inches(4.9)
                 left_x = MARGIN_X if panel_side == "right" else MARGIN_X + Inches(4.9) + Inches(0.4)
@@ -636,19 +770,19 @@ class PPTXExporter:
                 _set_font(pp, BODY_FONT, Pt(13), color=GRAY_TEXT)
 
                 objectives = [(o["num"], o["title"], o["detail"]) for o in block["objectives"]]
-                add_badge_list(bg_slide, left_x, Inches(3.05), left_w, objectives, badge_color=GREEN_MAIN, row_h=Inches(1.05))
+                add_badge_list(bg_slide, left_x, Inches(3.05), left_w, objectives, badge_color=GREEN_MAIN, row_h=Inches(1.05), max_y=SLIDE_H - Inches(0.4))
 
                 scope = block["scope"]
                 scope_rows = [
-                    ("Periode", scope["period_text"]),
-                    ("Total Event", f"{scope['total_records']} entri log"),
-                    ("Sumber Berkas", scope["input_file_name"]),
-                    ("Jenis Data", scope["data_type_label"]),
+                    (scope["period_label"], scope["period_text"]),
+                    (scope["total_event_label"], scope["total_records_text"]),
+                    (scope["source_file_label"], scope["input_file_name"]),
+                    (scope["data_type_label_label"], scope["data_type_label"]),
                 ]
                 add_ivory_panel(
                     bg_slide, panel_x, Inches(1.65), panel_w, Inches(4.3),
-                    "i", "Ruang Lingkup Data", scope_rows, mode="kv",
-                    footnote="Sumber. Data yang diunggah pengguna, diproses otomatis oleh sistem.",
+                    "i", scope["panel_title"], scope_rows, mode="kv",
+                    footnote=scope["footnote"],
                 )
                 content_slides.append(bg_slide)
 
@@ -673,13 +807,47 @@ class PPTXExporter:
                 content_slides.append(exec_slide)
 
             # ---------------------------------------------------------
+            # Slide: Section Dinamis dari AI (topik yang dipilih user di Settings)
+            # ---------------------------------------------------------
+            elif kind == "dynamic_section":
+                dyn_slide = prs.slides.add_slide(prs.slide_layouts[6])
+                add_logo(dyn_slide, logo_path)
+                add_kicker(dyn_slide, block["kicker"], color=GREEN_MAIN)
+                add_title(dyn_slide, block["title"])
+
+                # Panel angka/daftar di samping teks (kalau tersedia) — supaya slide narasi
+                # tidak cuma "judul + 1 paragraf" mubazir ruang kosong (temuan user), dan
+                # berselang-seling 2 pola (angka besar vs daftar ringkas) via layout_variant
+                # yang sudah ditentukan report_render_logic.py.
+                has_aux = bool(block.get("aux_stat") or block.get("aux_list"))
+                text_w = Inches(7.3) if has_aux else CONTENT_W
+                text_box = dyn_slide.shapes.add_textbox(MARGIN_X, Inches(1.6), text_w, Inches(4.9))
+                ttf3 = text_box.text_frame
+                ttf3.word_wrap = True
+                tp4 = ttf3.paragraphs[0]
+                tp4.text = block["text"]
+                _set_font(tp4, BODY_FONT, Pt(13), color=GRAY_TEXT)
+
+                if has_aux:
+                    panel_x = MARGIN_X + text_w + Inches(0.4)
+                    panel_w = SLIDE_W - MARGIN_X - panel_x
+                    if block.get("aux_stat"):
+                        value, label = block["aux_stat"]
+                        add_critical_highlight_panel(dyn_slide, panel_x, Inches(1.6), panel_w, Inches(2.6), value, label)
+                    else:
+                        rows = [(it["label"], it["value"]) for it in block["aux_list"]]
+                        panel_title = "Data Highlight" if is_english(report) else "Sorotan Data"
+                        add_ivory_panel(dyn_slide, panel_x, Inches(1.6), panel_w, Inches(3.4), "i", panel_title, rows, mode="kv")
+                content_slides.append(dyn_slide)
+
+            # ---------------------------------------------------------
             # Slide: Distribusi Kategori Event
             # ---------------------------------------------------------
             elif kind == "category_distribution":
                 cat_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 add_logo(cat_slide, logo_path)
                 add_kicker(cat_slide, kicker_analisis, color=GREEN_MAIN)
-                add_title(cat_slide, f'Distribusi Event Berdasarkan {block["label"]}')
+                add_title(cat_slide, block["title"])
 
                 intro_box = cat_slide.shapes.add_textbox(MARGIN_X, Inches(1.45), CONTENT_W, Inches(0.5))
                 itf2 = intro_box.text_frame
@@ -688,11 +856,13 @@ class PPTXExporter:
                 ip.text = block["intro"]
                 _set_font(ip, BODY_FONT, Pt(12), color=GRAY_TEXT)
 
+                cat_has_caption = bool(block.get("ai_caption"))
+                cat_body_h = Inches(4.0) if cat_has_caption else Inches(4.6)
                 chart_w = Inches(7.3) if panel_side == "right" else Inches(4.9)
                 chart_x = MARGIN_X if panel_side == "right" else MARGIN_X + Inches(4.9) + Inches(0.4)
                 panel_x2 = MARGIN_X + Inches(7.3) + Inches(0.4) if panel_side == "right" else MARGIN_X
                 add_native_bar_chart(
-                    cat_slide, chart_x, Inches(2.1), chart_w, Inches(4.6),
+                    cat_slide, chart_x, Inches(2.1), chart_w, cat_body_h,
                     list(reversed(block["categories"])), list(reversed(block["values"])),
                     horizontal=True,
                 )
@@ -701,10 +871,12 @@ class PPTXExporter:
                     for l in block["legend"]
                 ]
                 add_ivory_panel(
-                    cat_slide, panel_x2, Inches(2.1), Inches(4.9), Inches(4.6),
-                    "%", "Proporsi Kategori", legend_rows, mode="legend",
+                    cat_slide, panel_x2, Inches(2.1), Inches(4.9), cat_body_h,
+                    "%", block["legend_panel_title"], legend_rows, mode="legend",
                     footnote=block["footnote"],
                 )
+                if cat_has_caption:
+                    add_ai_insight_strip(cat_slide, MARGIN_X, Inches(2.1) + cat_body_h + Inches(0.12), CONTENT_W, block["ai_caption"])
                 content_slides.append(cat_slide)
 
             # ---------------------------------------------------------
@@ -714,7 +886,7 @@ class PPTXExporter:
                 sev_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 add_logo(sev_slide, logo_path)
                 add_kicker(sev_slide, kicker_analisis, color=GREEN_MAIN)
-                add_title(sev_slide, "Distribusi Tingkat Keparahan (Severity)")
+                add_title(sev_slide, block["title"])
 
                 intro_box = sev_slide.shapes.add_textbox(MARGIN_X, Inches(1.45), CONTENT_W, Inches(0.5))
                 itf3 = intro_box.text_frame
@@ -723,13 +895,17 @@ class PPTXExporter:
                 ip3.text = block["intro"]
                 _set_font(ip3, BODY_FONT, Pt(12), color=GRAY_TEXT)
 
+                sev_has_caption = bool(block.get("ai_caption"))
+                sev_body_h = Inches(4.0) if sev_has_caption else Inches(4.6)
                 sev_colors = [SEVERITY_COLOR[k] for k in block["severity_keys"]]
-                add_native_bar_chart(sev_slide, MARGIN_X, Inches(2.1), Inches(8.1), Inches(4.6), block["categories"], block["values"], colors=sev_colors)
+                add_native_bar_chart(sev_slide, MARGIN_X, Inches(2.1), Inches(8.1), sev_body_h, block["categories"], block["values"], colors=sev_colors)
 
                 add_critical_highlight_panel(
-                    sev_slide, MARGIN_X + Inches(8.5), Inches(2.1), Inches(4.3), Inches(4.6),
+                    sev_slide, MARGIN_X + Inches(8.5), Inches(2.1), Inches(4.3), sev_body_h,
                     f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"],
                 )
+                if sev_has_caption:
+                    add_ai_insight_strip(sev_slide, MARGIN_X, Inches(2.1) + sev_body_h + Inches(0.12), CONTENT_W, block["ai_caption"])
                 content_slides.append(sev_slide)
 
             # ---------------------------------------------------------
@@ -739,7 +915,7 @@ class PPTXExporter:
                 status_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 add_logo(status_slide, logo_path)
                 add_kicker(status_slide, kicker_analisis, color=GREEN_MAIN)
-                add_title(status_slide, "Status Penanganan Insiden")
+                add_title(status_slide, block["title"])
 
                 intro_box = status_slide.shapes.add_textbox(MARGIN_X, Inches(1.45), CONTENT_W, Inches(0.5))
                 itf4 = intro_box.text_frame
@@ -748,10 +924,14 @@ class PPTXExporter:
                 ip4.text = block["intro"]
                 _set_font(ip4, BODY_FONT, Pt(12), color=GRAY_TEXT)
 
+                status_has_caption = bool(block.get("ai_caption"))
+                status_body_h = Inches(4.0) if status_has_caption else Inches(4.6)
                 add_native_bar_chart(
-                    status_slide, MARGIN_X, Inches(2.1), CONTENT_W, Inches(4.6),
+                    status_slide, MARGIN_X, Inches(2.1), CONTENT_W, status_body_h,
                     block["categories"], block["values"],
                 )
+                if status_has_caption:
+                    add_ai_insight_strip(status_slide, MARGIN_X, Inches(2.1) + status_body_h + Inches(0.12), CONTENT_W, block["ai_caption"])
                 content_slides.append(status_slide)
 
             # ---------------------------------------------------------
@@ -761,7 +941,7 @@ class PPTXExporter:
                 table_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 add_logo(table_slide, logo_path)
                 kicker_color = RED_CRIT if block["kicker_is_critical"] else GREEN_MAIN
-                add_kicker(table_slide, "SOROTAN INSIDEN", color=kicker_color)
+                add_kicker(table_slide, block["kicker"], color=kicker_color)
                 add_title(table_slide, block["title"])
 
                 add_native_table(table_slide, MARGIN_X, Inches(1.55), CONTENT_W, Inches(4.9), block["headers"], block["rows"], set(block["highlight_idx"]))
@@ -780,7 +960,7 @@ class PPTXExporter:
                 asset_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 add_dark_bg(asset_slide)
                 add_logo(asset_slide, logo_path)
-                add_kicker(asset_slide, "SOROTAN INSIDEN", color=GOLD_MAIN)
+                add_kicker(asset_slide, block["kicker"], color=GOLD_MAIN)
                 add_title(asset_slide, block["title"], color=WHITE)
 
                 card_items = [(it["num"], it["name"], it["stat"], it["detail"]) for it in block["items"]]
@@ -793,15 +973,15 @@ class PPTXExporter:
             elif kind == "key_findings":
                 find_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 add_logo(find_slide, logo_path)
-                add_kicker(find_slide, "ANALISIS", color=GREEN_MAIN)
-                add_title(find_slide, "Temuan Utama")
+                add_kicker(find_slide, block["kicker"], color=GREEN_MAIN)
+                add_title(find_slide, block["title"])
 
                 findings_items = [(it["num"], it["title"], it["detail"]) for it in block["items"]]
 
                 def _finding_color(idx, item, _items=block["items"]):
                     return RED_CRIT if _items[idx]["is_critical"] else GREEN_MAIN
 
-                add_badge_list(find_slide, MARGIN_X, Inches(1.7), CONTENT_W, findings_items, badge_color=_finding_color, row_h=Inches(1.0))
+                add_badge_list(find_slide, MARGIN_X, Inches(1.7), CONTENT_W, findings_items, badge_color=_finding_color, row_h=Inches(1.0), max_y=SLIDE_H - Inches(0.4))
                 content_slides.append(find_slide)
 
             # ---------------------------------------------------------
@@ -810,37 +990,80 @@ class PPTXExporter:
             elif kind == "recommendations":
                 rec_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 add_logo(rec_slide, logo_path)
-                add_kicker(rec_slide, "TINDAK LANJUT", color=GREEN_MAIN)
-                add_title(rec_slide, "Rekomendasi Mitigasi")
+                add_kicker(rec_slide, block["kicker"], color=GREEN_MAIN)
+                add_title(rec_slide, block["title"])
 
                 items = block["items"]
                 gap = Inches(0.25)
-                card_w = (CONTENT_W - gap * (card_cols - 1)) / card_cols
-                card_h = Inches(1.3)
-                for idx, item in enumerate(items):
-                    r, c = idx // card_cols, idx % card_cols
-                    cx = MARGIN_X + c * (card_w + gap)
-                    cy = Inches(1.7) + r * (card_h + gap)
-                    card = rec_slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, cy, card_w, card_h)
-                    card.fill.solid()
-                    card.fill.fore_color.rgb = IVORY
-                    card.line.color.rgb = PANEL_BORDER
-                    card.line.width = Pt(0.75)
-                    _no_shadow(card)
-                    add_badge_circle(rec_slide, cx + Inches(0.2), cy + Inches(0.18), Inches(0.36), item["num"], GOLD_MAIN, font_size=Pt(13))
-                    title_box = rec_slide.shapes.add_textbox(cx + Inches(0.2), cy + Inches(0.62), card_w - Inches(0.4), Inches(0.35))
-                    ttf2 = title_box.text_frame
-                    ttf2.word_wrap = True
-                    tp2 = ttf2.paragraphs[0]
-                    tp2.text = item["title"]
-                    _set_font(tp2, BODY_FONT, Pt(13), bold=True, color=TEXT_DARK)
-                    if item["detail"]:
-                        det_box = rec_slide.shapes.add_textbox(cx + Inches(0.2), cy + Inches(0.95), card_w - Inches(0.4), card_h - Inches(1.0))
-                        dtf2 = det_box.text_frame
-                        dtf2.word_wrap = True
-                        dp2 = dtf2.paragraphs[0]
-                        dp2.text = item["detail"]
-                        _set_font(dp2, BODY_FONT, Pt(10.5), color=GRAY_TEXT)
+                rec_rows = math.ceil(len(items) / card_cols)
+                start_y_rec = Inches(1.7)
+
+                # Pre-pass: hitung tinggi SETIAP baris (di skala normal) sebelum menggambar
+                # apapun, supaya total tinggi semua baris bisa diketahui DULU. BUG YANG
+                # DIPERBAIKI: sebelumnya tidak ada pengecekan terhadap SLIDE_H — laporan
+                # dengan 3 baris (6 rekomendasi, 2 kolom) yang detailnya panjang bisa membuat
+                # baris terakhir meluber ke luar slide, persis pola yang sama dengan bug
+                # Temuan Utama. Kalau totalnya bakal melebihi ruang tersisa, seluruh baris
+                # (font & tinggi kartu) dikecilkan proporsional supaya semua rekomendasi
+                # tetap tampil penuh di dalam slide.
+                def _row_items_and_width(r):
+                    row_start = r * card_cols
+                    row_items = items[row_start:row_start + card_cols]
+                    row_items_count = len(row_items)
+                    card_w = (CONTENT_W - gap * (row_items_count - 1)) / row_items_count
+                    return row_items, card_w
+
+                def _estimate_row_height_in(row_items, card_w, title_pt, detail_pt):
+                    text_w_in = Emu(card_w - Inches(0.4)).inches
+                    row_height_in = 1.3
+                    for item in row_items:
+                        title_h_in = _estimate_wrapped_height_in(item["title"], title_pt, text_w_in)
+                        content_h_in = 0.62 + title_h_in + 0.25
+                        if item["detail"]:
+                            detail_h_in = _estimate_wrapped_height_in(item["detail"], detail_pt, text_w_in)
+                            content_h_in += detail_h_in + 0.1
+                        row_height_in = max(row_height_in, content_h_in)
+                    return row_height_in
+
+                available_in = Emu(SLIDE_H - start_y_rec).inches - 0.4
+                est_total_in = sum(
+                    _estimate_row_height_in(_row_items_and_width(r)[0], _row_items_and_width(r)[1], 13, 10.5) + Emu(gap).inches
+                    for r in range(rec_rows)
+                ) - Emu(gap).inches
+                scale = 1.0
+                if available_in > 0 and est_total_in > available_in:
+                    scale = max(available_in / est_total_in, 0.55)
+                title_pt, detail_pt = 13 * scale, 10.5 * scale
+
+                cur_y_rec = start_y_rec
+                for r in range(rec_rows):
+                    row_items, card_w = _row_items_and_width(r)
+                    row_height_in = _estimate_row_height_in(row_items, card_w, title_pt, detail_pt)
+                    card_h = Inches(row_height_in)
+                    for c, item in enumerate(row_items):
+                        cx = MARGIN_X + c * (card_w + gap)
+                        cy = cur_y_rec
+                        card = rec_slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, cy, card_w, card_h)
+                        card.fill.solid()
+                        card.fill.fore_color.rgb = IVORY
+                        card.line.color.rgb = PANEL_BORDER
+                        card.line.width = Pt(0.75)
+                        _no_shadow(card)
+                        add_badge_circle(rec_slide, cx + Inches(0.2), cy + Inches(0.18 * scale), Inches(0.36 * scale), item["num"], GOLD_MAIN, font_size=Pt(13 * scale))
+                        title_box = rec_slide.shapes.add_textbox(cx + Inches(0.2), cy + Inches(0.62 * scale), card_w - Inches(0.4), Inches(0.35))
+                        ttf2 = title_box.text_frame
+                        ttf2.word_wrap = True
+                        tp2 = ttf2.paragraphs[0]
+                        tp2.text = item["title"]
+                        _set_font(tp2, BODY_FONT, Pt(title_pt), bold=True, color=TEXT_DARK)
+                        if item["detail"]:
+                            det_box = rec_slide.shapes.add_textbox(cx + Inches(0.2), cy + Inches(0.95 * scale), card_w - Inches(0.4), card_h - Inches(1.0 * scale))
+                            dtf2 = det_box.text_frame
+                            dtf2.word_wrap = True
+                            dp2 = dtf2.paragraphs[0]
+                            dp2.text = item["detail"]
+                            _set_font(dp2, BODY_FONT, Pt(detail_pt), color=GRAY_TEXT)
+                    cur_y_rec += card_h + gap
                 content_slides.append(rec_slide)
 
             # ---------------------------------------------------------
@@ -850,8 +1073,8 @@ class PPTXExporter:
                 concl_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 add_dark_bg(concl_slide)
                 add_logo(concl_slide, logo_path)
-                add_kicker(concl_slide, "PENUTUP", color=GOLD_MAIN)
-                add_title(concl_slide, "Kesimpulan", color=WHITE)
+                add_kicker(concl_slide, block["kicker"], color=GOLD_MAIN)
+                add_title(concl_slide, block["title"], color=WHITE)
 
                 left_w2 = Inches(7.0)
                 para_box2 = concl_slide.shapes.add_textbox(MARGIN_X, Inches(1.7), left_w2, Inches(1.8))
@@ -870,7 +1093,7 @@ class PPTXExporter:
                 if priority_items:
                     add_priority_panel(
                         concl_slide, MARGIN_X + left_w2 + Inches(0.4), Inches(1.7), Inches(4.3), Inches(4.6),
-                        "Prioritas Berikutnya", priority_items,
+                        block["priority_panel_title"], priority_items,
                     )
                 content_slides.append(concl_slide)
 
@@ -883,7 +1106,7 @@ class PPTXExporter:
                 add_corner_flourish(closing, flourish_corner)
                 title_box2 = closing.shapes.add_textbox(MARGIN_X, Inches(3.0), Inches(9), Inches(1.0))
                 tp3 = title_box2.text_frame.paragraphs[0]
-                tp3.text = "Terima Kasih"
+                tp3.text = block["thank_you"]
                 _set_font(tp3, TITLE_FONT, Pt(40), bold=True, color=WHITE)
                 sub2_top_in = 3.85
                 sub_box2 = closing.shapes.add_textbox(MARGIN_X, Inches(sub2_top_in), Inches(9), Inches(0.8))
@@ -897,7 +1120,7 @@ class PPTXExporter:
                 note_top_in = max(sub2_top_in + sub2_height_in + 0.1, 4.4)
                 note_box = closing.shapes.add_textbox(MARGIN_X, Inches(note_top_in), Inches(9), Inches(0.4))
                 np_ = note_box.text_frame.paragraphs[0]
-                np_.text = "Diskusi dan pertanyaan dipersilakan."
+                np_.text = block["note"]
                 _set_font(np_, BODY_FONT, Pt(11.5), italic=True, color=GOLD_LIGHT)
 
         # -------------------------------------------------------------

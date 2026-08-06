@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Optional, Tuple
 import warnings
 import pandas as pd
@@ -14,6 +15,10 @@ DATE_COLUMN_CANDIDATES = [
 # kolom fallback yang kebetulan sebagian isinya bisa "dipaksa" jadi tanggal).
 MIN_VALID_RATIO = 0.7
 
+# Tanggal berformat tahun-duluan (ISO, "2024-05-01") — dicek di AWAL string, dipakai untuk
+# MEMATIKAN dayfirst khusus untuk format ini (lihat _parse_dates).
+_ISO_LEADING_YEAR_RE = re.compile(r"^\s*\d{4}[-/]")
+
 
 def _parse_dates(values: List[Any]) -> "pd.Series":
     """
@@ -22,13 +27,29 @@ def _parse_dates(values: List[Any]) -> "pd.Series":
     jam tanpa leading zero ("8:15" bukan cuma "08:15:00"), separator '/', '-', '.',
     nama bulan, offset timezone/'Z', dst. Nilai yang gagal diparse jadi NaT (errors="coerce"),
     bukan melempar exception.
+
+    dayfirst=True dipakai HANYA kalau kolomnya BUKAN format ISO tahun-duluan (mis.
+    "20/11/2024") — supaya tanggal Indonesia yang ambigu (hari DAN bulan sama-sama <=12,
+    mis. "03/01/2025" dimaksudkan 3 Januari) tidak terbaca gaya Amerika (MM/DD) jadi 1 Maret.
+
+    PENTING (bug yang pernah terjadi & diperbaiki di sini): dayfirst=True TIDAK BOLEH
+    dipaksakan ke format ISO ("2024-05-01") — dibuktikan langsung lewat pd.to_datetime,
+    dayfirst=True ternyata menafsirkan ULANG komponen kedua/ketiga string ISO seakan-akan
+    hari-duluan juga (mis. "2024-05-01" jadi terbaca 5 Januari, BUKAN 1 Mei), dan untuk
+    tanggal yang komponen terakhirnya >12 (hari valid tapi jadi bulan tak valid kalau
+    dibalik) hasilnya malah gagal total jadi NaT. Ini bikin SEBAGIAN BESAR data SOC-style
+    (yang memang format ISO "YYYY-MM-DD HH:MM") gagal terdeteksi periodenya sama sekali.
     """
+    str_values = [str(v).strip() if v is not None else "" for v in values]
+    sample = [v for v in str_values if v][:20]
+    looks_iso = bool(sample) and sum(1 for v in sample if _ISO_LEADING_YEAR_RE.match(v)) >= 0.8 * len(sample)
+
     with warnings.catch_warnings():
         # Ini cuma dipakai untuk deteksi otomatis berbasis heuristik (bukan sumber kebenaran
         # kritis), jadi warning pandas soal format ambigu/tidak seragam sengaja diredam supaya
         # tidak membanjiri log tiap kali ada file diupload.
         warnings.simplefilter("ignore")
-        return pd.to_datetime(pd.Series(values), errors="coerce")
+        return pd.to_datetime(pd.Series(values), errors="coerce", dayfirst=not looks_iso)
 
 
 def find_date_column(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], Optional["pd.Series"]]:

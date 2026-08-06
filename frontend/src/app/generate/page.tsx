@@ -10,9 +10,14 @@ import { t, getLanguage } from "@/utils/i18n";
 import { API_BASE_URL } from "@/utils/api";
 import {
   REPORT_SECTIONS,
-  getSectionTitle,
-  getSectionContentKey,
+  buildReportPages,
+  getPageTitleFromList,
+  getPageKeyFromList,
 } from "@/utils/reportSections";
+import {
+  arrayItemsToHtml,
+  htmlToArrayItems,
+} from "@/utils/richTextArrayBridge";
 import Step0Overview from "./components/Step0Overview";
 import Step1Upload from "./components/Step1Upload";
 import Step2Settings, {
@@ -169,44 +174,30 @@ export default function GenerateReportPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Ambil chart_captions dari AI summary — array narasi satu kalimat per chart
-  const chartCaptions: string[] = Array.isArray(editedSummary?.chart_captions)
-    ? editedSummary.chart_captions
-    : [];
-
-  const getPageTitle = getSectionTitle;
-  const getPageContentKey = getSectionContentKey;
-
-  // Field "recommendations" di ai_summary itu array of string (bukan satu blok teks), sementara
-  // rich text editor kerjanya selalu pakai HTML. Dua fungsi ini menjembatani konversi dua arah:
-  // array -> HTML list (buat ditampilkan di editor sebagai bullet list), dan HTML -> array
-  // (buat disimpan balik ke backend dengan struktur yang sama seperti sebelumnya).
-  const arrayItemsToHtml = (items: string[]): string => {
-    if (!items || items.length === 0) return "<ul><li></li></ul>";
-    return `<ul>${items.map((item) => `<li>${item}</li>`).join("")}</ul>`;
-  };
-
-  const htmlToArrayItems = (html: string): string[] => {
-    if (typeof window === "undefined") return [html];
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const listItems = doc.querySelectorAll("li");
-    if (listItems.length > 0) {
-      return Array.from(listItems)
-        .map((li) => li.innerHTML.trim())
-        .filter(Boolean);
-    }
-    const paragraphs = doc.querySelectorAll("p");
-    if (paragraphs.length > 0) {
-      return Array.from(paragraphs)
-        .map((p) => p.innerHTML.trim())
-        .filter(Boolean);
-    }
-    const text = doc.body.innerHTML.trim();
-    return text ? [text] : [];
-  };
+  // Daftar halaman LENGKAP (6 halaman lama + section dinamis AI + penjelasan chart) —
+  // dihitung ulang tiap kali editedSummary berubah supaya tab "Pages"/"Edit Text" langsung
+  // menyesuaikan begitu report selesai diproses (sections/chart_captions baru terisi).
+  const pages = buildReportPages(editedSummary);
+  const getPageTitle = (page: string) => getPageTitleFromList(pages, page);
+  const getPageContentKey = (page: string) => getPageKeyFromList(pages, page);
 
   const getPageText = (page: string) => {
     const key = getPageContentKey(page);
+    const placeholder = tx(
+      "Content not yet available for this section.",
+      "Content not yet available for this section.",
+    );
+
+    if (key.startsWith("section:")) {
+      const idx = Number(key.split(":")[1]);
+      const sec = (editedSummary?.sections || [])[idx];
+      return sec?.content || placeholder;
+    }
+    if (key.startsWith("chart_caption:")) {
+      const idx = Number(key.split(":")[1]);
+      return editedSummary?.chart_captions?.[idx] || placeholder;
+    }
+
     let text = editedSummary[key];
     if (Array.isArray(text)) {
       return arrayItemsToHtml(text);
@@ -216,19 +207,36 @@ export default function GenerateReportPage() {
     // Belum ada konten AI untuk section ini (mis. field itu belum di-generate atau report
     // masih diproses) — tampilkan placeholder jujur, BUKAN narasi karangan yang kelihatan
     // seperti hasil analisis sungguhan padahal isinya sama untuk semua laporan.
-    return tx(
-      "Content not yet available for this section.",
-      "Content not yet available for this section.",
-    );
+    return placeholder;
   };
 
   const handleTextChange = (newVal: string) => {
     const key = getPageContentKey(activePage);
+
+    if (key.startsWith("section:")) {
+      const idx = Number(key.split(":")[1]);
+      const sectionsArr = Array.isArray(editedSummary?.sections)
+        ? [...editedSummary.sections]
+        : [];
+      sectionsArr[idx] = { ...(sectionsArr[idx] || {}), content: newVal };
+      setEditedSummary({ ...editedSummary, sections: sectionsArr });
+      return;
+    }
+    if (key.startsWith("chart_caption:")) {
+      const idx = Number(key.split(":")[1]);
+      const captionsArr = Array.isArray(editedSummary?.chart_captions)
+        ? [...editedSummary.chart_captions]
+        : [];
+      captionsArr[idx] = newVal;
+      setEditedSummary({ ...editedSummary, chart_captions: captionsArr });
+      return;
+    }
+
     const originalVal = editedSummary[key];
     if (Array.isArray(originalVal)) {
       setEditedSummary({
         ...editedSummary,
-        [key]: htmlToArrayItems(newVal),
+        [key]: htmlToArrayItems(newVal, key === "recommendations"),
       });
     } else {
       setEditedSummary({
@@ -242,10 +250,15 @@ export default function GenerateReportPage() {
   // baru diupload. Kalau ketemu kolom tanggal yang valid, field Report Period di Step 2 langsung
   // terisi otomatis. Kalau tidak ketemu (mis. data cuma punya "bulan" tanpa tahun), field
   // dibiarkan kosong supaya user isi manual sendiri.
+  //
+  // SENGAJA dipisah dari usulan section AI (suggestSectionsFromFile di bawah) dan ditembak
+  // BERSAMAAN (bukan salah satu menunggu yang lain) — deteksi periode ini murni parsing biasa
+  // (cepat, hitungan detik), sedangkan usulan section AI bisa beberapa menit. Kalau digabung
+  // jadi satu permintaan, field periode yang harusnya sudah bisa terisi duluan ikut tertahan
+  // menunggu AI selesai.
   const detectPeriodFromFile = async (file: File) => {
     setPeriodDetecting(true);
     setPeriodAutoDetected(false);
-    setSectionsLoading(true);
     try {
       const token = localStorage.getItem("token");
       const authHeaders: Record<string, string> = {};
@@ -269,6 +282,37 @@ export default function GenerateReportPage() {
           setPeriodEnd(data.period_end);
           setPeriodAutoDetected(true);
         }
+      }
+    } catch (err) {
+      // Deteksi gagal itu bukan error fatal — user tetap bisa isi periode manual di Step 2.
+      console.warn("[PERIOD DETECT] Gagal mendeteksi periode otomatis:", err);
+    } finally {
+      setPeriodDetecting(false);
+    }
+  };
+
+  // Usulan section AI + deteksi domain/kop header — bagian yang LAMBAT (bisa beberapa menit,
+  // lihat section_suggester.py), sengaja dipanggil terpisah dari detectPeriodFromFile di atas.
+  const suggestSectionsFromFile = async (file: File) => {
+    setSectionsLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const authHeaders: Record<string, string> = {};
+      if (token) {
+        authHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
+      const fd = new FormData();
+      fd.append("file", file);
+
+      const res = await fetch(`${API_BASE_URL}/api/v1/upload/suggest-sections`, {
+        method: "POST",
+        headers: authHeaders,
+        body: fd,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
         if (data.header_title) setHeaderTitle(data.header_title);
         if (data.header_subtitle) setHeaderSubtitle(data.header_subtitle);
         if (data.domain_type) setDomainType(data.domain_type);
@@ -277,10 +321,9 @@ export default function GenerateReportPage() {
         }
       }
     } catch (err) {
-      // Deteksi gagal itu bukan error fatal — user tetap bisa isi periode manual di Step 2.
-      console.warn("[PERIOD DETECT] Gagal mendeteksi periode otomatis:", err);
+      // Gagal itu bukan error fatal — fallback preset section tetap dipakai backend saat generate.
+      console.warn("[SECTION SUGGEST] Gagal menyusun usulan section:", err);
     } finally {
-      setPeriodDetecting(false);
       setSectionsLoading(false);
     }
   };
@@ -308,7 +351,10 @@ export default function GenerateReportPage() {
     // membiarkan deteksi otomatis menimpa periode yang mungkin sudah disesuaikan user secara
     // manual bisa lebih membingungkan daripada membantu. User tetap bisa edit manual di Step 2.
     if (isFirstBatch) {
+      // Ditembak BERSAMAAN (bukan salah satu menunggu yang lain) — lihat komentar di
+      // masing-masing fungsi kenapa keduanya sengaja dipisah jadi 2 permintaan independen.
       detectPeriodFromFile(newFiles[0]);
+      suggestSectionsFromFile(newFiles[0]);
     }
   };
 
@@ -538,14 +584,17 @@ export default function GenerateReportPage() {
       const formData = new FormData();
       formData.append("title", title);
 
-      // Map template to backend data_type (firewall, email_security, vapt, dll.)
-      let dataType = "firewall";
-      if (templateType.includes("Email")) dataType = "email_security";
-      else if (
-        templateType.includes("Vulnerability") ||
-        templateType.includes("VAPT")
-      )
-        dataType = "vapt";
+      // Map domain yang sudah dideteksi AI dari isi file (domainType, diisi oleh
+      // suggestSectionsFromFile) ke data_type yang dipahami backend. `templateType` TIDAK
+      // dipakai lagi di sini — tidak ada UI mana pun di wizard ini yang pernah mengisinya,
+      // jadi sebelumnya data_type selalu jatuh ke default "firewall" untuk SEMUA domain.
+      const domainToDataType: Record<string, string> = {
+        financial: "keuangan",
+        kpi_hr: "kpi_hr",
+        soc_security: "firewall",
+        procurement: "procurement",
+      };
+      const dataType = domainToDataType[domainType] || "operasional";
 
       formData.append("data_type", dataType);
       formData.append("period_start", periodStart);
@@ -1050,7 +1099,7 @@ export default function GenerateReportPage() {
               reportDetails={reportDetails}
               reportTitle={title}
               editedSummary={editedSummary}
-              chartCaptions={chartCaptions}
+              pages={pages}
               headerTitle={headerTitle}
               headerSubtitle={headerSubtitle}
               themeColor={themeColor}

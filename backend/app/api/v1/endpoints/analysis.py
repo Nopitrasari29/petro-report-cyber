@@ -5,7 +5,6 @@ from app.db.session import get_db, SessionLocal
 from app.core.config import settings
 from app.api.v1.endpoints.auth import get_current_user
 from app.services.ai_engine.ollama_client import ollama_client, _REQUIRED_KEY_DEFAULTS
-from app.services.chart_generator import ChartGenerator
 from app.crud.report import get_owned_report, update_report
 from app.models.report import Report
 from app.schemas.report import AnalysisProgress, ReportResponse, ReportUpdate
@@ -242,25 +241,11 @@ def _run_analysis_job(report_id: int) -> None:
 
         ai_confidence_score = _calc_confidence(analysis_result)
 
-        chart_config = None
-        if parsed_data_to_use and not db_report.chart_data:
-            try:
-                candidate_chart = ChartGenerator.generate_chart_config(
-                    db_report.data_type,
-                    parsed_data_to_use,
-                )
-                if candidate_chart and not candidate_chart.get("error") and candidate_chart.get("data"):
-                    chart_config = candidate_chart
-            except Exception as chart_err:
-                print(f"[ANALYSIS] ⚠️ Gagal generate chart otomatis: {chart_err}")
-
         db_report.status = "analyzed"
         db_report.ai_summary = analysis_result
         db_report.ai_confidence = ai_confidence_score
         db_report.sla_met = sla_met_status
         db_report.processing_time_sec = elapsed_time
-        if chart_config is not None:
-            db_report.chart_data = chart_config
         db.commit()
 
         # Auto-trigger notification

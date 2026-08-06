@@ -66,7 +66,7 @@ KEY OPSIONAL TAMBAHAN (boleh ada, boleh tidak — TIDAK WAJIB, tidak memengaruhi
 Kalau relevan, Anda BOLEH menambahkan 4 key berikut di level yang SAMA dengan 6 key wajib untuk memperkaya laporan. Kosongkan (array kosong []) kalau tidak ada yang benar-benar relevan — JANGAN memaksakan isi yang tidak didukung STATISTIK TERHITUNG.
 - "key_findings": array string, masing-masing satu temuan kunci yang ringkas (1 kalimat per poin).
 - "metrics_table": array objek {"label": "...", "value": "...", "percentage": "..."} untuk angka penting yang layak ditonjolkan sebagai kartu ringkasan (mis. total insiden, jumlah critical). Gunakan HANYA angka dari STATISTIK TERHITUNG.
-- "chart_captions": array string — URUTANNYA HARUS sejajar dengan urutan grafik (elemen pertama = grafik pertama, dst). Tiap elemen 2-3 kalimat bergaya ANALIS, bukan cuma deskripsi datar, mencakup TIGA hal sekaligus dalam satu paragraf mengalir: (a) apa yang TERLIHAT di grafik (sebutkan angka dari STATISTIK TERHITUNG), (b) apa ARTINYA angka itu, (c) IMPLIKASI atau risikonya kalau tidak ditindaklanjuti. Contoh gaya yang benar (angka di sini cuma ilustrasi, GANTI dengan angka statistik yang sebenarnya): "Hampir 69% pengukuran berstatus Critical, jauh di atas ambang aman. Lonjakan terpusat di Kantor Pusat dan Pabrik III. Ini menandakan tekanan kapasitas serius yang berpotensi memicu gangguan layanan bila tidak segera ditangani."
+- "chart_captions": OBJEK (bukan array), dengan HANYA key berikut yang boleh dipakai: "category" (grafik distribusi kategori/jenis event), "severity" (grafik distribusi tingkat keparahan), "status" (grafik status penanganan). Sertakan HANYA key yang benar-benar relevan dengan STATISTIK TERHITUNG yang diberikan (mis. kalau tidak ada data status penanganan, JANGAN sertakan key "status" sama sekali) — JANGAN mengarang isi untuk chart yang datanya tidak ada. Tiap value 2-3 kalimat bergaya ANALIS, bukan cuma deskripsi datar, mencakup TIGA hal sekaligus dalam satu paragraf mengalir: (a) apa yang TERLIHAT di grafik (sebutkan angka dari STATISTIK TERHITUNG), (b) apa ARTINYA angka itu, (c) IMPLIKASI atau risikonya kalau tidak ditindaklanjuti. Contoh gaya yang benar (angka di sini cuma ilustrasi, GANTI dengan angka statistik yang sebenarnya): "Hampir 69% pengukuran berstatus Critical, jauh di atas ambang aman. Lonjakan terpusat di Kantor Pusat dan Pabrik III. Ini menandakan tekanan kapasitas serius yang berpotensi memicu gangguan layanan bila tidak segera ditangani."
 - "sections": array objek {"id": "...", "title": "...", "content": "..."} — HANYA diisi kalau di bagian prompt DI BAWAH ada blok eksplisit "DAFTAR SECTION YANG WAJIB DIISI". Kalau blok itu TIDAK ADA di prompt, WAJIB kosongkan array ini ([]) — jangan mengarang isinya. Kalau ADA, isi PERSIS section yang diminta di blok itu: gunakan "id" & "title" yang sama persis seperti diberikan, urutan array sama dengan urutan "order"-nya, JANGAN menambah/mengurangi section, dan "content" berisi narasi 2-4 paragraf grounded pada STATISTIK TERHITUNG untuk topik section tsb.
 
 CONTOH DENGAN KEY OPSIONAL (few-shot kedua, ilustrasi format saja):
@@ -87,11 +87,10 @@ CONTOH DENGAN KEY OPSIONAL (few-shot kedua, ilustrasi format saja):
     {"label": "Critical", "value": "11", "percentage": "22%"},
     {"label": "High", "value": "19", "percentage": "38%"}
   ],
-  "chart_captions": [
-    "Aktivitas memuncak hari Rabu pukul 09:00 dengan volume stabil dibanding paruh awal periode (perubahan 0%). Pola ini menunjukkan beban kerja yang konsisten tanpa lonjakan tak terduga. Jam puncak ini bisa jadi acuan penjadwalan pemantauan tambahan.",
-    "Proporsi high+critical mencapai 60% dari seluruh insiden (11 critical, 19 high dari 50 total). Ini menandakan mayoritas insiden butuh perhatian segera, bukan sekadar noise. Tanpa prioritisasi, tim SOC berisiko kewalahan menangani volume insiden tinggi ini.",
-    "Kategori SOC menjadi kontributor insiden terbanyak dibanding kategori lain. Konsentrasi ini mengindikasikan area tersebut sebagai titik risiko utama saat ini. Perlu audit lebih dalam pada kategori ini untuk mencegah eskalasi lebih lanjut."
-  ]
+  "chart_captions": {
+    "category": "Kategori SOC menjadi kontributor insiden terbanyak dibanding kategori lain. Konsentrasi ini mengindikasikan area tersebut sebagai titik risiko utama saat ini. Perlu audit lebih dalam pada kategori ini untuk mencegah eskalasi lebih lanjut.",
+    "severity": "Proporsi high+critical mencapai 60% dari seluruh insiden (11 critical, 19 high dari 50 total). Ini menandakan mayoritas insiden butuh perhatian segera, bukan sekadar noise. Tanpa prioritisasi, tim SOC berisiko kewalahan menangani volume insiden tinggi ini."
+  }
 }
 """
 
@@ -186,6 +185,16 @@ Fokus analisis untuk data OPERASIONAL:
 - Rekomendasikan perbaikan proses atau alokasi sumber daya yang lebih optimal.
 - Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif kinerja dan tren operasional.
 """,
+    "procurement": """
+Fokus analisis untuk data PENGADAAN BARANG & JASA:
+- Analisis volume dan nilai pengadaan per metode (e-katalog, tender terbuka, penunjukan langsung, pengadaan langsung).
+- Identifikasi vendor/pemasok dengan volume atau nilai transaksi tertinggi, serta konsentrasi ketergantungan pada vendor tertentu.
+- Analisis status proses pengadaan (selesai, dalam proses, dibatalkan) dan penyebab dokumen bermasalah/dibatalkan bila teridentifikasi.
+- Evaluasi distribusi nilai kontrak per unit kerja/departemen pemohon.
+- Identifikasi risiko keterlambatan atau ketidaksesuaian proses pengadaan terhadap prosedur standar.
+- Rekomendasikan langkah peningkatan transparansi, efisiensi proses, dan mitigasi risiko vendor.
+- Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif volume, nilai, dan efisiensi proses pengadaan.
+""",
 }
 
 # Fallback untuk tipe data yang tidak dikenal / general
@@ -272,6 +281,7 @@ def get_analysis_prompt(
         "kpi_hr": "data KPI dan kinerja mitra/SDM",
         "operasional": "data operasional",
         "general": "data operasional",
+        "procurement": "data pengadaan barang dan jasa",
     }
     normalized_domain_key = (domain_type or "").lower().strip().replace("-", "_")
     data_label = domain_labels.get(normalized_domain_key, "data")

@@ -65,6 +65,13 @@ _FILLER_PATTERNS = [
     re.compile(r"^Perlu diingat bahwa\s*", re.IGNORECASE),
     re.compile(r"^Dalam rangka\s+", re.IGNORECASE),
     re.compile(r"^Sebagai catatan,\s*", re.IGNORECASE),
+    # Konektor transisi antar-poin — wajar di tengah paragraf mengalir, tapi jadi ganjil kalau
+    # nempel di awal KARTU/POIN yang berdiri sendiri (recommendations/key_findings), terutama
+    # karena _split_multi_action_string() memang membelah satu paragraf jadi beberapa item
+    # persis di batas kalimat semacam ini — jadi konektornya ikut terbawa ke item baru.
+    re.compile(r"^Selain itu,\s*", re.IGNORECASE),
+    re.compile(r"^Selanjutnya,\s*", re.IGNORECASE),
+    re.compile(r"^(?:In addition|Additionally|Furthermore|Moreover),\s*", re.IGNORECASE),
 ]
 
 
@@ -358,10 +365,20 @@ class OllamaClient:
 
         # Fase B — key opsional: disalin apa adanya kalau ada & berbentuk list, kalau tidak
         # ada/salah tipe cukup diisi list kosong (tidak pernah memicu fallback ke 6 key wajib).
+        # "chart_captions" DIKECUALIKAN dari aturan list-only ini — modelnya sekarang objek
+        # {"category"/"severity"/"status": "..."} (lihat prompts.py & report_render_logic.py:
+        # _get_chart_caption), supaya narasi tidak salah pasang ke chart yang beda kalau ada
+        # chart yang di-skip saat render (mis. user uncheck Include Sections > Severity
+        # Analysis) — model TIDAK TAHU chart mana yang akhirnya benar-benar dirender, jadi
+        # caption berbasis KEY, bukan posisi array. List lama (laporan sebelum fix ini) tetap
+        # diterima apa adanya untuk kompatibilitas mundur.
         for opt_key in _OPTIONAL_KEYS:
             found_key = self._find_source_key(lookup, opt_key)
             value = search_data.get(found_key) if found_key is not None else None
-            value = value if isinstance(value, list) else []
+            if opt_key == "chart_captions":
+                value = value if isinstance(value, (list, dict)) else []
+            else:
+                value = value if isinstance(value, list) else []
             if opt_key == "key_findings":
                 # Jaga-jaga di sumber juga (bukan cuma saat render) — model kadang mengisi
                 # key_findings dengan objek section {"id","title","content"} yang salah bentuk.
@@ -539,18 +556,16 @@ class OllamaClient:
             }
 
         if not self.is_available():
-            return {
-                "executive_summary": "Gagal merumuskan ringkasan otomatis karena service Ollama tidak aktif.",
-                "trend_analysis": "Ollama offline. Silakan pastikan aplikasi Ollama berjalan di server atau local VM Anda.",
-                "severity_analysis": "Pengecekan koneksi ke host Ollama gagal.",
-                "risk_assessment": "Penilaian risiko terhenti.",
-                "recommendations": [
-                    "Buka aplikasi Ollama di server/komputer Anda.",
-                    "Pastikan port default 11434 aktif.",
-                    "Jalankan command 'ollama pull qwen3:8b' jika model belum diunduh."
-                ],
-                "conclusion": "Ollama service connection failed."
-            }
+            # Dulu ini mengembalikan dict "berhasil" berisi teks placeholder per field —
+            # analysis.py tidak pernah mendeteksinya sebagai kegagalan (heuristik deteksi cuma
+            # cocok untuk 1 dari 6 field), jadi laporan tersimpan status "analyzed" walau
+            # Ollama benar-benar mati. Sekarang dilempar sebagai exception supaya mekanisme
+            # retry/gagal yang SUDAH ADA di _run_analysis_job (analysis.py) menanganinya
+            # secara wajar — retry 2x, lalu ditandai "failed" kalau tetap tidak tersedia.
+            raise RuntimeError(
+                "Layanan Ollama tidak aktif atau tidak dapat dihubungi. Pastikan Ollama "
+                "berjalan di server/VM lokal dan model 'qwen3:8b' sudah diunduh."
+            )
 
         # Precompute statistik & schema dari SELURUH data (bukan sampel) via pandas — deterministik,
         # selalu benar. Model tinggal MENARASIKAN angka ini, bukan menghitung sendiri dari data mentah.
@@ -588,18 +603,15 @@ class OllamaClient:
             print(f"[OLLAMA RAW]\n{raw_response[:2000]}")
             return self._extract_json_robust(raw_response)
         except Exception as e:
+            # Sama seperti guard Ollama-offline di atas — dulu mengembalikan dict "berhasil"
+            # berisi teks error mentah per field (termasuk potongan respons AI yang rusak,
+            # yang akhirnya tercetak langsung ke PDF/PPTX client), dan tidak pernah terdeteksi
+            # sebagai kegagalan oleh analysis.py. Sekarang dilempar ulang supaya mekanisme
+            # retry/gagal yang sudah ada menanganinya, bukan disamarkan sebagai analisis sukses.
             preview = raw_response[:300] if raw_response else "Tidak ada respon"
-            return {
-                "executive_summary": "Gagal merumuskan ringkasan otomatis karena masalah timeout atau parser model.",
-                "trend_analysis": f"Error parsing respon AI. Detail: {str(e)}",
-                "severity_analysis": "Distribusi severity gagal dipetakan.",
-                "risk_assessment": "Penilaian risiko gagal diproses.",
-                "recommendations": [
-                    "Periksa kestabilan service Ollama siber di server local.",
-                    "Pastikan model 'qwen3:8b' telah terunduh.",
-                    "Coba unggah ulang data dengan volume log yang lebih kecil."
-                ],
-                "conclusion": f"Proses terhenti. Preview respon: {preview}"
-            }
+            raise RuntimeError(
+                f"Gagal memproses respons AI (timeout atau format tidak valid): {str(e)}. "
+                f"Cuplikan respons: {preview}"
+            ) from e
 
 ollama_client = OllamaClient()

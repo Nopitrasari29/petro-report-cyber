@@ -120,6 +120,15 @@ function BadgeRow({ num, title, detail, color }: { num: string; title: string; d
   );
 }
 
+function AiCaption({ text }: { text?: string }) {
+  if (!text) return null;
+  return (
+    <div className="text-xs italic mt-4" style={{ color: C.grayText }}>
+      💡 {text}
+    </div>
+  );
+}
+
 function Pill({ text }: { text: string }) {
   return (
     <div
@@ -149,14 +158,14 @@ function renderInner(block: ReportBlock, dark: boolean) {
     case "cover":
       return (
         <div className="py-6">
-          <Kicker text="LAPORAN ANALISIS" color={C.goldMain} />
+          <Kicker text={block.kicker} color={C.goldMain} />
           <div className="text-2xl sm:text-3xl font-bold mb-3" style={{ fontFamily: TITLE_FONT }}>
             {block.title}
           </div>
           <div className="text-sm mb-4">{block.subtitle}</div>
-          <div className="text-xs">Periode data. {block.period_text}</div>
+          <div className="text-xs">{block.period_label} {block.period_text}</div>
           <div className="text-xs mt-1" style={{ color: C.goldLight }}>
-            {block.total_records} entri log, {block.category_count} kategori kejadian, {block.critical_count} insiden Critical
+            {block.info_line}
           </div>
           <div className="text-[10px] font-bold mt-8">{block.header_title}</div>
         </div>
@@ -165,8 +174,8 @@ function renderInner(block: ReportBlock, dark: boolean) {
     case "intro":
       return (
         <>
-          <Kicker text="PENDAHULUAN" color={C.greenMain} />
-          <BlockTitle>Latar Belakang dan Tujuan Analisis</BlockTitle>
+          <Kicker text={block.kicker} color={C.greenMain} />
+          <BlockTitle>{block.title}</BlockTitle>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <p className="text-sm mb-4" style={{ color: C.grayText }}>
@@ -176,12 +185,12 @@ function renderInner(block: ReportBlock, dark: boolean) {
                 <BadgeRow key={o.num} num={o.num} title={o.title} detail={o.detail} color={C.greenMain} />
               ))}
             </div>
-            <IvoryPanel badge="i" title="Ruang Lingkup Data" footnote="Sumber. Data yang diunggah pengguna, diproses otomatis oleh sistem.">
+            <IvoryPanel badge="i" title={block.scope.panel_title} footnote={block.scope.footnote}>
               {[
-                ["Periode", block.scope.period_text],
-                ["Total Event", `${block.scope.total_records} entri log`],
-                ["Sumber Berkas", block.scope.input_file_name],
-                ["Jenis Data", block.scope.data_type_label],
+                [block.scope.period_label, block.scope.period_text],
+                [block.scope.total_event_label, block.scope.total_records_text],
+                [block.scope.source_file_label, block.scope.input_file_name],
+                [block.scope.data_type_label_label, block.scope.data_type_label],
               ].map(([k, v]) => (
                 <div key={k} className="text-xs">
                   <div className="font-bold uppercase text-[10px]" style={{ color: C.grayText }}>
@@ -200,7 +209,7 @@ function renderInner(block: ReportBlock, dark: boolean) {
     case "executive_summary":
       return (
         <>
-          <Kicker text="RINGKASAN EKSEKUTIF" color={C.goldMain} />
+          <Kicker text={block.title || "Executive Summary"} color={C.goldMain} />
           <BlockTitle color={C.white}>{block.heading}</BlockTitle>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
             {block.stat_items.map((s: [string, string], i: number) => (
@@ -220,17 +229,60 @@ function renderInner(block: ReportBlock, dark: boolean) {
         </>
       );
 
+    case "dynamic_section": {
+      const hasAux = !!(block.aux_stat || block.aux_list);
+      const textCol = (
+        <p className="text-sm" style={{ color: C.grayText }}>
+          {block.text}
+        </p>
+      );
+      const auxCol = block.aux_stat ? (
+        <div
+          className="rounded-xl p-4 h-full flex flex-col justify-center items-center text-center"
+          style={{ background: C.greenBg, border: `1px solid ${C.goldMain}66` }}
+        >
+          <div className="text-3xl font-black" style={{ color: C.goldMain }}>
+            {block.aux_stat[0]}
+          </div>
+          <div className="text-xs mt-1 text-white">{block.aux_stat[1]}</div>
+        </div>
+      ) : block.aux_list ? (
+        <IvoryPanel badge="i" title="Sorotan Data">
+          {block.aux_list.map((it: any, i: number) => (
+            <div key={i} className="flex items-center justify-between text-xs">
+              <span className="truncate" style={{ color: C.textDark }}>{it.label}</span>
+              <span className="font-bold" style={{ color: C.greenMain }}>{it.value}</span>
+            </div>
+          ))}
+        </IvoryPanel>
+      ) : null;
+      return (
+        <>
+          <Kicker text={block.kicker} color={C.greenMain} />
+          <BlockTitle>{block.title}</BlockTitle>
+          {hasAux ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="md:col-span-2">{textCol}</div>
+              <div>{auxCol}</div>
+            </div>
+          ) : (
+            textCol
+          )}
+        </>
+      );
+    }
+
     case "category_distribution":
       return (
         <>
-          <Kicker text="TINJAUAN DATA" color={C.greenMain} />
-          <BlockTitle>Distribusi Event Berdasarkan {block.label}</BlockTitle>
+          <Kicker text={block.kicker} color={C.greenMain} />
+          <BlockTitle>{block.title}</BlockTitle>
           <p className="text-xs mb-4" style={{ color: C.grayText }}>
             {block.intro}
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <BarChart categories={block.categories} values={block.values} />
-            <IvoryPanel badge="%" title="Proporsi Kategori" footnote={block.footnote}>
+            <IvoryPanel badge="%" title={block.legend_panel_title} footnote={block.footnote}>
               {block.legend.map((l: any, i: number) => (
                 <div key={i} className="flex items-center gap-2 text-xs">
                   <span
@@ -247,14 +299,15 @@ function renderInner(block: ReportBlock, dark: boolean) {
               ))}
             </IvoryPanel>
           </div>
+          <AiCaption text={block.ai_caption} />
         </>
       );
 
     case "severity_distribution":
       return (
         <>
-          <Kicker text="TINJAUAN DATA" color={C.greenMain} />
-          <BlockTitle>Distribusi Tingkat Keparahan (Severity)</BlockTitle>
+          <Kicker text={block.kicker} color={C.greenMain} />
+          <BlockTitle>{block.title}</BlockTitle>
           <p className="text-xs mb-4" style={{ color: C.grayText }}>
             {block.intro}
           </p>
@@ -279,25 +332,27 @@ function renderInner(block: ReportBlock, dark: boolean) {
               )}
             </div>
           </div>
+          <AiCaption text={block.ai_caption} />
         </>
       );
 
     case "status_distribution":
       return (
         <>
-          <Kicker text="TINJAUAN DATA" color={C.greenMain} />
-          <BlockTitle>Status Penanganan Insiden</BlockTitle>
+          <Kicker text={block.kicker} color={C.greenMain} />
+          <BlockTitle>{block.title}</BlockTitle>
           <p className="text-xs mb-4" style={{ color: C.grayText }}>
             {block.intro}
           </p>
           <BarChart categories={block.categories} values={block.values} />
+          <AiCaption text={block.ai_caption} />
         </>
       );
 
     case "critical_table":
       return (
         <>
-          <Kicker text="SOROTAN INSIDEN" color={block.kicker_is_critical ? C.redCrit : C.greenMain} />
+          <Kicker text={block.kicker} color={block.kicker_is_critical ? C.redCrit : C.greenMain} />
           <BlockTitle>{block.title}</BlockTitle>
           <div className="overflow-x-auto">
             <table className="w-full text-xs border-collapse">
@@ -349,7 +404,7 @@ function renderInner(block: ReportBlock, dark: boolean) {
     case "asset_cards":
       return (
         <>
-          <Kicker text="SOROTAN INSIDEN" color={C.goldMain} />
+          <Kicker text={block.kicker} color={C.goldMain} />
           <BlockTitle color={C.white}>{block.title}</BlockTitle>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
             {block.items.map((it: any) => (
@@ -378,8 +433,8 @@ function renderInner(block: ReportBlock, dark: boolean) {
     case "key_findings":
       return (
         <>
-          <Kicker text="ANALISIS" color={C.greenMain} />
-          <BlockTitle>Temuan Utama</BlockTitle>
+          <Kicker text={block.kicker} color={C.greenMain} />
+          <BlockTitle>{block.title}</BlockTitle>
           {block.items.map((it: any) => (
             <BadgeRow
               key={it.num}
@@ -395,8 +450,8 @@ function renderInner(block: ReportBlock, dark: boolean) {
     case "recommendations":
       return (
         <>
-          <Kicker text="TINDAK LANJUT" color={C.greenMain} />
-          <BlockTitle>Rekomendasi Mitigasi</BlockTitle>
+          <Kicker text={block.kicker} color={C.greenMain} />
+          <BlockTitle>{block.title}</BlockTitle>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-4">
             {block.items.map((it: any) => (
               <div
@@ -427,8 +482,8 @@ function renderInner(block: ReportBlock, dark: boolean) {
     case "conclusion":
       return (
         <>
-          <Kicker text="PENUTUP" color={C.goldMain} />
-          <BlockTitle color={C.white}>Kesimpulan</BlockTitle>
+          <Kicker text={block.kicker} color={C.goldMain} />
+          <BlockTitle color={C.white}>{block.title}</BlockTitle>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <p className="text-sm mb-4" style={{ color: "#E8ECE6" }}>
@@ -441,7 +496,7 @@ function renderInner(block: ReportBlock, dark: boolean) {
               </div>
             </div>
             {block.priority_items.length > 0 && (
-              <IvoryPanel badge="!" title="Prioritas Berikutnya">
+              <IvoryPanel badge="!" title={block.priority_panel_title}>
                 {block.priority_items.map((p: any) => (
                   <div key={p.letter} className="flex items-start gap-2 text-xs">
                     <span
@@ -463,11 +518,11 @@ function renderInner(block: ReportBlock, dark: boolean) {
       return (
         <div className="py-6 text-center">
           <div className="text-2xl font-bold mb-3" style={{ fontFamily: TITLE_FONT }}>
-            Terima Kasih
+            {block.thank_you}
           </div>
           <div className="text-sm mb-2">{block.title}</div>
           <div className="text-xs italic" style={{ color: C.goldLight }}>
-            Diskusi dan pertanyaan dipersilakan.
+            {block.note}
           </div>
         </div>
       );

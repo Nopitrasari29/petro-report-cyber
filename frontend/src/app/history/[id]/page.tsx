@@ -6,12 +6,19 @@ import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import { t, getLanguage } from "@/utils/i18n";
-import { getSectionTitle, getSectionContentKey } from "@/utils/reportSections";
+import {
+  buildReportPages,
+  getPageTitleFromList,
+  getPageKeyFromList,
+} from "@/utils/reportSections";
 import { API_BASE_URL } from "@/utils/api";
 import { sanitizeFilename, downloadBlobAsFile } from "@/utils/downloadFile";
+import {
+  arrayItemsToHtml,
+  htmlToArrayItems,
+} from "@/utils/richTextArrayBridge";
 import PagesSidebar from "./components/PagesSidebar";
 import CenterPreviewPanel from "./components/CenterPreviewPanel";
-import PropertiesPanel from "./components/PropertiesPanel";
 import EditableReportTitle from "@/components/EditableReportTitle";
 
 interface ReportDetails {
@@ -147,32 +154,68 @@ export default function ReportDetailPage({
     });
   };
 
-  // Sections navigation mapping
-  const getPageTitle = getSectionTitle;
-  const getPageContentKey = getSectionContentKey;
+  // Sections navigation mapping — 6 halaman lama + section dinamis AI + penjelasan chart,
+  // sama seperti di Generate (Step 4), supaya keduanya tidak diam-diam berbeda lagi.
+  const pages = buildReportPages(editedSummary);
+  const getPageTitle = (page: string) => getPageTitleFromList(pages, page);
+  const getPageContentKey = (page: string) => getPageKeyFromList(pages, page);
 
-  // Get active text
+  // Get active text — pakai jembatan array<->HTML yang sama dengan Generate (Step 4),
+  // supaya "recommendations" (array objek {title, detail}) tidak lagi rusak jadi
+  // "[object Object]" saat ditampilkan/disimpan dari tab Edit Text di History.
   const getPageText = (page: string) => {
     const key = getPageContentKey(page);
+    const placeholder = tx(
+      "Content not yet available for this section.",
+      "Content not yet available for this section.",
+    );
+
+    if (key.startsWith("section:")) {
+      const idx = Number(key.split(":")[1]);
+      const sec = (editedSummary?.sections || [])[idx];
+      return sec?.content || placeholder;
+    }
+    if (key.startsWith("chart_caption:")) {
+      const idx = Number(key.split(":")[1]);
+      return editedSummary?.chart_captions?.[idx] || placeholder;
+    }
+
     const text = editedSummary[key];
-    if (Array.isArray(text)) return text.join("\n");
+    if (Array.isArray(text)) return arrayItemsToHtml(text);
     if (text) return text;
 
     // Belum ada konten AI untuk section ini — placeholder jujur, bukan narasi karangan
     // yang dulu sama persis untuk semua laporan apapun isi datanya.
-    return tx(
-      "Content not yet available for this section.",
-      "Content not yet available for this section.",
-    );
+    return placeholder;
   };
 
   const handleTextChange = (newVal: string) => {
     const key = getPageContentKey(activePage);
+
+    if (key.startsWith("section:")) {
+      const idx = Number(key.split(":")[1]);
+      const sectionsArr = Array.isArray(editedSummary?.sections)
+        ? [...editedSummary.sections]
+        : [];
+      sectionsArr[idx] = { ...(sectionsArr[idx] || {}), content: newVal };
+      setEditedSummary({ ...editedSummary, sections: sectionsArr });
+      return;
+    }
+    if (key.startsWith("chart_caption:")) {
+      const idx = Number(key.split(":")[1]);
+      const captionsArr = Array.isArray(editedSummary?.chart_captions)
+        ? [...editedSummary.chart_captions]
+        : [];
+      captionsArr[idx] = newVal;
+      setEditedSummary({ ...editedSummary, chart_captions: captionsArr });
+      return;
+    }
+
     const originalVal = editedSummary[key];
     if (Array.isArray(originalVal)) {
       setEditedSummary({
         ...editedSummary,
-        [key]: newVal.split("\n").filter((line) => line.trim() !== ""),
+        [key]: htmlToArrayItems(newVal, key === "recommendations"),
       });
     } else {
       setEditedSummary({
@@ -575,6 +618,7 @@ export default function ReportDetailPage({
               activePage={activePage}
               setActivePage={setActivePage}
               getPageTitle={getPageTitle}
+              pages={pages}
             />
 
             {/* Center Area - Tabs & Content Preview */}
@@ -588,12 +632,10 @@ export default function ReportDetailPage({
               getPageText={getPageText}
               handleTextChange={handleTextChange}
               handleSaveEdits={handleSaveEdits}
+              pages={pages}
               isSaving={isSaving}
               saveSuccess={saveSuccess}
             />
-
-            {/* Right Panel - Properties */}
-            <PropertiesPanel report={report} />
           </div>
         </main>
       </div>

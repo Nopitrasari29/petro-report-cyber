@@ -49,6 +49,8 @@ export function getBlockNavTitle(block: ReportBlock, index: number): string {
       return "Latar Belakang & Tujuan";
     case "executive_summary":
       return "Ringkasan Eksekutif";
+    case "dynamic_section":
+      return block.title || "Analisis";
     case "category_distribution":
       return `Distribusi ${block.label || "Kategori"}`;
     case "severity_distribution":

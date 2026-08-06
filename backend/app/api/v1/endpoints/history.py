@@ -8,13 +8,12 @@ import urllib.parse
 
 from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
-from app.crud.report import get_owned_report, delete_report, update_report, get_parsed_data
+from app.crud.report import get_owned_report, delete_report
 from app.crud.audit_log import log_action  # Fix #9: Audit Log
-from app.schemas.report import ReportResponse, ReportUpdate
+from app.schemas.report import ReportResponse
 from app.models.report import Report
 from app.services.export_pdf import PDFExporter
 from app.services.export_ppt import PPTXExporter
-from app.services.chart_generator import ChartGenerator
 from app.services.report_render_logic import build_report_blocks
 
 from datetime import datetime, date
@@ -263,14 +262,6 @@ def download_pdf_report(
         with open(pdf_cache_path, "rb") as f:
             pdf_bytes = f.read()
     else:
-        parsed_data = get_parsed_data(db_report)
-        if not db_report.chart_data and parsed_data:
-            try:
-                chart_config = ChartGenerator.generate_chart_config(db_report.data_type, parsed_data)
-                db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
-            except Exception as chart_err:
-                print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PDF: {chart_err}")
-
         try:
             pdf_bytes = PDFExporter.generate_pdf_report(db_report)
             with open(pdf_cache_path, "wb") as f:
@@ -334,14 +325,6 @@ def download_pptx_report(
         with open(ppt_cache_path, "rb") as f:
             ppt_bytes = f.read()
     else:
-        parsed_data = get_parsed_data(db_report)
-        if not db_report.chart_data and parsed_data:
-            try:
-                chart_config = ChartGenerator.generate_chart_config(db_report.data_type, parsed_data)
-                db_report = update_report(db, report_id, ReportUpdate(chart_data=chart_config))
-            except Exception as chart_err:
-                print(f"[EXPORT CHART WARNING] Gagal auto-generate chart untuk PPTX: {chart_err}")
-
         try:
             ppt_bytes = PPTXExporter.generate_ppt_report(db_report)
             with open(ppt_cache_path, "wb") as f:

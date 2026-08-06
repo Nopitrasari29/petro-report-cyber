@@ -8,9 +8,7 @@ import EditableReportTitle from "@/components/EditableReportTitle";
 import ReportBlockRenderer from "@/components/ReportBlockRenderer";
 import { fetchReportBlocks } from "@/utils/reportBlocksApi";
 import type { ReportBlock } from "@/utils/reportTheme";
-import { REPORT_SECTIONS } from "@/utils/reportSections";
-
-const LAST_PAGE = REPORT_SECTIONS[REPORT_SECTIONS.length - 1].page;
+import type { ReportPage } from "@/utils/reportSections";
 
 // Mendeteksi apakah suatu string konten itu HTML (hasil rich text editor) atau teks polos
 // (AI-generated asli / laporan lama sebelum editor ini ada). Dipakai biar tab Preview bisa
@@ -30,7 +28,7 @@ interface Step4PreviewEditProps {
   reportDetails: any;
   reportTitle?: string;
   editedSummary: any;
-  chartCaptions?: string[];
+  pages: ReportPage[];
   headerTitle?: string;
   headerSubtitle?: string;
   themeColor?: string;
@@ -57,7 +55,7 @@ export default function Step4PreviewEdit({
   reportDetails,
   reportTitle = "",
   editedSummary,
-  chartCaptions = [],
+  pages,
   headerTitle = "PT PETROKIMIA GRESIK",
   headerSubtitle = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
   themeColor = "green",
@@ -146,7 +144,7 @@ export default function Step4PreviewEdit({
           </h3>
 
           <div className="space-y-1.5">
-            {REPORT_SECTIONS.map((sec) => (
+            {pages.map((sec) => (
               <button
                 key={sec.page}
                 onClick={() => setActivePage(sec.page)}
@@ -177,10 +175,10 @@ export default function Step4PreviewEdit({
               &lt; {tx("Prev", "Prev")}
             </button>
             <span>
-              {tx("Page", "Page")} {activePage} {tx("of", "of")} {LAST_PAGE}
+              {tx("Page", "Page")} {activePage} {tx("of", "of")} {pages[pages.length - 1].page}
             </span>
             <button
-              disabled={activePage === LAST_PAGE}
+              disabled={activePage === pages[pages.length - 1].page}
               onClick={() => {
                 const next = String(Number(activePage) + 1).padStart(2, "0");
                 setActivePage(next);
@@ -414,10 +412,11 @@ export default function Step4PreviewEdit({
                   </span>
                 </div>
 
-                {/* Chart + Narasi side-by-side layout */}
+                {/* Chart + Narasi — blocks yang sama persis dengan tab Preview & file export */}
                 <ChartNarasiLayout
-                  reportId={reportDetails?.id}
-                  chartCaptions={chartCaptions}
+                  blocks={blocks}
+                  blocksLoading={blocksLoading}
+                  blocksError={blocksError}
                   tx={tx}
                 />
               </div>
@@ -494,8 +493,10 @@ export default function Step4PreviewEdit({
         handleSaveEdits={handleSaveEdits}
         isSaving={isSaving}
         saveSuccess={saveSuccess}
-        reportId={reportDetails?.id}
-        chartCaptions={chartCaptions}
+        pages={pages}
+        blocks={blocks}
+        blocksLoading={blocksLoading}
+        blocksError={blocksError}
         headerTitle={headerTitle}
         headerSubtitle={headerSubtitle}
         themeColor={themeColor}

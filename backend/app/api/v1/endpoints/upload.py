@@ -25,56 +25,85 @@ _MONTH_NAMES_EN = [
 ]
 
 
-def _default_report_title(template_type: Optional[str]) -> str:
+_DOMAIN_TITLE_LABELS = {
+    "financial": "Laporan Analisis Eksekutif Keuangan",
+    "keuangan": "Laporan Analisis Eksekutif Keuangan",
+    "kpi_hr": "Laporan Evaluasi Kinerja & KPI",
+    "soc_security": "SOC Executive Summary",
+    "operasional": "Laporan Analisis Eksekutif Operasional",
+    "general": "Laporan Analisis Eksekutif",
+    "procurement": "Laporan Analisis Eksekutif Pengadaan",
+}
+
+
+def _default_report_title(template_type: Optional[str], domain_type: Optional[str] = None) -> str:
     """
-    Judul template dipakai saat pengguna belum mengisi nama laporan sendiri — supaya laporan
-    tidak pernah tersimpan dengan judul kosong. Formatnya "{Jenis Template} - {Bulan Tahun}",
-    mis. "SOC Executive Summary - July 2026", bisa diganti pengguna kapan saja lewat halaman
-    Preview & Edit atau History.
+    Judul dipakai saat pengguna belum mengisi nama laporan sendiri — supaya laporan tidak
+    pernah tersimpan dengan judul kosong. Formatnya "{Nama Dasar} - {Bulan Tahun}", bisa
+    diganti pengguna kapan saja lewat halaman Preview & Edit atau History.
+
+    `domain_type` (dideteksi AI dari isi file: financial/kpi_hr/soc_security/general/operasional)
+    dipakai sebagai sumber utama nama dasar judul — BUKAN `template_type` lagi, karena tidak
+    ada UI mana pun di wizard yang benar-benar mengisi `template_type` (selalu string kosong),
+    sehingga judul default sebelumnya SELALU jatuh ke istilah SOC/generik apa pun domain
+    datanya (mis. laporan KPI/keuangan tetap berjudul "SOC Executive Summary").
     """
-    base = (template_type or "Laporan Analisis").split(" (")[0].strip()
+    normalized_domain = (domain_type or "").strip().lower()
+    base = _DOMAIN_TITLE_LABELS.get(normalized_domain)
+    if not base:
+        base = (template_type or "Laporan Analisis Eksekutif").split(" (")[0].strip()
     now = datetime.now()
     return f"{base} - {_MONTH_NAMES_EN[now.month - 1]} {now.year}"
 
 
 def count_threats(parsed_data: list) -> dict:
     """
-    Menghitung jumlah insiden keamanan berdasarkan level keparahan (severity) dari data log.
-    Menangani berbagai macam variasi nama kunci severity yang dihasilkan oleh parser.
+    Menghitung jumlah insiden per level severity — DIPINDAH ke belakang layar untuk memakai
+    persis fungsi yang sama dengan yang dipakai laporan AI (compute_statistics di
+    data_profiler.py), bukan implementasi deteksi kolom terpisah.
+
+    Sebelumnya fungsi ini exact-match ke daftar 8 nama kolom tetap ("severity", "Severity",
+    dst) — kalau nama kolom severity di file nyata tidak persis ada di daftar itu (mis.
+    "Tingkat_Bahaya", "kondisi"), count_threats diam-diam mengembalikan nol untuk semuanya,
+    sementara data_profiler.py (dipakai laporan AI) tetap menemukannya lewat fallback
+    berbasis isi data yang jauh lebih tangguh. Akibatnya dashboard/riwayat bisa menunjukkan
+    "0 Critical" sementara laporan AI untuk FILE YANG SAMA menunjukkan angka asli, tanpa
+    ada error apa pun yang menandakan keduanya sudah tidak sinkron. Memakai compute_statistics
+    yang sama menjamin angkanya identik di kedua tempat, bukan cuma "algoritmanya serupa".
     """
-    counters = {"critical": 0, "high": 0, "medium": 0, "low": 0, "informational": 0}
-    severity_keys = ["severity", "Severity", "level", "Level", "threat_level", "Threat Level", "priority", "Priority"]
-
-    for row in parsed_data:
-        severity_value = None
-        for key in severity_keys:
-            if key in row:
-                severity_value = row[key]
-                break
-
-        if severity_value is not None:
-            val_str = str(severity_value).strip().lower()
-            if val_str in counters:
-                counters[val_str] += 1
-            elif "crit" in val_str:
-                counters["critical"] += 1
-            elif "high" in val_str or "severe" in val_str:
-                counters["high"] += 1
-            elif "med" in val_str or "warn" in val_str:
-                counters["medium"] += 1
-            elif "info" in val_str:
-                # Dicek sebelum "low" supaya "Informational"/"Info" punya kategori sendiri,
-                # bukan ikut ke-gabung ke "low" (dulu digabung, dashboard jadi harus
-                # mengarang ulang angka informational dari 5% total low+medium).
-                counters["informational"] += 1
-            elif "low" in val_str:
-                counters["low"] += 1
-
-    return counters
+    from app.services.ai_engine.data_profiler import compute_statistics
+    stats = compute_statistics(parsed_data, data_type="")
+    severity = stats.get("severity_distribution") or {}
+    return {
+        "critical": severity.get("critical", 0),
+        "high": severity.get("high", 0),
+        "medium": severity.get("medium", 0),
+        "low": severity.get("low", 0),
+        "informational": severity.get("informational", 0),
+    }
 
 @router.get("/ping")
 def ping():
     return {"message": "upload module ready"}
+
+def _parse_uploaded_file_for_preview(file: UploadFile) -> list:
+    """Validasi ukuran & parse 1 berkas jadi list of dict — dipakai bareng oleh /detect-period
+    dan /suggest-sections. Keduanya request HTTP terpisah (dipanggil BERSAMAAN oleh frontend,
+    bukan salah satu menunggu yang lain), jadi berkas di-parse ulang di masing-masing, bukan
+    dicache lintas request — parsing sendiri cepat, yang lambat cuma pemanggilan AI-nya."""
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    if file.size is not None and file.size > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Ukuran berkas melebihi batas maksimum {settings.MAX_UPLOAD_SIZE_MB}MB."
+        )
+    try:
+        parser = ParserFactory.get_parser(file.filename)
+        raw_parsed = parser.parse(file.file)
+        return sanitize_for_json(raw_parsed)
+    finally:
+        file.file.close()
+
 
 @router.post("/detect-period")
 def detect_period_from_file(
@@ -87,36 +116,47 @@ def detect_period_from_file(
     Dipanggil frontend sesaat setelah file dipilih di Step 1 (Upload Data), supaya field
     "Report Period" di Step 2 (Report Settings) sudah terisi otomatis.
 
+    SENGAJA TIDAK memanggil AI section-suggester (lihat /suggest-sections, endpoint terpisah)
+    — dulu keduanya digabung di sini, akibatnya field periode yang harusnya bisa terisi dalam
+    hitungan detik ikut tertahan menunggu AI (bisa beberapa menit) karena satu response yang
+    sama. Dipisah supaya periode selalu cepat terlepas dari cepat/lambatnya AI.
+
     Kalau data tidak punya kolom tanggal yang bisa dideteksi (contoh: cuma ada "bulan": "Januari"
     tanpa tahun), period_start & period_end dikembalikan null — di sini frontend harus fallback
     ke pengisian manual oleh user.
     """
     try:
-        max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-        if file.size is not None and file.size > max_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Ukuran berkas melebihi batas maksimum {settings.MAX_UPLOAD_SIZE_MB}MB."
-            )
-
-        try:
-            parser = ParserFactory.get_parser(file.filename)
-            raw_parsed = parser.parse(file.file)
-            parsed_data = sanitize_for_json(raw_parsed)
-        finally:
-            file.file.close()
-
+        parsed_data = _parse_uploaded_file_for_preview(file)
         period_start, period_end = detect_period(parsed_data)
-
-        # Dynamic Section Suggester: coba AI dulu (butuh data LENGKAP untuk statistik akurat,
-        # bukan potongan 10 baris), fallback ke preset heuristik kalau AI offline/gagal.
-        columns = list(parsed_data[0].keys()) if parsed_data and len(parsed_data) > 0 else []
-        suggestions = suggest_sections_for_file(columns=columns, sample_data=parsed_data, file_name=file.filename)
-
         return {
             "period_start": period_start,
             "period_end": period_end,
             "detected": period_start is not None and period_end is not None,
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=f"Kesalahan validasi format data: {str(ve)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal membaca berkas untuk deteksi periode: {str(e)}")
+
+
+@router.post("/suggest-sections")
+def suggest_sections_from_file(
+    file: UploadFile = File(...),
+    current_user = Depends(get_current_user),
+):
+    """
+    Usulan section laporan & deteksi domain via AI (bisa beberapa menit — lihat komentar di
+    section_suggester.py) berdasarkan isi berkas. Dipisah dari /detect-period supaya bagian
+    yang cepat (deteksi periode) tidak ikut tertahan menunggu bagian yang lambat (AI) — kedua
+    endpoint ini dipanggil BERSAMAAN oleh frontend, bukan berurutan.
+    """
+    try:
+        parsed_data = _parse_uploaded_file_for_preview(file)
+        columns = list(parsed_data[0].keys()) if parsed_data and len(parsed_data) > 0 else []
+        suggestions = suggest_sections_for_file(columns=columns, sample_data=parsed_data, file_name=file.filename)
+        return {
             "domain_type": suggestions["domain_type"],
             "domain_label": suggestions["domain_label"],
             "header_title": suggestions["header_title"],
@@ -128,7 +168,7 @@ def detect_period_from_file(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal membaca berkas untuk deteksi periode: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Gagal menyusun usulan section: {str(e)}")
 
 @router.post("/", response_model=ReportResponse)
 def upload_security_file(
@@ -162,7 +202,7 @@ def upload_security_file(
         # supaya tidak pernah tersimpan kosong (bisa diganti belakangan di Preview & Edit/History).
         title = title.strip() if title else ""
         if not title:
-            title = _default_report_title(template_type)
+            title = _default_report_title(template_type, domain_type)
 
         # Konversi tanggal periode log dengan validasi string kosong (Next.js Form safe)
         p_start = None

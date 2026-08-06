@@ -1,21 +1,22 @@
 import { useState, useEffect } from "react";
 import { t } from "@/utils/i18n";
-import { REPORT_SECTIONS } from "@/utils/reportSections";
-
-const TOTAL_PAGES = REPORT_SECTIONS.length;
-const LAST_PAGE = REPORT_SECTIONS[TOTAL_PAGES - 1].page;
+import type { ReportPage } from "@/utils/reportSections";
 
 interface PagesSidebarProps {
   activePage: string;
   setActivePage: React.Dispatch<React.SetStateAction<string>>;
   getPageTitle: (page: string) => string;
+  pages: ReportPage[];
 }
 
 export default function PagesSidebar({
   activePage,
   setActivePage,
   getPageTitle,
+  pages,
 }: PagesSidebarProps) {
+  const TOTAL_PAGES = pages.length;
+  const LAST_PAGE = pages[TOTAL_PAGES - 1].page;
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
@@ -42,7 +43,7 @@ export default function PagesSidebar({
         </h3>
 
         <div className="mt-4 space-y-2">
-          {REPORT_SECTIONS.map((sec) => (
+          {pages.map((sec) => (
             <button
               key={sec.page}
               onClick={() => setActivePage(sec.page)}

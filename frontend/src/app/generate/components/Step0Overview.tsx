@@ -25,38 +25,34 @@ export default function Step0Overview({ onStart, tx }: Step0OverviewProps) {
             {/* Item 1 */}
             <div className="flex items-start gap-4">
               <div className="flex flex-col items-center shrink-0">
-                <div className="w-8 h-8 rounded-full bg-petro-green text-white border-2 border-petro-green flex items-center justify-center font-bold text-xs shadow-sm">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                  </svg>
+                <div className="w-8 h-8 rounded-full bg-white text-petro-green border-2 border-petro-green flex items-center justify-center font-bold text-xs shadow-sm">
+                  1
                 </div>
-                <div className="w-0.5 h-12 bg-petro-green"></div>
+                <div className="w-0.5 h-12 bg-stone-250"></div>
               </div>
               <div className="flex-1 flex justify-between items-center py-1 text-left">
                 <div>
                   <h4 className="font-bold text-stone-855 text-sm">{tx("Upload your data sources", "Upload your data sources")}</h4>
                   <p className="text-[10px] text-stone-450 mt-1">{tx("Upload your security evidence files. Supported formats: PDF, CSV, XLSX", "Upload your security evidence files. Supported formats: PDF, CSV, XLSX")}</p>
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-250 text-emerald-600 font-bold text-[10px] shrink-0">{tx("Complete", "Complete")}</span>
+                <span className="px-2.5 py-1 rounded-full bg-stone-100 border border-stone-200 text-stone-450 font-bold text-[10px] shrink-0">{tx("Pending", "Pending")}</span>
               </div>
             </div>
 
             {/* Item 2 */}
             <div className="flex items-start gap-4">
               <div className="flex flex-col items-center shrink-0">
-                <div className="w-8 h-8 rounded-full bg-petro-green text-white border-2 border-petro-green flex items-center justify-center font-bold text-xs shadow-sm">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                  </svg>
+                <div className="w-8 h-8 rounded-full bg-white text-petro-green border-2 border-petro-green flex items-center justify-center font-bold text-xs shadow-sm">
+                  2
                 </div>
-                <div className="w-0.5 h-12 bg-petro-green"></div>
+                <div className="w-0.5 h-12 bg-stone-250"></div>
               </div>
               <div className="flex-1 flex justify-between items-center py-1 text-left">
                 <div>
                   <h4 className="font-bold text-stone-855 text-sm">{tx("Configure report settings", "Configure report settings")}</h4>
                   <p className="text-[10px] text-stone-450 mt-1">{tx("Set period, template, format, and other preferences for your report", "Set period, template, format, and other preferences for your report")}</p>
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-255 text-emerald-600 font-bold text-[10px] shrink-0">{tx("Complete", "Complete")}</span>
+                <span className="px-2.5 py-1 rounded-full bg-stone-100 border border-stone-200 text-stone-450 font-bold text-[10px] shrink-0">{tx("Pending", "Pending")}</span>
               </div>
             </div>
 

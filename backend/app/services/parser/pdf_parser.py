@@ -47,6 +47,74 @@ class PDFParser(BaseParser):
                 df[col] = coerced
         return df
 
+    @staticmethod
+    def _extract_borderless_rows(pdf: Any) -> List[List[str]]:
+        """
+        Fallback KHUSUS untuk PDF tabel tanpa garis (borderless) — dipanggil HANYA kalau
+        page.extract_tables() (strategi garis, metode utama) sama sekali tidak menemukan
+        tabel di seluruh dokumen.
+
+        pdfplumber/pymupdf strategi "text" bawaan mendeteksi kolom dari CELAH SPASI antar
+        kata — terbukti gagal (diuji langsung ke PDF hasil reproduksi kasus nyata) kalau satu
+        sel berisi beberapa kata (mis. "03/01/2025 12:00" atau "Departemen Pemeliharaan III"):
+        kata keduanya malah dianggap kolom baru sendiri karena celahnya kebetulan lebih lebar
+        dari celah ke kolom sungguhan berikutnya.
+
+        Solusi di sini: pakai posisi X kata-kata di BARIS HEADER (baris pertama halaman
+        pertama yang punya teks) sebagai batas kiri tiap kolom — bukan celah spasi. Kolom ke-i
+        dianggap mencakup rentang [x0 header kolom ke-i, x0 header kolom ke-(i+1)), jadi kata
+        apapun pada baris data yang x0-nya jatuh di rentang itu digabung jadi satu sel, tidak
+        peduli berapa banyak kata di dalamnya. Diuji terhadap reproduksi PDF Realisasi Anggaran
+        milik user (borderless) — hasilnya benar persis, semua sel multi-kata tergabung utuh.
+
+        Batas antar kolom dihitung SEKALI dari header, dipakai konsisten ke SEMUA halaman
+        (asumsi: satu tabel dengan tata letak kolom yang sama across halaman) — supaya halaman
+        lanjutan yang headernya tidak berulang tetap konsisten posisinya.
+        """
+        boundaries: Optional[List[float]] = None
+        ncols = 0
+        out_rows: List[List[str]] = []
+
+        for page in pdf.pages:
+            words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
+            if not words:
+                continue
+
+            # Kelompokkan kata jadi baris berdasarkan posisi vertikal ('top') yang berdekatan.
+            rows: List[List[dict]] = []
+            for w in sorted(words, key=lambda w: (w["top"], w["x0"])):
+                if rows and abs(w["top"] - rows[-1][0]["top"]) <= 3.0:
+                    rows[-1].append(w)
+                else:
+                    rows.append([w])
+
+            for row_words in rows:
+                row_words = sorted(row_words, key=lambda w: w["x0"])
+                if boundaries is None:
+                    # Baris pertama yang ditemukan (halaman pertama) dianggap header —
+                    # tentukan batas kolom dari sini, dipakai konsisten seterusnya.
+                    header_x0 = [w["x0"] for w in row_words]
+                    ncols = len(header_x0)
+                    boundaries = (
+                        [header_x0[0] - 1e6]
+                        + [x - 2.0 for x in header_x0[1:]]
+                        + [1e9]
+                    )
+                    out_rows.append([w["text"] for w in row_words])
+                    continue
+
+                cells: List[List[str]] = [[] for _ in range(ncols)]
+                for w in row_words:
+                    col_idx = ncols - 1
+                    for i in range(ncols):
+                        if boundaries[i] <= w["x0"] < boundaries[i + 1]:
+                            col_idx = i
+                            break
+                    cells[col_idx].append(w["text"])
+                out_rows.append([" ".join(c) for c in cells])
+
+        return out_rows
+
     def parse(self, file_content: BinaryIO) -> List[Dict[str, Any]]:
         if not PDFPLUMBER_AVAILABLE or pdfplumber is None:
             raise ValueError(
@@ -86,6 +154,47 @@ class PDFParser(BaseParser):
                                 row_dict[col_name] = value.strip() if isinstance(value, str) else value
                             rows.append(row_dict)
 
+                # Metode utama (strategi garis) sama sekali tidak menemukan tabel — biasanya
+                # PDF tabel BORDERLESS (tanpa garis vektor sungguhan, cuma teks berkolom rapi).
+                # Coba fallback berbasis posisi kata, TAPI cuma diterima kalau hasilnya benar-
+                # benar terlihat seperti tabel asli (lihat validasi di bawah) — supaya tidak
+                # diam-diam menyimpan data yang salah tanpa disadari user.
+                if not rows:
+                    fallback_rows = self._extract_borderless_rows(pdf)
+                    fb_header: Optional[List[str]] = None
+                    for raw_row in fallback_rows:
+                        if not any(_clean_cell(c) for c in raw_row):
+                            continue
+                        if fb_header is None:
+                            fb_header = [
+                                (_clean_cell(c) or f"column_{i + 1}")
+                                for i, c in enumerate(raw_row)
+                            ]
+                            continue
+                        normalized_row = [_clean_cell(c) for c in raw_row]
+                        if normalized_row == fb_header:
+                            continue
+                        row_dict = {
+                            col_name: (raw_row[col_idx].strip() if isinstance(raw_row[col_idx], str) else raw_row[col_idx])
+                            for col_idx, col_name in enumerate(fb_header)
+                            if col_idx < len(raw_row)
+                        }
+                        rows.append(row_dict)
+
+                    # Validasi: tolak hasil fallback kalau terlihat tidak andal (kolom kurang
+                    # dari 2, baris data kurang dari 2 — 1 baris kebetulan bisa cocok dengan
+                    # teks naratif biasa yang bukan tabel sama sekali, atau mayoritas sel
+                    # kosong yang menandakan batas kolom yang terdeteksi kemungkinan salah)
+                    # daripada diam-diam menyimpan data yang berantakan.
+                    if fb_header and len(fb_header) >= 2 and len(rows) >= 2:
+                        total_cells = len(rows) * len(fb_header)
+                        empty_cells = sum(
+                            1 for r in rows for v in r.values() if not _clean_cell(v)
+                        )
+                        if total_cells == 0 or (empty_cells / total_cells) > 0.6:
+                            rows = []
+                    else:
+                        rows = []
 
         except ValueError:
             raise

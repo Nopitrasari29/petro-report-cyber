@@ -6,6 +6,7 @@ import FullscreenStudioModal from "@/app/generate/components/FullscreenStudioMod
 import ReportBlockRenderer from "@/components/ReportBlockRenderer";
 import { fetchReportBlocks } from "@/utils/reportBlocksApi";
 import type { ReportBlock } from "@/utils/reportTheme";
+import type { ReportPage } from "@/utils/reportSections";
 
 interface ReportDetails {
   id: number;
@@ -41,6 +42,7 @@ interface CenterPreviewPanelProps {
   handleSaveEdits: () => void;
   isSaving: boolean;
   saveSuccess: boolean;
+  pages: ReportPage[];
 }
 
 export default function CenterPreviewPanel({
@@ -55,6 +57,7 @@ export default function CenterPreviewPanel({
   handleSaveEdits,
   isSaving,
   saveSuccess,
+  pages,
 }: CenterPreviewPanelProps) {
   const [previewFormat, setPreviewFormat] = useState<"pdf" | "pptx">("pdf");
   const [zoomLevel, setZoomLevel] = useState<number>(100);
@@ -105,16 +108,10 @@ export default function CenterPreviewPanel({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFullscreen]);
 
-  const chartCaptions: string[] = Array.isArray(
-    report?.ai_summary?.chart_captions,
-  )
-    ? report.ai_summary.chart_captions
-    : [];
-
   const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
 
   return (
-    <div className="lg:col-span-6 bg-white border border-stone-200/85 rounded-2xl shadow-sm flex flex-col h-[520px] overflow-hidden">
+    <div className="lg:col-span-9 bg-white border border-stone-200/85 rounded-2xl shadow-sm flex flex-col h-[520px] overflow-hidden">
       {/* Tab Navigation header */}
       <div className="bg-white border-b border-stone-100 px-5 flex items-center justify-between">
         <div className="flex gap-4">
@@ -345,8 +342,9 @@ export default function CenterPreviewPanel({
                 </span>
               </div>
               <ChartNarasiLayout
-                reportId={report.id}
-                chartCaptions={chartCaptions}
+                blocks={blocks}
+                blocksLoading={blocksLoading}
+                blocksError={blocksError}
                 tx={tx}
               />
             </div>
@@ -374,8 +372,10 @@ export default function CenterPreviewPanel({
         handleSaveEdits={handleSaveEdits}
         isSaving={isSaving}
         saveSuccess={saveSuccess}
-        reportId={report?.id}
-        chartCaptions={chartCaptions}
+        pages={pages}
+        blocks={blocks}
+        blocksLoading={blocksLoading}
+        blocksError={blocksError}
         headerTitle="PT PETROKIMIA GRESIK"
         headerSubtitle="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
         themeColor="green"

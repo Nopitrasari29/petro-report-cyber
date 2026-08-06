@@ -9,9 +9,10 @@ interface EditableReportTitleProps {
   tx: (key: string, fallback: string) => string;
 }
 
-// Judul laporan yang bisa diedit langsung di tempat (klik pensil -> jadi input di posisi yang
-// sama, Enter/blur simpan, Escape batal) — dipakai di halaman History detail dan Preview & Edit
-// (Generate Step 4) supaya keduanya konsisten, tanpa modal/box terpisah.
+// Judul laporan yang bisa diedit langsung di tempat (klik pensil ATAU double-click teks
+// judulnya langsung -> jadi input di posisi yang sama, Enter/blur simpan, Escape batal) —
+// dipakai di halaman History detail dan Preview & Edit (Generate Step 4) supaya keduanya
+// konsisten, tanpa modal/box terpisah.
 export default function EditableReportTitle({
   title,
   onSave,
@@ -77,7 +78,13 @@ export default function EditableReportTitle({
 
   return (
     <div className="flex items-center gap-2 min-w-0">
-      <span className={`${className} truncate`}>{title}</span>
+      <span
+        className={`${className} truncate cursor-text`}
+        onDoubleClick={() => !saving && setIsEditing(true)}
+        title={tx("Double-click to rename", "Double-click untuk ubah nama")}
+      >
+        {title}
+      </span>
       <button
         type="button"
         onClick={() => setIsEditing(true)}

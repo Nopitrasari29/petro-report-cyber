@@ -27,6 +27,49 @@ from app.services.ai_engine.ollama_client import ollama_client
 
 # Template Section bawaan per domain
 _DOMAIN_PRESETS: Dict[str, Dict[str, Any]] = {
+    "procurement": {
+        "domain_label": "Pengadaan Barang & Jasa",
+        "default_header_title": "PT PETROKIMIA GRESIK - PENGADAAN BARANG & JASA",
+        "default_header_subtitle": "Laporan Analisis Eksekutif Pengadaan & Manajemen Vendor",
+        "sections": [
+            {
+                "key": "executive_summary",
+                "title": "Ringkasan Eksekutif Pengadaan",
+                "description": "Ringkasan tingkat tinggi volume, nilai, dan status pengadaan periode ini.",
+                "enabled": True,
+            },
+            {
+                "key": "procurement_method_trend",
+                "title": "Analisis Metode & Tren Pengadaan",
+                "description": "Evaluasi distribusi metode pengadaan (e-katalog, tender, penunjukan langsung, dst).",
+                "enabled": True,
+            },
+            {
+                "key": "vendor_analysis",
+                "title": "Analisis Vendor & Pemasok Utama",
+                "description": "Pemetaan vendor/pemasok dengan volume atau nilai transaksi tertinggi.",
+                "enabled": True,
+            },
+            {
+                "key": "gap_risk_analysis",
+                "title": "Identifikasi Kendala & Risiko Pengadaan",
+                "description": "Analisis dokumen bermasalah/dibatalkan dan risiko keterlambatan proses.",
+                "enabled": True,
+            },
+            {
+                "key": "recommendations",
+                "title": "Rekomendasi Perbaikan Proses Pengadaan",
+                "description": "Tindakan perbaikan taktis untuk efisiensi dan transparansi pengadaan ke depan.",
+                "enabled": True,
+            },
+            {
+                "key": "conclusion",
+                "title": "Kesimpulan Pengadaan",
+                "description": "Rangkuman akhir dan catatan persetujuan manajemen.",
+                "enabled": True,
+            },
+        ],
+    },
     "kpi_hr": {
         "domain_label": "KPI & Kinerja Karyawan / Mitra",
         "default_header_title": "PT PETROKIMIA GRESIK - EVALUASI KINERJA & KPI",
@@ -202,28 +245,40 @@ _DOMAIN_PRESETS: Dict[str, Dict[str, Any]] = {
 }
 
 
+# Kata kunci per domain, dipakai detect_domain_from_columns via SISTEM SKOR (jumlah kata
+# kunci yang cocok), BUKAN first-match-wins seperti sebelumnya. BUG YANG DIPERBAIKI: dengan
+# first-match-wins, data pengadaan/vendor yang kebetulan punya kolom "Unit_Kerja"/"Departemen"
+# (lazim ada di data apa pun sbg penanggung jawab) langsung salah terklasifikasi "kpi_hr"
+# karena "unit_kerja" ada di daftar kpi_keywords DAN dicek PALING AWAL — walau sinyal
+# pengadaan (vendor/tender/pengadaan) jauh lebih banyak & lebih spesifik. Sistem skor
+# memilih domain dengan kecocokan TERBANYAK, jadi sinyal yang lebih kuat/spesifik menang,
+# bukan sekadar domain mana yang kebetulan dicek duluan.
+_DOMAIN_KEYWORDS: Dict[str, List[str]] = {
+    "procurement": ["vendor", "tender", "pengadaan", "purchase", "po_number", "supplier",
+                    "penunjukan_langsung", "e-katalog", "e_katalog", "kontrak", "rfq", "rfp",
+                    "procurement", "pembelian", "pemasok", "barang_jasa", "nilai_kontrak"],
+    "kpi_hr": ["kpi", "mitra", "kinerja", "target", "realisasi", "pencapaian", "skor",
+               "pegawai", "karyawan", "bobot", "unit_kerja", "divisi"],
+    "financial": ["keuangan", "biaya", "pendapatan", "pengeluaran", "anggaran", "kas",
+                  "rupiah", "revenue", "expense", "budget", "price", "nominal",
+                  "total_harga", "rkap"],
+    "soc_security": ["firewall", "severity", "threat", "ip_address", "source_ip",
+                      "destination_ip", "cve", "vulnerability", "attack", "malware",
+                      "virus", "port", "signature", "soc"],
+}
+
+
 def detect_domain_from_columns(columns: List[str], sample_data: Optional[List[Dict[str, Any]]] = None) -> str:
     """
-    Mendeteksi domain data berdasarkan nama kolom dan isi sampel.
+    Mendeteksi domain data berdasarkan nama kolom — domain dengan JUMLAH kata kunci yang
+    cocok TERBANYAK yang menang (bukan domain pertama yang punya minimal 1 kecocokan).
     """
     col_str = " ".join(str(c).lower() for c in columns)
-    
-    # Check KPI / HR keywords
-    kpi_keywords = ["kpi", "mitra", "kinerja", "target", "realisasi", "pencapaian", "skor", "pegawai", "karyawan", "bobot", "unit_kerja", "divisi"]
-    if any(kw in col_str for kw in kpi_keywords):
-        return "kpi_hr"
-
-    # Check Financial keywords
-    fin_keywords = ["keuangan", "biaya", "pendapatan", "pengeluaran", "anggaran", "kas", "rupiah", "revenue", "expense", "budget", "price", "nominal", "total_harga", "rkap"]
-    if any(kw in col_str for kw in fin_keywords):
-        return "financial"
-
-    # Check SOC / Cyber Security keywords
-    soc_keywords = ["firewall", "severity", "threat", "ip_address", "source_ip", "destination_ip", "cve", "vulnerability", "attack", "malware", "virus", "port", "signature", "soc"]
-    if any(kw in col_str for kw in soc_keywords):
-        return "soc_security"
-
-    return "general"
+    scores = {domain: sum(1 for kw in kws if kw in col_str) for domain, kws in _DOMAIN_KEYWORDS.items()}
+    best_domain = max(scores, key=scores.get)
+    if scores[best_domain] == 0:
+        return "general"
+    return best_domain
 
 
 def suggest_sections_for_file(
@@ -241,10 +296,14 @@ def suggest_sections_for_file(
     # 1. Detect Domain (dipakai sbg hint utk AI + fallback key preset & label domain)
     domain = detect_domain_from_columns(columns, sample_data)
 
-    # 2. Check if file_name hints at domain
+    # 2. Check if file_name hints at domain — procurement dicek PALING AWAL (sebelum kpi_hr)
+    # karena nama file pengadaan nyata (mis. "Data Dummy PKG - Pengadaan Barang Jasa.pdf")
+    # ditemukan salah terklasifikasi kpi_hr sebelum ini.
     if file_name:
         fn_lower = file_name.lower()
-        if "kpi" in fn_lower or "mitra" in fn_lower or "kinerja" in fn_lower or "hr" in fn_lower:
+        if "pengadaan" in fn_lower or "procurement" in fn_lower or "vendor" in fn_lower or "tender" in fn_lower:
+            domain = "procurement"
+        elif "kpi" in fn_lower or "mitra" in fn_lower or "kinerja" in fn_lower or "hr" in fn_lower:
             domain = "kpi_hr"
         elif "keuangan" in fn_lower or "budget" in fn_lower or "kas" in fn_lower or "finan" in fn_lower:
             domain = "financial"

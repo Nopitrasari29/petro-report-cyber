@@ -12,6 +12,7 @@ di-hardcode — dipakai ulang dari chart_generator.py (_find_col, _rank_categori
 dan period_detector.py (find_date_column) supaya konsisten dengan deteksi yang sudah dipakai
 di fitur chart, bukan implementasi terpisah yang bisa berbeda hasil.
 """
+import re
 from typing import Any, Dict, List, Optional
 import pandas as pd
 
@@ -72,13 +73,31 @@ def _detect_severity_column(df: pd.DataFrame, exclude: List[str]) -> Optional[st
 
 
 def _compute_severity_distribution(df: pd.DataFrame, sev_col: Optional[str]) -> Dict[str, int]:
-    counters = {"critical": 0, "high": 0, "medium": 0, "low": 0, "informational": 0}
+    empty_counters = {"critical": 0, "high": 0, "medium": 0, "low": 0, "informational": 0}
     if not sev_col or sev_col not in df.columns:
-        return counters
-    for raw_val in df[sev_col].dropna():
+        return empty_counters
+
+    values = df[sev_col].dropna()
+    if values.empty:
+        return empty_counters
+
+    counters = dict(empty_counters)
+    classified = 0
+    for raw_val in values:
         bucket = _classify_severity_value(str(raw_val))
         if bucket:
             counters[bucket] += 1
+            classified += 1
+
+    # Kalau sebagian besar nilai TIDAK bisa diklasifikasi ke salah satu bucket, kolom ini
+    # kemungkinan besar bukan kolom severity keamanan siber sungguhan — mis. kolom "Status"
+    # berisi "Normal"/"Warning" untuk pemantauan jaringan, bukan kosakata severity baku.
+    # Kembalikan kosong (bukan hitungan parsial) supaya bagian ini disembunyikan sepenuhnya
+    # di laporan, alih-alih menampilkan persentase yang dihitung dari sebagian data saja
+    # dan jadi menyesatkan (contoh nyata: nilai "Normal" hilang dari total, membuat
+    # persentase Critical terlihat 69% padahal sebenarnya cuma ~40% dari seluruh data).
+    if classified < 0.7 * len(values):
+        return empty_counters
     return counters
 
 
@@ -113,9 +132,52 @@ def _detect_main_category_columns(df: pd.DataFrame, exclude: List[str]) -> Dict[
     return result
 
 
+_PAREN_RE = re.compile(r"\s*\([^)]*\)\s*")
+
+
+def _normalize_category_key(value: str) -> str:
+    """Kunci penggabungan untuk nilai kategori yang penulisannya mirip (mis. "Kantor Pusat
+    (KAPUS)" dan "Kantor Pusat" seharusnya dihitung sebagai entitas yang sama, bukan 2
+    kategori terpisah yang understate konsentrasi sebenarnya) — menghapus keterangan dalam
+    kurung dan menyeragamkan spasi/huruf besar-kecil sebelum dibandingkan."""
+    cleaned = _PAREN_RE.sub(" ", str(value))
+    return re.sub(r"\s+", " ", cleaned).strip().lower()
+
+
 def _top_values(df: pd.DataFrame, col: str, n: int = 10) -> List[Dict[str, Any]]:
-    counts = df[col].dropna().astype(str).value_counts().head(n)
-    return [{"value": val, "count": int(cnt)} for val, cnt in counts.items()]
+    raw_counts = df[col].dropna().astype(str).value_counts()
+    merged: Dict[str, Dict[str, Any]] = {}
+    for val, cnt in raw_counts.items():
+        key = _normalize_category_key(val)
+        if key not in merged:
+            merged[key] = {"value": val, "count": 0}
+        elif len(val) < len(merged[key]["value"]):
+            # Pilih varian penulisan TERPENDEK sebagai label tampilan — biasanya bentuk
+            # paling bersih tanpa keterangan/singkatan tambahan dalam kurung.
+            merged[key]["value"] = val
+        merged[key]["count"] += int(cnt)
+    items = sorted(merged.values(), key=lambda x: x["count"], reverse=True)[:n]
+    return items
+
+
+_INDEX_COLUMN_NAMES = {"no", "no.", "nomor", "id", "index", "idx", "num", "urut", "row", "row_number", "#"}
+
+
+def _is_row_index_column(col_name: str, series: "pd.Series") -> bool:
+    """True kalau kolom ini kemungkinan besar cuma nomor urut baris (mis. "No": 1,2,3,...),
+    bukan data analitis sungguhan — supaya tidak ikut dihitung sebagai statistik "sah"
+    (min/max/rata-rata) yang dikirim ke AI sebagai bagian dari angka yang harus dipercaya,
+    padahal isinya cuma indeks baris tanpa makna apa pun untuk analisis."""
+    if col_name.strip().lower() in _INDEX_COLUMN_NAMES:
+        return True
+    values = series.dropna()
+    if len(values) < 2:
+        return False
+    try:
+        sorted_vals = sorted(int(v) for v in values)
+    except (ValueError, TypeError):
+        return False
+    return sorted_vals == list(range(sorted_vals[0], sorted_vals[0] + len(sorted_vals)))
 
 
 def _compute_numeric_summary(df: pd.DataFrame, exclude: List[str]) -> Dict[str, Dict[str, float]]:
@@ -123,6 +185,8 @@ def _compute_numeric_summary(df: pd.DataFrame, exclude: List[str]) -> Dict[str, 
     for col in _find_numeric_cols(df, exclude=exclude):
         series = df[col].dropna()
         if series.empty:
+            continue
+        if _is_row_index_column(col, series):
             continue
         result[col] = {
             "min": round(float(series.min()), 2),
