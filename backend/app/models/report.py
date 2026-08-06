@@ -1,20 +1,21 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Boolean, Float, Date
+from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Boolean, Float, Date, Index
 from sqlalchemy.sql import func
 from app.db.session import Base
 
 class Report(Base):
     __tablename__ = "reports"
+    __table_args__ = (
+        Index("idx_reports_user_status", "user_id", "status"),
+        Index("idx_reports_user_created", "user_id", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, nullable=False)
-    data_type = Column(String, nullable=False)  # firewall, email_security, ids_ips, vapt, etc.
-    status = Column(String, default="draft")  # draft, parsed, analyzed, completed, failed
+    title = Column(String, nullable=False, index=True)
+    data_type = Column(String, nullable=False, index=True)  # firewall, email_security, ids_ips, vapt, etc.
+    status = Column(String, default="draft", index=True)  # draft, parsed, analyzed, completed, failed
     input_file_name = Column(String, nullable=True)
     
     parsed_data = Column(JSON, nullable=True)
-    # Fix #2: Path ke file JSON parsed data yang disimpan di file system (storage/parsed/).
-    # Jika terisi, maka parsed_data harus dibaca dari file ini, bukan dari kolom JSON di atas.
-    # Kolom JSON di atas tetap ada sebagai fallback untuk laporan-laporan lama (backward compat).
     parsed_data_path = Column(String, nullable=True)
     ai_summary = Column(JSON, nullable=True)  # Executive Summary, Trend Analysis, dll.
     chart_data = Column(JSON, nullable=True)   # Plotly config data
@@ -22,7 +23,7 @@ class Report(Base):
     file_pdf_path = Column(String, nullable=True)
     file_ppt_path = Column(String, nullable=True)
     
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     
     # Kolom Baru Menyesuaikan Mockup
     period_start = Column(Date, nullable=True)

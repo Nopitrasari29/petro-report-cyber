@@ -137,12 +137,13 @@ def humanize_label(label: str, source_cols: dict | None = None) -> str:
     return label.replace("_", " ").replace("category ", "Kategori ").strip().title()
 
 
-def build_key_findings(ai_summary: dict, report_stats: dict, open_count: int, sanitize_text, report=None) -> list:
-    """`sanitize_text` diterima sebagai parameter (bukan import langsung) supaya modul ini
-    tidak perlu bergantung pada ollama_client — pemanggil (export_ppt.py/export_pdf.py) sudah
-    mengimpornya untuk keperluan lain juga."""
+def build_key_findings(ai_summary: dict, report_stats: dict, open_count: int, sanitize_func=None, report=None) -> list:
+    """`sanitize_func` opsional — fallback ke `sanitize_text` yang sudah diimpor di modul ini
+    kalau pemanggil tidak mengisinya (pemanggil lama yang masih passing positional tetap
+    kompatibel apa adanya)."""
+    clean_fn = sanitize_func or sanitize_text
     findings = [
-        sanitize_text(coerce_finding_text(f))
+        clean_fn(coerce_finding_text(f))
         for f in (ai_summary.get("key_findings") or [])
         if coerce_finding_text(f)
     ]
@@ -273,6 +274,23 @@ def build_report_blocks(report) -> list[dict]:
             return captions[idx] if idx < len(captions) else None
         return None
 
+    # Detect domain & language. report.domain_type baru reliable utk laporan yang diunggah
+    # lewat detector baru (section_suggester.py) — laporan LAMA defaultnya None/"general" walau
+    # data_type-nya sebenarnya security/financial/kpi_hr. Fallback ke data_type di bawah supaya
+    # laporan lama (termasuk SOC lama) tidak meregresi ke kosakata "general".
+    domain = (report.domain_type or "").lower().strip().replace("-", "_")
+    if domain in ("", "general"):
+        _dt = str(getattr(report, "data_type", "") or "").strip().lower()
+        if _dt in ("keuangan", "financial"):
+            domain = "financial"
+        elif _dt == "kpi_hr":
+            domain = "kpi_hr"
+        elif _dt not in _NON_SECURITY_DATA_TYPES:
+            domain = "soc_security"
+        else:
+            domain = "general"
+    is_en = is_english(report)
+
     blocks: list[dict] = []
     sec_domain = is_security_domain(report)
 
@@ -297,7 +315,7 @@ def build_report_blocks(report) -> list[dict]:
         "kicker": _L(report, "LAPORAN ANALISIS", "ANALYSIS REPORT"),
         "title": report.title,
         "subtitle": sanitize_text(report.header_subtitle) or (
-            _L(report, "Security Operation Center", "Security Operation Center") if sec_domain
+            _L(report, "Security Operation Center", "Security Operations Center") if sec_domain
             else humanize_data_type(report)
         ),
         "period_text": period_text,
@@ -309,27 +327,54 @@ def build_report_blocks(report) -> list[dict]:
         "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
     })
 
-    # ---------------- Latar Belakang & Tujuan ----------------
-    if sec_domain:
-        purpose_text = sanitize_text(_L(
-            report,
-            f"Sepanjang periode {period_text}, sistem keamanan siber mencatat {total_records} event "
-            f"yang dianalisis pada laporan ini. Data log dianalisis untuk memetakan pola kejadian, "
-            f"menilai efektivitas penanganan, dan menjadi dasar rekomendasi perbaikan.",
-            f"Throughout the period {period_text}, the monitoring system recorded {total_records} events "
-            f"analyzed in this report. Log data was analyzed to map event patterns, assess response "
-            f"effectiveness, and form the basis for improvement recommendations.",
-        ))
+    # ---------------- Latar Belakang & Tujuan (Domain & Language Aware) ----------------
+    if domain == "financial":
+        data_name = "financial transactions" if is_en else "data transaksi & operasional keuangan"
+        obj1_title = "Map Financial Position" if is_en else "Memetakan Postur Keuangan"
+        obj1_desc = "Identify expense categories, revenue trends, and budget efficiency." if is_en else "Mengidentifikasi kategori beban, pendapatan, dan efisiensi anggaran."
+        obj2_title = "Evaluate Budget Efficiency" if is_en else "Evaluasi Efisiensi Anggaran"
+        obj2_desc = "Evaluate expenditure ratio against target plans." if is_en else "Mengevaluasi rasio pengeluaran terhadap target kerja perusahaan."
+        obj3_title = "Formulate Recommendations" if is_en else "Menyusun Rekomendasi Finansial"
+        obj3_desc = "Formulate cost optimization and savings actions." if is_en else "Merumuskan langkah optimalisasi biaya dan penghematan."
+    elif domain == "kpi_hr":
+        data_name = "KPI & performance evaluation data" if is_en else "data penilaian KPI & kinerja SDM/mitra"
+        obj1_title = "Map Target Achievement" if is_en else "Memetakan Pencapaian Target"
+        obj1_desc = "Identify KPI achievement scores per unit/division." if is_en else "Mengidentifikasi pencapaian skor KPI per divisi/unit kerja."
+        obj2_title = "Evaluate Performance Gaps" if is_en else "Evaluasi Gap & Performa"
+        obj2_desc = "Assess development areas and top performers." if is_en else "Menilai area pembinaan dan mitra dengan performa teratas."
+        obj3_title = "Formulate Action Plans" if is_en else "Rekomendasi Pengembangan"
+        obj3_desc = "Formulate performance improvement steps." if is_en else "Merumuskan langkah perbaikan kinerja dan alokasi target."
+    elif domain == "soc_security":
+        data_name = "cybersecurity log events" if is_en else "sistem keamanan siber"
+        obj1_title = "Map Event Patterns" if is_en else "Memetakan Pola Kejadian"
+        obj1_desc = "Identify categories, time trends, and target assets." if is_en else "Mengidentifikasi kategori, tren waktu, dan aset sasaran."
+        obj2_title = "Assess Response Status" if is_en else "Menilai Efektivitas Respons"
+        obj2_desc = "Evaluate incident mitigation status." if is_en else "Mengevaluasi status penanganan tiap insiden."
+        obj3_title = "Formulate Mitigations" if is_en else "Menyusun Rekomendasi"
+        obj3_desc = "Formulate priority mitigation steps based on data." if is_en else "Merumuskan langkah mitigasi prioritas berbasis temuan data."
     else:
-        purpose_text = sanitize_text(_L(
-            report,
-            f"Sepanjang periode {period_text}, sistem mencatat {total_records} data "
-            f"yang dianalisis pada laporan ini. Data dianalisis untuk memetakan pola, "
-            f"mengevaluasi capaian kinerja, dan menjadi dasar rekomendasi perbaikan.",
-            f"Throughout the period {period_text}, the system recorded {total_records} records "
-            f"analyzed in this report. Data was analyzed to map patterns, evaluate performance "
-            f"achievements, and form the basis for improvement recommendations.",
-        ))
+        data_name = "operational data records" if is_en else "data operasional"
+        obj1_title = "Map Data Distribution" if is_en else "Memetakan Distribusi Data"
+        obj1_desc = "Identify trends, frequency patterns, and main categories." if is_en else "Mengidentifikasi tren, pola frekuensi, dan kategori dominan."
+        obj2_title = "Evaluate Operational Metrics" if is_en else "Evaluasi Kinerja Operasional"
+        obj2_desc = "Evaluate key indicators and status." if is_en else "Menilai indikator utama dan status penanganan."
+        obj3_title = "Formulate Strategic Actions" if is_en else "Menyusun Rekomendasi Taktis"
+        obj3_desc = "Formulate improvement steps based on findings." if is_en else "Merumuskan langkah perbaikan berbasis temuan data."
+
+    if is_en:
+        purpose_text = sanitize_text(
+            f"Throughout the period {period_text}, a total of {total_records} {data_name} "
+            f"were analyzed in this report to map key patterns, evaluate operational efficiency, "
+            f"and formulate data-driven strategic recommendations."
+        )
+    else:
+        pola_text = "pola kejadian" if domain == "soc_security" else "pola data"
+        purpose_text = sanitize_text(
+            f"Sepanjang periode {period_text}, tercatat {total_records} {data_name} "
+            f"yang dianalisis pada laporan ini untuk memetakan {pola_text}, "
+            f"menilai efektivitas operasional, dan menjadi dasar rekomendasi perbaikan."
+        )
+
     blocks.append({
         "kind": "intro",
         "dark": False,
@@ -337,38 +382,9 @@ def build_report_blocks(report) -> list[dict]:
         "title": _L(report, "Latar Belakang dan Tujuan Analisis", "Background and Objectives"),
         "purpose_text": purpose_text,
         "objectives": [
-            {
-                "num": "1",
-                "title": _L(report, "Memetakan Pola Data", "Mapping Data Patterns") if not sec_domain else _L(report, "Memetakan Pola Kejadian", "Mapping Event Patterns"),
-                "detail": _L(
-                    report,
-                    "Mengidentifikasi kategori, tren waktu, dan entitas yang paling sering muncul.",
-                    "Identifying categories, time trends, and the most frequently occurring entities.",
-                ) if not sec_domain else _L(
-                    report,
-                    "Mengidentifikasi kategori, tren waktu, dan aset yang paling sering menjadi sasaran.",
-                    "Identifying categories, time trends, and the most frequently affected assets.",
-                ),
-            },
-            {
-                "num": "2",
-                "title": _L(report, "Menilai Efektivitas Capaian", "Assessing Performance Effectiveness") if not sec_domain else _L(report, "Menilai Efektivitas Respons", "Assessing Response Effectiveness"),
-                "detail": _L(report, "Mengevaluasi capaian dan tren kinerja utama.", "Evaluating key performance achievements and trends.") if not sec_domain
-                else _L(report, "Mengevaluasi status penanganan tiap insiden.", "Evaluating the handling status of each incident."),
-            },
-            {
-                "num": "3",
-                "title": _L(report, "Menyusun Rekomendasi", "Formulating Recommendations"),
-                "detail": _L(
-                    report,
-                    "Merumuskan langkah perbaikan prioritas berbasis temuan data aktual.",
-                    "Formulating priority improvement steps based on actual data findings.",
-                ) if not sec_domain else _L(
-                    report,
-                    "Merumuskan langkah mitigasi prioritas berbasis temuan data aktual.",
-                    "Formulating priority mitigation steps based on actual data findings.",
-                ),
-            },
+            {"num": "1", "title": obj1_title, "detail": obj1_desc},
+            {"num": "2", "title": obj2_title, "detail": obj2_desc},
+            {"num": "3", "title": obj3_title, "detail": obj3_desc},
         ],
         "scope": {
             "panel_title": _L(report, "Ruang Lingkup Data", "Data Scope"),
@@ -390,21 +406,28 @@ def build_report_blocks(report) -> list[dict]:
         },
     })
 
-    # ---------------- Ringkasan Eksekutif ----------------
+    # ---------------- Ringkasan Eksekutif (Domain & Language Aware) ----------------
     if is_included("executive_summary"):
-        stat_items = [(str(total_records), _L(report, "Total Event Log", "Total Log Events") if sec_domain else _L(report, "Total Data", "Total Records"))]
+        lbl_total = "Total Records" if is_en else "Total Data"
+        stat_items = [(str(total_records), lbl_total)]
+
         if total_sev:
             if severity.get("critical"):
-                stat_items.append((str(severity["critical"]), _L(report, "Insiden Critical", "Critical Incidents")))
+                lbl_crit = "Critical" if is_en else "Kategori Kritis"
+                stat_items.append((str(severity["critical"]), lbl_crit))
             if severity.get("high"):
-                stat_items.append((str(severity["high"]), _L(report, "High Severity", "High Severity")))
+                lbl_high = "High Priority" if is_en else "Prioritas Tinggi"
+                stat_items.append((str(severity["high"]), lbl_high))
         if status_col:
             closed = sum(1 for row in parsed_data if classify_open_status(row.get(status_col)) is False)
             if closed:
-                stat_items.append((str(closed), _L(report, "Sudah Ditangani", "Already Handled")))
-            stat_items.append((str(open_count), _L(report, "Masih Terbuka", "Still Open")))
+                lbl_closed = "Completed" if is_en else "Sudah Ditangani"
+                stat_items.append((str(closed), lbl_closed))
+            lbl_open = "Pending" if is_en else "Masih Terbuka"
+            stat_items.append((str(open_count), lbl_open))
         if category_pick:
-            stat_items.append((str(len(top_categories)), _L(report, "Kategori Sumber", "Source Categories")))
+            lbl_cat = "Categories" if is_en else "Kategori Sumber"
+            stat_items.append((str(len(top_categories)), lbl_cat))
         # Domain non-keamanan (KPI/keuangan/pengadaan/operasional) sering TIDAK punya konsep
         # severity/status sama sekali — tanpa ini kartu KPI cuma berisi 1-2 item (Total Data,
         # Kategori Sumber), jadi grid kartunya kelihatan besar & nyaris kosong. Tambahkan
@@ -418,19 +441,27 @@ def build_report_blocks(report) -> list[dict]:
             if avg_val is None:
                 continue
             formatted = f"{avg_val:,.0f}"
-            if not is_english(report):
+            if not is_en:
                 formatted = formatted.replace(",", ".")
             col_label = humanize_label(col, source_cols)
-            stat_items.append((formatted, _L(report, f"Rata-rata {col_label}", f"Average {col_label}")))
+            stat_items.append((formatted, f"Average {col_label}" if is_en else f"Rata-rata {col_label}"))
         stat_items = stat_items[:6]
+
+        if domain == "financial":
+            heading = f"Financial Snapshot, {period_text}" if is_en else f"Ringkasan Kinerja Keuangan, {period_text}"
+        elif domain == "kpi_hr":
+            heading = f"KPI Performance Snapshot, {period_text}" if is_en else f"Ringkasan Pencapaian KPI, {period_text}"
+        elif domain == "soc_security":
+            heading = f"Security Log Snapshot, {period_text}" if is_en else f"Snapshot Log Keamanan, {period_text}"
+        else:
+            heading = f"Operational Snapshot, {period_text}" if is_en else f"Ringkasan Data Operasional, {period_text}"
 
         caption = sanitize_text(ai_summary.get("executive_summary") or (key_findings[0] if key_findings else ""))
         blocks.append({
             "kind": "executive_summary",
             "dark": True,
             "title": _L(report, "Ringkasan Eksekutif", "Executive Summary"),
-            "heading": _L(report, f"Snapshot Log Keamanan, {period_text}", f"Log Snapshot, {period_text}") if sec_domain
-            else _L(report, f"Snapshot Data, {period_text}", f"Data Snapshot, {period_text}"),
+            "heading": heading,
             "stat_items": stat_items,
             "caption": caption,
         })

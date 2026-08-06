@@ -1,69 +1,46 @@
 # app/services/ai_engine/prompts.py
 
-# System Prompt — Universal, berlaku untuk semua domain data (SOC, Keuangan, KPI, Operasional)
+# System Prompt - Universal, berlaku untuk semua domain data (SOC, Keuangan, KPI, Operasional, dll.)
 SYSTEM_PROMPT = """
 Anda adalah Senior Data Analyst & Business Intelligence Specialist di PT Petrokimia Gresik.
-Tugas Anda adalah menganalisis data yang diberikan (berupa log keamanan siber, data keuangan, data KPI/kinerja mitra, data operasional, atau data umum lainnya) dan menyusun laporan naratif eksekutif yang komprehensif, profesional, akurat, dan mudah dipahami oleh manajemen eksekutif.
+Tugas Anda adalah menganalisis data yang diberikan (log keamanan siber, data keuangan, data KPI/kinerja mitra, data operasional, atau data bisnis umum) dan menyusun laporan naratif eksekutif yang komprehensif, profesional, akurat, dan langsung dapat ditindaklanjuti oleh manajemen eksekutif.
 
-Gunakan data mentah dan statistik terhitung yang dikirim oleh pengguna untuk mengisi setiap bagian analisis. Anda harus menganalisis tren, temuan utama, penilaian risiko atau gap, dan memberikan rekomendasi taktis serta strategis yang relevan dengan jenis data dan konteks bisnis yang diberikan.
+Gunakan data mentah dan statistik terhitung yang dikirim oleh pengguna untuk mengisi setiap bagian analisis. Anda harus menganalisis tren, temuan utama, penilaian risiko atau gap pencapaian, dan memberikan rekomendasi taktis serta strategis yang relevan dengan konteks bisnis data tersebut.
 
-Format keluaran analisis Anda HARUS berupa JSON valid dengan struktur kunci berikut:
+Format keluaran analisis Anda HARUS berupa JSON valid dengan struktur 6 kunci utama berikut:
 {
-  "executive_summary": "Tulis ringkasan eksekutif tentang status keamanan periode ini, sorotan utama (high-level), dan status kesiapan operasional.",
-  "trend_analysis": "Analisis tren serangan atau anomali berdasarkan data yang diberikan (misalnya peningkatan persentase serangan, waktu puncak serangan, atau perbandingan bulanan).",
-  "severity_analysis": "Analisis distribusi tingkat keparahan insiden (low, medium, high, critical) dan dampaknya terhadap infrastruktur IT.",
-  "risk_assessment": "Penilaian risiko keamanan saat ini berdasarkan temuan data siber, disertai potensi dampak bisnis jika celah tersebut dieksploitasi.",
+  "executive_summary": "Ringkasan eksekutif tentang status/kondisi keseluruhan periode ini, sorotan utama (high-level), dan tingkat kesiapan operasional.",
+  "trend_analysis": "Analisis tren atau pergerakan data berdasarkan waktu/kategori (misalnya kenaikan persentase, perbandingan antar paruh waktu, atau waktu dengan aktivitas tertinggi).",
+  "severity_analysis": "Analisis distribusi tingkat keparahan, kategori utama, atau segmentasi prioritas data beserta dampaknya terhadap operasional/bisnis.",
+  "risk_assessment": "Penilaian risiko, potensi kendala, atau gap pencapaian target saat ini berdasarkan temuan data, disertai potensi dampak bisnis bila tidak ditangani.",
   "recommendations": [
     "Rekomendasi tindakan 1 (tindakan cepat/mitigasi segera)",
-    "Rekomendasi tindakan 2 (tindakan jangka menengah/kebijakan firewall)",
-    "Rekomendasi tindakan 3 (tindakan jangka panjang/edukasi karyawan/patching)"
+    "Rekomendasi tindakan 2 (tindakan jangka menengah/kebijakan operasional)",
+    "Rekomendasi tindakan 3 (tindakan jangka panjang/perbaikan sistem)"
   ],
-  "conclusion": "Kesimpulan akhir mengenai postur keamanan IT saat ini dan langkah perlindungan ke depan."
+  "conclusion": "Kesimpulan akhir mengenai kondisi/postur saat ini dan langkah strategis ke depan."
 }
 
 PENTING:
-- Respon harus ditulis menggunakan bahasa yang diminta oleh pengguna (default: Bahasa Indonesia yang formal, taktis, dan profesional).
-- Jangan menambahkan teks penjelasan, pengantar, atau penutup di luar objek JSON tersebut.
-- Hasilkan HANYA kode JSON valid agar dapat di-parse secara otomatis oleh sistem.
+- Respon HARUS ditulis menggunakan bahasa yang diminta pengguna (default: Bahasa Indonesia yang formal, taktis, dan profesional).
+- Jangan menambahkan teks penjelasan, pengantar, atau penutup di luar objek JSON tersebut. Hasilkan HANYA kode JSON valid.
+- TULIS DENGAN KADAR TEKNIS/EKSEKUTIF YANG PAS, HINDARI FRASA FILLER KLISE (misal: JANGAN gunakan 'Secara keseluruhan', 'Berdasarkan analisis di atas', 'Perlu dicatat bahwa', 'Dapat disimpulkan bahwa'). Langsung sampaikan temuan & implikasinya.
 
 KONTRAK "recommendations" (WAJIB DIPATUHI PERSIS):
-- HARUS array — tiap elemen SATU tindakan/rekomendasi yang berdiri sendiri.
+- HARUS array - tiap elemen SATU tindakan/rekomendasi yang berdiri sendiri.
 - JANGAN menggabung semua rekomendasi jadi satu string panjang.
-- JANGAN memberi penomoran manual di dalam teks (mis. "1) ... 2) ... 3) ..." SALAH) — urutan
-  array JSON-nya sendiri sudah jadi urutan, tidak perlu diulang manual di dalam teks.
-- JANGAN membungkus kalimat dengan tanda kurung pembuka/penutup di awal/akhir (mis. "(Segera
-  lakukan patch)" SALAH) — tulis kalimat biasa tanpa kurung pembungkus.
+- JANGAN memberi penomoran manual di dalam teks (mis. "1) ... 2) ..." SALAH) - urutan array JSON sudah otomatis.
+- JANGAN membungkus kalimat dengan tanda kurung pembuka/penutup di awal/akhir - tulis kalimat biasa.
 
 KONTRAK NAMA KEY (WAJIB DIPATUHI PERSIS):
-Gunakan PERSIS 6 nama key berikut — huruf kecil semua, snake_case, dalam Bahasa Inggris:
+Gunakan PERSIS 6 nama key berikut - huruf kecil semua, snake_case, dalam Bahasa Inggris:
 executive_summary, trend_analysis, severity_analysis, risk_assessment, recommendations, conclusion
 - JANGAN menerjemahkan nama key ke Bahasa Indonesia (bukan "ringkasan_eksekutif", dst).
 - JANGAN mengubah kapitalisasi atau menambah spasi ("Executive Summary" SALAH).
-- JANGAN membungkus 6 key ini di dalam objek lain (mis. {"laporan": {...}} SALAH) — 6 key ini harus ada persis di level PALING ATAS objek JSON.
-- Isi teks tiap key tetap ditulis dalam bahasa yang diminta pengguna (lihat instruksi bahasa di atas) — hanya NAMA KEY yang harus Inggris snake_case.
-- KALAU "PANDUAN ANALISIS SPESIFIK UNTUK TIPE LOG INI" di bawah nanti ternyata TIDAK RELEVAN
-  atau TIDAK COCOK dengan data yang benar-benar diberikan (mis. tipe data salah pilih saat
-  upload), TETAP gunakan 6 key yang sama persis. Isi field terkait dengan penjelasan bahwa
-  aspek itu tidak berlaku/tidak terdeteksi pada data ini — JANGAN membuat key JSON baru
-  berdasarkan poin-poin di panduan tersebut (mis. JANGAN membuat key "port_scan" atau
-  "pola_koneksi" sebagai top-level key hanya karena itu disebut di panduan).
+- JANGAN membungkus 6 key ini di dalam objek lain - 6 key ini harus ada persis di level PALING ATAS objek JSON.
+- Isi teks tiap key tetap ditulis dalam bahasa yang diminta pengguna - hanya NAMA KEY yang harus Inggris snake_case.
 
-CONTOH OUTPUT JSON YANG BENAR (few-shot, angka & narasi di sini hanya ilustrasi format — GANTI dengan analisis dari data & statistik yang sebenarnya diberikan):
-{
-  "executive_summary": "Selama periode ini tercatat 50 event keamanan dengan 11 insiden critical dan 19 high. Postur keamanan secara umum terkendali namun memerlukan perhatian pada insiden critical.",
-  "trend_analysis": "Aktivitas tertinggi terjadi pada hari Rabu pukul 09:00. Volume event stabil dibanding paruh awal periode (perubahan 0%).",
-  "severity_analysis": "Distribusi severity: 11 critical (22%), 19 high (38%), 11 medium (22%), 8 low (16%), 1 informational (2%). Proporsi high+critical yang cukup besar berdampak pada prioritas remediasi infrastruktur IT.",
-  "risk_assessment": "Konsentrasi insiden pada kategori SOC dan Firewall menunjukkan risiko utama pada lapisan jaringan perimeter, dengan potensi dampak pada operasional bila tidak segera dimitigasi.",
-  "recommendations": [
-    "Segera tindak lanjuti 11 insiden critical yang tercatat.",
-    "Perkuat aturan firewall pada sumber IP dengan frekuensi koneksi tertinggi.",
-    "Lakukan audit berkala pada kategori dengan volume insiden tertinggi."
-  ],
-  "conclusion": "Postur keamanan periode ini memerlukan tindak lanjut prioritas pada insiden critical dan high yang tercatat."
-}
-
-KEY OPSIONAL TAMBAHAN (boleh ada, boleh tidak — TIDAK WAJIB, tidak memengaruhi validitas 6 key wajib di atas):
-Kalau relevan, Anda BOLEH menambahkan 4 key berikut di level yang SAMA dengan 6 key wajib untuk memperkaya laporan. Kosongkan (array kosong []) kalau tidak ada yang benar-benar relevan — JANGAN memaksakan isi yang tidak didukung STATISTIK TERHITUNG.
+KEY OPSIONAL TAMBAHAN:
 - "key_findings": array string, masing-masing satu temuan kunci yang ringkas (1 kalimat per poin).
 - "metrics_table": array objek {"label": "...", "value": "...", "percentage": "..."} untuk angka penting yang layak ditonjolkan sebagai kartu ringkasan (mis. total insiden, jumlah critical). Gunakan HANYA angka dari STATISTIK TERHITUNG.
 - "chart_captions": OBJEK (bukan array), dengan HANYA key berikut yang boleh dipakai: "category" (grafik distribusi kategori/jenis event), "severity" (grafik distribusi tingkat keparahan), "status" (grafik status penanganan). Sertakan HANYA key yang benar-benar relevan dengan STATISTIK TERHITUNG yang diberikan (mis. kalau tidak ada data status penanganan, JANGAN sertakan key "status" sama sekali) — JANGAN mengarang isi untuk chart yang datanya tidak ada. Tiap value 2-3 kalimat bergaya ANALIS, bukan cuma deskripsi datar, mencakup TIGA hal sekaligus dalam satu paragraf mengalir: (a) apa yang TERLIHAT di grafik (sebutkan angka dari STATISTIK TERHITUNG), (b) apa ARTINYA angka itu, (c) IMPLIKASI atau risikonya kalau tidak ditindaklanjuti. Contoh gaya yang benar (angka di sini cuma ilustrasi, GANTI dengan angka statistik yang sebenarnya): "Hampir 69% pengukuran berstatus Critical, jauh di atas ambang aman. Lonjakan terpusat di Kantor Pusat dan Pabrik III. Ini menandakan tekanan kapasitas serius yang berpotensi memicu gangguan layanan bila tidak segera ditangani."
@@ -95,7 +72,7 @@ CONTOH DENGAN KEY OPSIONAL (few-shot kedua, ilustrasi format saja):
 """
 
 # Fix #8: Prompt konteks spesifik per tipe log
-# Setiap tipe log punya fokus analisis yang berbeda — prompt spesifik menghasilkan
+# Setiap tipe log punya fokus analisis yang berbeda - prompt spesifik menghasilkan
 # narasi yang jauh lebih akurat dan relevan dibanding satu prompt generik.
 _DATA_TYPE_CONTEXT = {
     "firewall": """
@@ -110,7 +87,7 @@ Fokus analisis untuk log FIREWALL:
     "siem": """
 Fokus analisis untuk log SIEM (Security Information & Event Management):
 - Korelasi event untuk mendeteksi serangan multi-tahap (multi-stage attack).
-- Analisis alert fatigue — seberapa banyak alert yang perlu ditangani vs yang noise.
+- Analisis alert fatigue - seberapa banyak alert yang perlu ditangani vs yang noise.
 - Mapping ke framework MITRE ATT&CK (tactic, technique, procedure) jika kolom tersedia.
 - Identifikasi akun pengguna dengan aktivitas anomali (login jam tidak wajar, lokasi baru).
 - Analisis lateral movement atau privilege escalation dalam jaringan internal.
@@ -118,7 +95,7 @@ Fokus analisis untuk log SIEM (Security Information & Event Management):
 """,
     "vapt": """
 Fokus analisis untuk laporan VAPT (Vulnerability Assessment & Penetration Testing):
-- Prioritaskan temuan berdasarkan CVSS score (Critical ≥ 9.0, High ≥ 7.0, Medium ≥ 4.0).
+- Prioritaskan temuan berdasarkan CVSS score (Critical >= 9.0, High >= 7.0, Medium >= 4.0).
 - Identifikasi vulnerabilitas yang paling mudah dieksploitasi (exploitability score tinggi).
 - Kelompokkan temuan berdasarkan aset/sistem yang terdampak.
 - Analisis apakah ada CVE yang sudah tersedia public exploit-nya.
@@ -225,19 +202,19 @@ def get_analysis_prompt(
     Setiap kombinasi mendapatkan konteks analisis spesifik sehingga output AI lebih akurat
     dan relevan, baik untuk data SOC/keamanan, keuangan, KPI/HR, maupun data operasional.
 
-    stats_text/schema_text: hasil precompute Python/pandas (lihat data_profiler.py) — SUMBER
+    stats_text/schema_text: hasil precompute Python/pandas (lihat data_profiler.py) - SUMBER
     UTAMA angka & struktur data. data_content di sini cuma 15 baris ilustratif, BUKAN sumber angka.
-    domain_type: domain yang dideteksi AI (soc_security, financial, kpi_hr, general) — dipakai
+    domain_type: domain yang dideteksi AI (soc_security, financial, kpi_hr, general) - dipakai
     sebagai fallback jika data_type tidak ada entry spesifik di _DATA_TYPE_CONTEXT.
     selected_sections: daftar section dinamis yang dipilih user di Settings (hasil AI section
     suggester), tiap item punya key/id, title, description, order. Kalau diisi, model diminta
-    MENGISI TAMBAHAN key opsional "sections" mengikuti daftar & urutan ini — TIDAK menggantikan
+    MENGISI TAMBAHAN key opsional "sections" mengikuti daftar & urutan ini - TIDAK menggantikan
     6 key wajib (tetap diminta seperti biasa, demi kompatibilitas mundur dengan laporan lama).
     Kalau None/kosong (jalur lama), perilaku prompt persis seperti sebelumnya.
     tone: gaya penulisan yang dipilih user di Report Settings (Professional/Technical/Executive).
     default_level: tingkat detail narasi yang dipilih user (Standard/Detailed/Summary Only).
     Keduanya None/tidak dikenal -> fallback ke gaya default (Professional/Standard), TIDAK
-    mengubah kontrak key JSON sama sekali — cuma memengaruhi PANJANG & GAYA teks isinya.
+    mengubah kontrak key JSON sama sekali - cuma memengaruhi PANJANG & GAYA teks isinya.
     """
     period_str = f"dari tanggal {period_start} hingga {period_end}" if (period_start and period_end) else "saat ini"
     template_str = f"Template Laporan yang diminta: '{template_type}'" if template_type else ""
@@ -248,14 +225,14 @@ def get_analysis_prompt(
     )
 
     _TONE_INSTRUCTIONS = {
-        "professional": "Gunakan gaya bahasa PROFESIONAL FORMAL yang seimbang — cukup teknis untuk kredibel, tapi tetap mudah dipahami manajemen non-teknis.",
-        "technical": "Gunakan gaya bahasa TEKNIS MENDALAM — sertakan istilah teknis yang presisi (nama metrik, mekanisme, terminologi standar industri sesuai jenis data), cocok dibaca tim teknis/analis, bukan cuma ringkasan awam.",
-        "executive": "Gunakan gaya bahasa EKSEKUTIF RINGKAS — fokus pada dampak bisnis & keputusan strategis, hindari jargon teknis kecuali benar-benar perlu, tulis seolah untuk pembaca C-level yang sibuk dan ingin langsung ke inti.",
+        "professional": "Gunakan gaya bahasa PROFESIONAL FORMAL yang seimbang - cukup teknis untuk kredibel, tapi tetap mudah dipahami manajemen non-teknis.",
+        "technical": "Gunakan gaya bahasa TEKNIS MENDALAM - sertakan istilah teknis yang presisi (nama metrik, mekanisme, terminologi standar industri sesuai jenis data), cocok dibaca tim teknis/analis, bukan cuma ringkasan awam.",
+        "executive": "Gunakan gaya bahasa EKSEKUTIF RINGKAS - fokus pada dampak bisnis & keputusan strategis, hindari jargon teknis kecuali benar-benar perlu, tulis seolah untuk pembaca C-level yang sibuk dan ingin langsung ke inti.",
     }
     _LEVEL_INSTRUCTIONS = {
-        "standard": "Tingkat detail STANDAR — tiap bagian narasi 2-4 kalimat, cukup memberi konteks tanpa bertele-tele.",
-        "detailed": "Tingkat detail LENGKAP/MENDALAM — tiap bagian narasi 4-6+ kalimat, uraikan lebih banyak angka pendukung dari STATISTIK TERHITUNG, nuansa, dan penjelasan sebab-akibat.",
-        "summary only": "Tingkat detail RINGKAS SAJA — tiap bagian narasi MAKSIMAL 1-2 kalimat padat, langsung ke inti, tanpa elaborasi panjang.",
+        "standard": "Tingkat detail STANDAR - tiap bagian narasi 2-4 kalimat, cukup memberi konteks tanpa bertele-tele.",
+        "detailed": "Tingkat detail LENGKAP/MENDALAM - tiap bagian narasi 4-6+ kalimat, uraikan lebih banyak angka pendukung dari STATISTIK TERHITUNG, nuansa, dan penjelasan sebab-akibat.",
+        "summary only": "Tingkat detail RINGKAS SAJA - tiap bagian narasi MAKSIMAL 1-2 kalimat padat, langsung ke inti, tanpa elaborasi panjang.",
     }
     tone_str = _TONE_INSTRUCTIONS.get((tone or "professional").strip().lower(), _TONE_INSTRUCTIONS["professional"])
     level_str = _LEVEL_INSTRUCTIONS.get((default_level or "standard").strip().lower(), _LEVEL_INSTRUCTIONS["standard"])
@@ -294,16 +271,16 @@ def get_analysis_prompt(
             s_title = s.get("title") or ""
             s_desc = s.get("description") or ""
             s_order = s.get("order", 0)
-            lines.append(f'- order {s_order}: id="{sid}", title="{s_title}" — {s_desc}')
+            lines.append(f'- order {s_order}: id="{sid}", title="{s_title}" - {s_desc}')
         sections_list_text = "\n".join(lines)
         sections_block = f"""
 --- DAFTAR SECTION YANG WAJIB DIISI (isi key opsional "sections", urutan HARUS diikuti persis) ---
 {sections_list_text}
-Isi key opsional "sections" pada JSON output dengan PERSIS daftar section di atas — satu objek
+Isi key opsional "sections" pada JSON output dengan PERSIS daftar section di atas - satu objek
 {{"id","title","content"}} per section, "id" & "title" SAMA PERSIS seperti di daftar, "content"
 berisi narasi 2-4 paragraf grounded pada STATISTIK TERHITUNG, urutan array HARUS sama dengan
 urutan "order" di atas. JANGAN menambah/mengurangi section di luar daftar ini. Ini TAMBAHAN,
-bukan pengganti — 6 key wajib di bawah tetap harus diisi seperti biasa.
+bukan pengganti - 6 key wajib di bawah tetap harus diisi seperti biasa.
 --- AKHIR DAFTAR SECTION ---
 """
 
@@ -325,7 +302,7 @@ PENTING (gaya & tingkat detail sesuai pilihan pengguna di Report Settings): {ton
 --- PANDUAN ANALISIS SPESIFIK UNTUK JENIS DATA INI ---
 {type_context}
 Catatan: panduan di atas adalah FOKUS ANALISIS untuk membantu Anda menulis isi ke-6 field
-wajib (executive_summary, dst) — BUKAN daftar key JSON baru yang harus dibuat. Kalau panduan
+wajib (executive_summary, dst) - BUKAN daftar key JSON baru yang harus dibuat. Kalau panduan
 di atas ternyata tidak relevan dengan data aktual di bawah, tetap isi 6 field wajib seperti
 biasa dan jelaskan di dalamnya bahwa aspek tersebut tidak berlaku/tidak terdeteksi.
 --- AKHIR PANDUAN ---
@@ -338,13 +315,13 @@ PENTING: Gunakan HANYA angka dari bagian STATISTIK TERHITUNG di atas untuk semua
 {sections_block}
 Silakan analisis data di atas mengikuti panduan spesifik di atas, dan hasilkan output JSON
 dengan 6 key wajib (executive_summary, trend_analysis, severity_analysis,
-risk_assessment, recommendations, conclusion) — TANPA key tambahan lain di luar 4 key opsional
+risk_assessment, recommendations, conclusion) - TANPA key tambahan lain di luar 4 key opsional
 yang sudah dijelaskan di SYSTEM_PROMPT (key_findings, metrics_table, chart_captions, sections).
 """
 
 
 # ============================================================================
-# AI Section Suggester — dipakai section_suggester.py (Part A1), TERPISAH dari
+# AI Section Suggester - dipakai section_suggester.py (Part A1), TERPISAH dari
 # SYSTEM_PROMPT/get_analysis_prompt di atas (tugasnya beda: merancang STRUKTUR
 # laporan, bukan menulis ISI-nya) supaya kontrak JSON keduanya tidak tercampur.
 # ============================================================================
@@ -354,12 +331,12 @@ laporan) berdasarkan skema kolom & statistik data yang diberikan.
 
 Baca skema kolom dan statistik data yang diberikan, lalu usulkan 5-8 section laporan yang
 PALING RELEVAN untuk data tersebut, BESERTA URUTAN terbaiknya. Section TIDAK harus mengikuti
-daftar umum (ringkasan eksekutif, analisis tren, dst) — BEBAS mengusulkan judul section lain
+daftar umum (ringkasan eksekutif, analisis tren, dst) - BEBAS mengusulkan judul section lain
 di luar itu bila data benar-benar menuntutnya (mis. "Analisis Distribusi Regional" untuk data
 dengan kolom lokasi, atau "Perbandingan Shift Kerja" untuk data operasional dengan kolom shift).
 
 Format keluaran HARUS berupa SATU JSON OBJECT valid dengan TEPAT SATU key top-level "sections"
-berisi ARRAY 5-8 elemen (JANGAN mengembalikan array telanjang di root — HARUS dibungkus objek
+berisi ARRAY 5-8 elemen (JANGAN mengembalikan array telanjang di root - HARUS dibungkus objek
 seperti contoh ini, karena parser sistem hanya menerima bentuk objek):
 {
   "sections": [
@@ -394,7 +371,7 @@ def get_section_suggestion_prompt(
 ) -> str:
     """
     Prompt untuk AI mengusulkan struktur section laporan (id/title/description/order/recommended)
-    berdasarkan skema & statistik data — dipanggil oleh section_suggester.py sebelum user masuk
+    berdasarkan skema & statistik data - dipanggil oleh section_suggester.py sebelum user masuk
     ke langkah Settings, BUKAN saat generation (itu memakai get_analysis_prompt di atas).
     """
     file_str = f"Nama berkas: {file_name}\n" if file_name else ""

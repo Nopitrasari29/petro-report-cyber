@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, Request
+from fastapi import APIRouter, Depends, HTTPException, Response, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -178,13 +178,24 @@ def bulk_remove_reports(
     if not report_ids:
         raise HTTPException(status_code=400, detail="Daftar ID laporan tidak boleh kosong.")
 
-    deleted_count = db.query(Report).filter(
+    from app.crud.report import _delete_file_safely
+
+    # RCA-09: Ambil daftar laporan dulu untuk menghapus file fisik di disk
+    reports_to_delete = db.query(Report).filter(
         Report.id.in_(report_ids),
         Report.user_id == current_user.id
-    ).delete(synchronize_session=False)
+    ).all()
 
+    for r in reports_to_delete:
+        _delete_file_safely(r.parsed_data_path)
+        _delete_file_safely(r.file_pdf_path)
+        _delete_file_safely(r.file_ppt_path)
+        db.delete(r)
+
+    deleted_count = len(reports_to_delete)
     db.commit()
-    # Fix #9: Catat aksi bulk delete ke audit log
+
+    # Catat aksi bulk delete ke audit log
     try:
         log_action(
             db, user_id=current_user.id, action="bulk_delete",
@@ -196,10 +207,12 @@ def bulk_remove_reports(
         pass
     return {"status": "success", "deleted_count": deleted_count, "message": f"{deleted_count} laporan berhasil dihapus."}
 
+
 @router.post("/{report_id}/retry")
 def retry_report_analysis(
     report_id: int,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -216,8 +229,7 @@ def retry_report_analysis(
     db.refresh(db_report)
 
     from app.api.v1.endpoints.analysis import _run_analysis_job
-    import threading
-    threading.Thread(target=_run_analysis_job, args=(report_id,), daemon=True).start()
+    background_tasks.add_task(_run_analysis_job, report_id)
 
     # Fix #9: Catat aksi retry ke audit log
     try:
@@ -230,6 +242,23 @@ def retry_report_analysis(
     except Exception:
         pass
     return {"status": "processing", "message": "Analisis AI berhasil dipicu ulang di background."}
+
+def _cleanup_old_export_cache(export_dir: str, max_age_days: int = 7):
+    """RCA-17: Hapus file cache export PDF/PPTX di disk yang umurnya lebih dari max_age_days."""
+    try:
+        import os, time
+        now = time.time()
+        max_age_sec = max_age_days * 86400
+        for fname in os.listdir(export_dir):
+            fpath = os.path.join(export_dir, fname)
+            if os.path.isfile(fpath) and (now - os.path.getmtime(fpath)) > max_age_sec:
+                try:
+                    os.remove(fpath)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
 
 @router.get("/{report_id}/pdf")
 def download_pdf_report(
@@ -256,6 +285,7 @@ def download_pdf_report(
     import os
     export_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "storage", "exports")
     os.makedirs(export_dir, exist_ok=True)
+    _cleanup_old_export_cache(export_dir)
     pdf_cache_path = os.path.join(export_dir, f"soc_report_{report_id}.pdf")
 
     if os.path.exists(pdf_cache_path) and db_report.file_pdf_path == pdf_cache_path:

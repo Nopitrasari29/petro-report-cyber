@@ -236,12 +236,18 @@ def upload_security_file(
         # kolom yang tidak ada di salah satu file otomatis kosong saat diproses ke DataFrame
         # di chart_generator.py/count_threats, bukan error).
         max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        
+        # RCA-16: Cek total akumulasi kuota penyimpanan user di database (Maks 1GB per user)
+        from sqlalchemy import func as _func
+        from app.models.report import Report as _Report
+        existing_user_bytes = db.query(_func.coalesce(_func.sum(_Report.total_file_size_bytes), 0)).filter(_Report.user_id == current_user.id).scalar() or 0
+        USER_MAX_QUOTA_BYTES = 1024 * 1024 * 1024  # 1 GB
+        
         parsed_data = []
         file_names = []
         total_size_bytes = 0
         for f in files:
             # Validasi ukuran berkas SEBELUM diproses, sesuai batas di settings (MAX_UPLOAD_SIZE_MB).
-            # f.size tersedia dari Starlette tanpa perlu baca seluruh file ke memory dulu.
             if f.size is not None and f.size > max_bytes:
                 raise HTTPException(
                     status_code=413,
@@ -249,6 +255,14 @@ def upload_security_file(
                 )
             total_size_bytes += f.size or 0
 
+        if existing_user_bytes + total_size_bytes > USER_MAX_QUOTA_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Total kuota penyimpanan akun Anda (1 GB) telah penuh. Silakan hapus beberapa laporan lama di Riwayat sebelum mengunggah file baru."
+            )
+
+        # Proses parsing masing-masing file setelah semua validasi ukuran lolos
+        for f in files:
             try:
                 parser = ParserFactory.get_parser(f.filename)
                 raw_parsed = parser.parse(f.file)
