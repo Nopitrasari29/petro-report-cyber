@@ -47,8 +47,22 @@ GRAY_TEXT = "#5C6B62"
 RED_CRIT = "#B23A2E"
 RED_CRIT_BG = "#F8E2DE"
 PANEL_BORDER = "#E2E5DE"
-TITLE_FONT = '"Bookman Old Style", Georgia, serif'
-BODY_FONT = 'Calibri, "Segoe UI", sans-serif'
+FONT_ATTR_QUOTE_BUG_NOTE = """
+BUG BESAR YANG DIPERBAIKI (ditemukan lewat isolasi render+sampling langsung, bukan cuma baca
+dokumentasi): TITLE_FONT/BODY_FONT SEBELUMNYA memakai tanda kutip DOBEL di sekeliling nama font
+(mis. '"Bookman Old Style", Georgia, serif'). Setiap kali nilai ini disisipkan ke atribut HTML
+style="..." (yang JUGA dibatasi kutip dobel), kutip dobel yang tertanam itu MENUTUP atribut
+style secara prematur di titik itu juga - persis seperti <div style="color:"red";">. Sisa
+deklarasi CSS setelahnya (termasuk font-size/font-weight/color/margin kalau font-family
+ditulis PALING AWAL, pola paling umum di file ini) jadi teks bukan-atribut yang diabaikan
+parser HTML, sehingga elemen itu SAMA SEKALI KEHILANGAN semua styling-nya (font 34pt bold jadi
+teks kecil polos, dst) - inilah sebab utama judul cover, judul tiap halaman, angka besar kartu
+statistik, dan judul highlight tampil kecil/tidak berbobot di PDF yang dihasilkan sebelumnya.
+Nama font sekarang dibungkus kutip TUNGGAL saja (CSS sah menerima keduanya) supaya tidak pernah
+bentrok dengan kutip dobel pembungkus atribut style="..." di mana pun nilai ini dipakai.
+"""
+TITLE_FONT = "'Bookman Old Style', Georgia, serif"
+BODY_FONT = "Calibri, 'Segoe UI', sans-serif"
 
 CATEGORY_COLOR_RAMP = [GREEN_MAIN, GREEN_CHART, GOLD_MAIN, GOLD_LIGHT, GRAY_TEXT]
 SEVERITY_COLOR = {
@@ -106,12 +120,12 @@ def _badge_row(number, title, detail, color=GREEN_MAIN, on_dark=False) -> str:
     # <table> terpisah, sudah diuji langsung) supaya total tumpukannya penuh ke sisa tinggi
     # halaman, membuat jarak antar baris jadi puluhan kali lipat dari margin-bottom aslinya.
     # Nilai height digenerosikan (bukan pas-pasan) karena detail bisa wrap ke 2 baris.
-    row_h = "50pt" if detail else "24pt"
+    row_h = "42pt" if detail else "24pt"
     title_color = "#fff" if on_dark else TEXT_DARK
     detail_color = GOLD_LIGHT if on_dark else GRAY_TEXT
     detail_html = f'<div style="font-size:9.5pt;color:{detail_color};margin-top:2px;">{_esc(detail)}</div>' if detail else ""
     return (
-        f'<table style="width:100%;height:{row_h};border-collapse:collapse;margin-bottom:14px;" cellpadding="0" cellspacing="0"><tr style="height:{row_h};">'
+        f'<table style="width:100%;height:{row_h};border-collapse:collapse;margin-bottom:8px;" cellpadding="0" cellspacing="0"><tr style="height:{row_h};">'
         f'<td style="width:34px;vertical-align:top;padding:0 12px 0 0;">{_badge(number, color)}</td>'
         f'<td style="vertical-align:top;padding:0;">'
         f'<div style="font-weight:700;font-size:11.5pt;color:{title_color};">{_esc(title)}</div>{detail_html}'
@@ -138,8 +152,17 @@ def _bar_chart_html(categories, values, colors=None) -> str:
     # nyaris 0 (saat pct=100), menyebabkan availWidth negatif dan crash reportlab.
     # height eksplisit di <table> DAN tiap <tr> (lihat catatan panjang di _card_grid) — tanpanya
     # xhtml2pdf meregangkan tiap baris bar chart supaya penuh ke sisa tinggi halaman, membuat
-    # jarak antar bar jadi ratusan pt padahal cuma dirancang ~24pt per baris.
-    row_h = 24
+    # jarak antar bar jadi ratusan pt padahal cuma dirancang ~32pt per baris.
+    #
+    # BUG BESAR YANG DIPERBAIKI: `<td>` di sini SEBELUMNYA memakai CSS `padding` (properti,
+    # bukan atribut cellpadding) untuk jarak antar baris ("padding:0 0 8px 0"). Terbukti lewat
+    # isolasi render+sampling: kombinasi CSS `padding` PLUS `height` eksplisit pada baris yang
+    # sama membuat xhtml2pdf membungkus sel itu dalam KeepInFrame mode="shrink" (perilaku
+    # default reportlab utk SEMUA <td>, lihat xhtml2pdf/tables.py) yang MENGECILKAN FONT
+    # drastis (9.5pt jadi ~2-3pt, sampel nyata) supaya konten "muat" — padahal tanpa padding
+    # sama sekali kontennya sudah muat pas di row_h yang sama. Jarak antar baris sekarang
+    # datang dari row_h itu sendiri (baris dilebarkan sedikit, BUKAN dari padding tambahan).
+    row_h = 30
     max_val = max(values) if values else 1
     rows = []
     for i, (cat, val) in enumerate(zip(categories, values)):
@@ -148,17 +171,17 @@ def _bar_chart_html(categories, values, colors=None) -> str:
         color = colors[i] if colors else GREEN_MAIN
         fill_html = (
             f'<table style="width:{pct}%;" cellpadding="0" cellspacing="0"><tr>'
-            f'<td style="background:{color};height:16px;border-radius:4px;font-size:1px;line-height:16px;padding:0;">&nbsp;</td>'
+            f'<td style="background:{color};height:16px;border-radius:4px;font-size:1px;line-height:16px;">&nbsp;</td>'
             f'</tr></table>'
             if pct else ""
         )
         rows.append(
             f'<tr style="height:{row_h}pt;">'
-            f'<td style="width:100px;font-size:9.5pt;color:{TEXT_DARK};padding:0 0 8px 0;">{_esc(cat)}</td>'
-            f'<td style="padding:0 8px 8px 0;">'
+            f'<td style="width:100px;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;padding:0 8px 0 0;">{_esc(cat)}</td>'
+            f'<td style="vertical-align:middle;padding:0 8px 0 0;">'
             f'<div style="background:#EEEEEE;border-radius:4px;">{fill_html}</div>'
             f'</td>'
-            f'<td style="width:36px;text-align:right;font-weight:700;font-size:9.5pt;color:{TEXT_DARK};padding:0 0 8px 0;">{val:g}</td>'
+            f'<td style="width:36px;text-align:right;font-weight:700;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;">{val:g}</td>'
             f'</tr>'
         )
     total_h = row_h * len(rows)
@@ -171,33 +194,56 @@ def _ivory_panel(icon_text, title_text, rows_html, footnote=None, content_rows=0
     # yang dibungkus di dalam halaman ber-height eksplisit penuh 1 halaman; tanpa height
     # sendiri, div ini (dan baris-baris di dalamnya) diregangkan xhtml2pdf mengisi sisa
     # tinggi halaman, meninggalkan celah kosong raksasa antar baris.
+    #
+    # BUG BESAR YANG DIPERBAIKI: panel ini membungkus `rows_html` — yang SENDIRI sudah berupa
+    # <table height=X> penuh (dari _ivory_kv_rows/_legend_rows) — di dalam <td> yang JUGA
+    # punya height eksplisit sendiri (panel_h), plus atribut `cellpadding="16"` di level yang
+    # sama. Tabel-di-dalam-tabel yang MASING-MASING punya height eksplisit sendiri TERBUKTI
+    # (isolasi render+sampling) memicu auto-shrink font xhtml2pdf berjenjang (makin banyak
+    # level nesting, makin parah), bahkan ketika total tinggi yang dianggarkan literally lebih
+    # dari cukup di atas kertas. `cellpadding` atribut pada level pembungkus JUGA ikut menambah
+    # shrink (bukan cuma CSS `padding`) — diganti margin pada <div> pembungkus di dalam <td>
+    # (margin pada div terbukti jauh lebih ringan dampaknya). panel_h juga dilonggarkan dengan
+    # margin aman ekstra supaya sisa shrink yang masih terjadi (bawaan reportlab utk tabel
+    # bersarang, tidak bisa dihilangkan 100%) tetap menyisakan ukuran font yang terbaca.
     footnote_html = ""
     footnote_h = 0
     if footnote:
-        footnote_h = 34
+        footnote_h = 36
         footnote_html = (
             f'<div style="border-top:1px solid {PANEL_BORDER};margin-top:12px;padding-top:10px;'
             f'font-size:8.5pt;font-style:italic;color:{GRAY_TEXT};">{_esc(footnote)}</div>'
         )
     header_html = (
-        f'<table style="width:100%;height:22pt;margin-bottom:12px;" cellpadding="0" cellspacing="0"><tr style="height:22pt;">'
-        f'<td style="width:30px;vertical-align:middle;padding:0;">{_badge(icon_text, GOLD_MAIN, size="22px", font_size="9pt")}</td>'
+        f'<table style="width:100%;height:24pt;margin-bottom:10px;" cellpadding="0" cellspacing="0"><tr style="height:24pt;">'
+        f'<td style="width:30px;vertical-align:middle;">{_badge(icon_text, GOLD_MAIN, size="22px", font_size="9pt")}</td>'
         f'<td style="vertical-align:middle;padding:0 0 0 6px;">'
-        f'<span style="font-weight:700;font-size:10.5pt;color:{GREEN_MAIN};text-transform:uppercase;font-family:{BODY_FONT};">{_esc(title_text)}</span>'
+        f'<span style="font-weight:700;font-size:10.5pt;color:{GREEN_MAIN};text-transform:uppercase;">{_esc(title_text)}</span>'
         f'</td></tr></table>'
     )
-    panel_h = 34 + max(content_rows, 1) * 34 + footnote_h + 32
+    row_budget = 36
+    panel_h = 30 + max(content_rows, 1) * row_budget + footnote_h + 34
     return (
-        f'<table style="width:100%;height:{panel_h}pt;background:{IVORY};border:1px solid {PANEL_BORDER};border-radius:10px;" cellpadding="16">'
+        f'<table style="width:100%;height:{panel_h}pt;background:{IVORY};border:1px solid {PANEL_BORDER};border-radius:10px;">'
         f'<tr style="height:{panel_h}pt;"><td style="vertical-align:top;">'
-        f'{header_html}{rows_html}{footnote_html}</td></tr></table>'
+        f'<div style="margin:12pt;">{header_html}{rows_html}{footnote_html}</div></td></tr></table>'
     )
 
 
 def _ivory_kv_rows(rows) -> str:
-    row_h = 32
+    # BUG BESAR YANG DIPERBAIKI (sama seperti _bar_chart_html di atas): `<td>` di sini SEBELUMNYA
+    # memakai CSS `padding:0 0 10px 0` sebagai jarak antar baris — dikombinasikan dengan `height`
+    # eksplisit pada `<tr>`, ini men-trigger auto-shrink KeepInFrame xhtml2pdf (font 9.5pt yang
+    # diminta kode dirender ~1.8pt di PDF sungguhan, dibuktikan lewat ekstraksi ukuran font
+    # aktual dari PDF hasil render, BUKAN cuma dugaan). Padding DIHAPUS total; jarak antar baris
+    # sekarang murni dari row_h (dinaikkan ke 36pt — lebih longgar dari perkiraan wajar 32pt —
+    # supaya menyisakan margin aman terhadap sisa auto-shrink bawaan reportlab utk tabel
+    # bersarang di dalam _ivory_panel, yang tidak bisa dihilangkan 100% walau padding sudah nol.
+    # HARUS tetap SAMA dengan row_budget di _ivory_panel supaya panel_h yang dihitung di sana
+    # benar-benar sepadan dengan tinggi rows_html sungguhan yang dibangun di sini).
+    row_h = 36
     trs = "".join(
-        f'<tr style="height:{row_h}pt;"><td style="vertical-align:top;padding:0 0 10px 0;">'
+        f'<tr style="height:{row_h}pt;"><td style="vertical-align:top;">'
         f'<div style="font-size:9.5pt;font-weight:700;color:{GREEN_MAIN};">{_esc(label)}</div>'
         f'<div style="font-size:9.5pt;color:{GRAY_TEXT};">{_esc(value)}</div></td></tr>'
         for label, value in rows
@@ -207,16 +253,20 @@ def _ivory_kv_rows(rows) -> str:
 
 
 def _legend_rows(rows) -> str:
-    row_h = 22
+    # Padding vertikal DIHAPUS (lihat catatan panjang di _ivory_kv_rows — kombinasi CSS padding
+    # + height eksplisit memicu auto-shrink font xhtml2pdf); row_h dinaikkan sebagai gantinya
+    # (dan sebagai margin aman thd shrink residual dari nesting di dalam _ivory_panel). HARUS
+    # sama dengan row_budget di _ivory_panel (lihat catatan di _ivory_kv_rows).
+    row_h = 36
     parts = []
     for color, label, pct in rows:
         parts.append(
             f'<tr style="height:{row_h}pt;">'
-            f'<td style="width:16px;padding:0 0 8px 0;">'
-            f'<table cellpadding="0" cellspacing="0"><tr><td style="width:12px;height:12px;background:{color};font-size:1px;line-height:1px;padding:0;">&nbsp;</td></tr></table>'
+            f'<td style="width:16px;vertical-align:middle;">'
+            f'<table cellpadding="0" cellspacing="0"><tr><td style="width:12px;height:12px;background:{color};font-size:1px;line-height:1px;">&nbsp;</td></tr></table>'
             f'</td>'
-            f'<td style="padding:0 8px 8px 8px;font-size:9.5pt;color:{TEXT_DARK};">{_esc(label)}</td>'
-            f'<td style="text-align:right;padding:0 0 8px 0;font-weight:700;font-size:9.5pt;color:{GREEN_MAIN};">{_esc(pct)}</td>'
+            f'<td style="padding:0 8px 0 8px;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;">{_esc(label)}</td>'
+            f'<td style="text-align:right;font-weight:700;font-size:9.5pt;color:{GREEN_MAIN};vertical-align:middle;">{_esc(pct)}</td>'
             f'</tr>'
         )
     total_h = row_h * len(rows)
@@ -249,22 +299,38 @@ def _ai_insight_strip(text) -> str:
 
 
 def _priority_panel(title_text, items) -> str:
-    row_h = 38
+    # padding vertikal DIHAPUS dari <td> teks (lihat catatan panjang di _ivory_kv_rows) —
+    # jarak baris murni dari row_h, vertical-align:middle menyejajarkan badge & teks.
+    #
+    # BUG BESAR YANG DIPERBAIKI: panel ini SEBELUMNYA dibangun lewat `_dark_panel()` yang
+    # memakai atribut `cellpadding="18"` pada <table> pembungkus PLUS `rows_table` di dalamnya
+    # (tabel bersarang) yang JUGA punya height eksplisit sendiri — kombinasi tabel-di-dalam-
+    # tabel + cellpadding inilah yang membuat teks prioritas tampil sangat kecil & saling
+    # tumpang tindih di PDF sebelumnya (dibuktikan lewat isolasi render+sampling, sama seperti
+    # _ivory_panel). TIDAK memakai `_dark_panel()`/cellpadding di sini — inset panel sekarang
+    # dari margin pada <div> pembungkus (jauh lebih ringan dampaknya thd auto-shrink), dan
+    # row_h dilonggarkan sebagai margin aman tambahan thd shrink residual bawaan reportlab
+    # utk tabel bersarang yang tidak bisa dihilangkan 100%.
+    row_h = 44
     rows = "".join(
         f'<tr style="height:{row_h}pt;">'
-        f'<td style="width:32px;vertical-align:top;padding:0;">{_badge(letter, GOLD_MAIN, size="24px", font_size="10pt")}</td>'
-        f'<td style="vertical-align:top;padding:2px 0 0 0;font-size:10.5pt;color:#fff;">{_esc(text)}</td>'
+        f'<td style="width:32px;vertical-align:middle;">{_badge(letter, GOLD_MAIN, size="24px", font_size="10pt")}</td>'
+        f'<td style="vertical-align:middle;padding:0 0 0 10px;font-size:10.5pt;color:#fff;">{_esc(text)}</td>'
         f'</tr>'
         for letter, text in items
     )
     rows_h_total = row_h * max(len(items), 1)
     rows_table = f'<table style="width:100%;height:{rows_h_total}pt;border-collapse:collapse;" cellpadding="0" cellspacing="0">{rows}</table>'
+    title_h = 30
     inner = (
         f'<div style="font-size:9.5pt;font-weight:700;letter-spacing:1px;text-transform:uppercase;'
         f'color:{GOLD_MAIN};margin-bottom:14px;">{_esc(title_text)}</div>{rows_table}'
     )
-    panel_h = 40 + max(len(items), 1) * 38
-    return _dark_panel(inner, panel_h)
+    panel_h = 32 + title_h + max(len(items), 1) * row_h
+    return (
+        f'<table style="width:100%;height:{panel_h}pt;background:{GREEN_BG};border:1px solid {GOLD_MAIN};border-radius:10px;">'
+        f'<tr style="height:{panel_h}pt;"><td style="vertical-align:top;"><div style="margin:16pt;">{inner}</div></td></tr></table>'
+    )
 
 
 def _pill(text) -> str:
@@ -273,6 +339,20 @@ def _pill(text) -> str:
         f'padding:10px 16px;text-align:center;font-weight:700;font-size:10.5pt;color:{GOLD_MAIN};margin-bottom:10px;">'
         f'{_esc(text)}</div>'
     )
+
+
+def _pt(value: str) -> float:
+    """Konversi string ukuran CSS ("1.3in", "24pt", "12px") ke float point — dipakai supaya
+    height TOTAL sebuah <table> bisa dihitung dari height PER-BARIS yang mungkin ditulis dalam
+    satuan apa pun oleh pemanggil, tanpa mengasumsikan semuanya sudah dalam pt."""
+    value = value.strip()
+    if value.endswith("in"):
+        return float(value[:-2]) * 72
+    if value.endswith("px"):
+        return float(value[:-2]) * 0.75
+    if value.endswith("pt"):
+        return float(value[:-2])
+    return float(value)
 
 
 def _card_grid(cell_inner_htmls: list, cols: int, row_height: str | None = None) -> str:
@@ -285,17 +365,35 @@ def _card_grid(cell_inner_htmls: list, cols: int, row_height: str | None = None)
     render+sampling) meregangkan <table> BERSARANG tanpa height eksplisit supaya penuh ke
     seluruh ruang vertikal ANCESTOR yang punya height eksplisit gede, walau kontennya cuma
     2-3 baris — height eksplisit di sini (dan di <table> kartu itu sendiri) MEMATAHKAN
-    peregangan itu, kartu kembali sepadat kontennya."""
+    peregangan itu, kartu kembali sepadat kontennya.
+
+    BUG BESAR YANG DIPERBAIKI: <td> pembungkus SEBELUMNYA memakai CSS `padding:6px` (termasuk
+    atas/bawah) bersamaan dengan height eksplisit — kombinasi ini men-trigger auto-shrink font
+    xhtml2pdf yang sama seperti di _ivory_kv_rows/_bar_chart_html (dibuktikan lewat isolasi
+    render+sampling). Padding vertikal dihapus (cuma sisakan horizontal utk jarak antar kolom);
+    jarak antar BARIS kartu sekarang datang dari gap eksplisit yang ditambahkan ke row_height
+    per baris. Table & <tr> LUAR di sini SEBELUMNYA juga tidak punya height eksplisit sama
+    sekali (cuma <td> di dalamnya) — itu sendiri bug terpisah: tanpa height pada <tr>/<table>
+    di level INI, xhtml2pdf meregangkan BARIS GRID (bukan cuma kartunya) mengisi sisa tinggi
+    halaman, meninggalkan celah kosong raksasa di bawah grid (mis. antara kartu KPI Ringkasan
+    Eksekutif & caption di bawahnya) — sekarang total height dihitung & diterapkan eksplisit
+    di <table> DAN tiap <tr> juga, konsisten dengan pola aman yang dipakai di seluruh file ini.
+    """
     col_w = round(100 / cols, 3)
-    height_style = f"height:{row_height};" if row_height else ""
-    cells = [f'<td style="width:{col_w}%;padding:6px;vertical-align:top;{height_style}">{inner}</td>' for inner in cell_inner_htmls]
+    row_gap_pt = 12
+    cell_h_pt = _pt(row_height) + row_gap_pt if row_height else None
+    height_style = f"height:{cell_h_pt}pt;" if cell_h_pt else ""
+    cells = [f'<td style="width:{col_w}%;padding:0 6px;vertical-align:top;{height_style}">{inner}</td>' for inner in cell_inner_htmls]
     rows = []
     for i in range(0, len(cells), cols):
         row_cells = cells[i:i + cols]
         while len(row_cells) < cols:
             row_cells.append(f'<td style="width:{col_w}%;"></td>')
-        rows.append(f'<tr>{"".join(row_cells)}</tr>')
-    return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
+        row_style = f' style="height:{cell_h_pt}pt;"' if cell_h_pt else ""
+        rows.append(f'<tr{row_style}>{"".join(row_cells)}</tr>')
+    n_rows = -(-len(cell_inner_htmls) // cols)  # ceil division
+    table_h_style = f"height:{cell_h_pt * n_rows}pt;" if cell_h_pt else ""
+    return f'<table style="width:100%;{table_h_style}border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
 
 
 def _stat_card_grid(items, cols=3, dark=True) -> str:
@@ -327,11 +425,21 @@ def _asset_card_row(items) -> str:
     return _card_grid(cell_htmls, n, row_height=card_height)
 
 
-def _two_col(left_html, right_html, left_pct=58) -> str:
-    """Layout 2-kolom pakai <table> (bukan flexbox — tidak didukung xhtml2pdf)."""
+def _two_col(left_html, right_html, left_pct=58, h=370) -> str:
+    """Layout 2-kolom pakai <table> (bukan flexbox — tidak didukung xhtml2pdf).
+
+    BUG BESAR YANG DIPERBAIKI: <table> ini SEBELUMNYA tidak punya height eksplisit sama
+    sekali. Terbukti lewat isolasi render+sampling: <td> TANPA height eksplisit yang dipakai
+    utk layout 2 kolom di dalam halaman ber-height eksplisit (_page()) TETAP memicu auto-
+    shrink font xhtml2pdf pada isi kedua kolom (bukan cuma "meregang", seperti dugaan awal) —
+    kolom kiri & kanan yang sama sekali TIDAK dinaikkan/diubah rendernya jadi ~90% ukuran
+    normal begitu dibungkus _two_col TANPA height, dan ANJLOK lebih jauh lagi kalau salah satu
+    kolom sendiri berisi tabel bersarang (mis. panel ivory). Memberi height eksplisit yang
+    longgar (430pt, mendekati tinggi konten maksimum yang tersedia di halaman 7.5in setelah
+    margin+kicker+judul) MENGHILANGKAN shrink ini di kasus normal."""
     right_pct = 100 - left_pct
     return (
-        f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0"><tr>'
+        f'<table style="width:100%;height:{h}pt;border-collapse:collapse;" cellpadding="0" cellspacing="0"><tr style="height:{h}pt;">'
         f'<td style="width:{left_pct}%;vertical-align:top;padding-right:16px;">{left_html}</td>'
         f'<td style="width:{right_pct}%;vertical-align:top;">{right_html}</td>'
         f'</tr></table>'
@@ -343,10 +451,15 @@ def _critical_table(headers, rows, highlight_idx) -> str:
     # _card_grid soal kenapa ini WAJIB di dalam halaman yang latarnya dipaksa penuh 1 halaman
     # (_page()): tanpanya xhtml2pdf meregangkan SETIAP baris tabel supaya total tabel penuh
     # ke sisa tinggi halaman, walau isi barisnya cuma 1 baris teks pendek.
-    row_h = 26
-    header_h = 24
+    #
+    # BUG BESAR YANG DIPERBAIKI: th/td SEBELUMNYA memakai CSS `padding:7px 9px` (termasuk
+    # atas/bawah) — kombinasi padding vertikal + height eksplisit ini men-trigger auto-shrink
+    # font xhtml2pdf (lihat catatan panjang di _ivory_kv_rows). Padding vertikal dihapus,
+    # diganti vertical-align:middle + row_h yang sedikit lebih tinggi.
+    row_h = 30
+    header_h = 28
     total_h = header_h + row_h * len(rows)
-    thead = "".join(f'<th style="background:{GREEN_BG};color:#fff;padding:7px 9px;text-align:left;font-size:9pt;">{_esc(h)}</th>' for h in headers)
+    thead = "".join(f'<th style="background:{GREEN_BG};color:#fff;padding:0 9px;text-align:left;font-size:9pt;vertical-align:middle;">{_esc(h)}</th>' for h in headers)
     trows = []
     for i, row_vals in enumerate(rows):
         is_open = i in highlight_idx
@@ -354,7 +467,7 @@ def _critical_table(headers, rows, highlight_idx) -> str:
         cells = []
         for c, val in enumerate(row_vals):
             is_status_col = c == len(row_vals) - 1
-            style = f"padding:7px 9px;font-size:9pt;"
+            style = "padding:0 9px;font-size:9pt;vertical-align:middle;"
             if is_open and is_status_col:
                 style += f"color:{RED_CRIT};font-weight:700;"
             cells.append(f'<td style="{style}">{_esc(val)}</td>')
@@ -449,14 +562,22 @@ class PDFExporter:
             kind = block["kind"]
 
             if kind == "cover":
+                # BUG BESAR YANG DIPERBAIKI: `margin-top` pada <div> PEMBUNGKUS (bukan pada
+                # dirinya sendiri) terbukti (isolasi render+sampling) TIDAK diterapkan ke child
+                # PERTAMA di dalamnya — child pertama malah dirender di y negatif (KEPOTONG DI
+                # LUAR halaman, terlihat nyata di slide Penutup "Terima Kasih" yang judulnya
+                # hilang separuh ke atas), sedangkan child KEDUA dst tetap memakai posisi
+                # seolah margin-top itu diterapkan (makanya subtitle terlihat "benar" tapi
+                # judul di atasnya hilang). Diganti <div> SPACER berheight eksplisit sebagai
+                # SIBLING (bukan parent) sebelum kicker — height eksplisit pada div sendiri
+                # (bukan margin pada parent) terbukti aman di posisi manapun dalam alur.
                 inner = (
-                    f'<div style="margin-top:1.6in;">'
+                    f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
                     f'{_kicker(block["kicker"], GOLD_MAIN)}'
                     f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:#fff;margin-bottom:10px;">{_esc(block["title"])}</div>'
                     f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(block["subtitle"])}</div>'
                     f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
                     f'<div style="font-size:10.5pt;color:{GOLD_LIGHT};margin-top:6px;">{_esc(block["info_line"])}</div>'
-                    f'</div>'
                     f'<div style="position:absolute;bottom:0;left:0;font-size:9pt;font-weight:700;color:#fff;">{_esc(block["header_title"])}</div>'
                 )
                 pages.append((inner, True, flourish_corner, False))
@@ -476,7 +597,7 @@ class PDFExporter:
                 bg_left = f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:18px;">{block["purpose_text"]}</div>{objectives_html}'
                 inner = (
                     _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) +
-                    _two_col(bg_left, scope_panel, left_pct=58)
+                    _two_col(bg_left, scope_panel, left_pct=58, h=370)
                 )
                 pages.append((inner, False, None, False))
 
@@ -494,12 +615,12 @@ class PDFExporter:
                 if block.get("aux_stat"):
                     value, label = block["aux_stat"]
                     panel_html = _critical_highlight_panel(value, label)
-                    body = _two_col(text_html, panel_html, left_pct=62)
+                    body = _two_col(text_html, panel_html, left_pct=62, h=370)
                 elif block.get("aux_list"):
                     rows_html = _ivory_kv_rows([(it["label"], it["value"]) for it in block["aux_list"]])
                     panel_title = "Data Highlight" if is_english(report) else "Sorotan Data"
                     panel_html = _ivory_panel("i", panel_title, rows_html, content_rows=len(block["aux_list"]))
-                    body = _two_col(text_html, panel_html, left_pct=62)
+                    body = _two_col(text_html, panel_html, left_pct=62, h=370)
                 else:
                     body = text_html
                 inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + body
@@ -515,7 +636,7 @@ class PDFExporter:
                 inner = (
                     _kicker(kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
                     f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;">{_esc(block["intro"])}</div>' +
-                    _two_col(chart_html, legend_panel, left_pct=58) + caption_html
+                    _two_col(chart_html, legend_panel, left_pct=58, h=310) + caption_html
                 )
                 pages.append((inner, False, None, False))
 
@@ -527,7 +648,7 @@ class PDFExporter:
                 inner = (
                     _kicker(kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
                     f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;">{_esc(block["intro"])}</div>' +
-                    _two_col(chart_html, panel, left_pct=62) + caption_html
+                    _two_col(chart_html, panel, left_pct=62, h=310) + caption_html
                 )
                 pages.append((inner, False, None, False))
 
@@ -600,17 +721,19 @@ class PDFExporter:
                 inner = (
                     _kicker(block["kicker"], GOLD_MAIN) +
                     f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:16px;">{_esc(block["title"])}</div>' +
-                    _two_col(concl_left, priority_html, left_pct=58)
+                    _two_col(concl_left, priority_html, left_pct=58, h=370)
                 )
                 pages.append((inner, True, None, False))
 
             elif kind == "closing":
+                # Spacer sibling, bukan margin-top pada div pembungkus — lihat catatan panjang
+                # di slide "cover" di atas (bug yang sama persis, ini slide yang jadi bukti
+                # nyatanya: judul "Terima Kasih" hilang kepotong ke atas halaman sebelum fix).
                 inner = (
-                    f'<div style="margin-top:1.6in;">'
+                    f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
                     f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;margin-bottom:10px;">{_esc(block["thank_you"])}</div>'
                     f'<div style="font-size:12pt;color:#fff;margin-bottom:8px;">{_esc(block["title"])}</div>'
                     f'<div style="font-size:10.5pt;font-style:italic;color:{GOLD_LIGHT};">{_esc(block["note"])}</div>'
-                    f'</div>'
                 )
                 pages.append((inner, True, flourish_corner, True))
 
