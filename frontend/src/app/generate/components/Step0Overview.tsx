@@ -12,7 +12,7 @@ export default function Step0Overview({ onStart, tx }: Step0OverviewProps) {
       <div className="text-left">
         <h2 className="text-2xl font-extrabold text-stone-900">{tx("Generate Report", "Generate Report")}</h2>
         <p className="text-sm text-stone-500 font-medium mt-1">
-          {tx("Upload your security data and let AI generate comprehensive SOC reports automatically.", "Upload your security data and let AI generate comprehensive SOC reports automatically.")}
+          {tx("Upload your data and let AI generate comprehensive reports automatically.", "Upload your data and let AI generate comprehensive reports automatically.")}
         </p>
       </div>
 
@@ -111,7 +111,7 @@ export default function Step0Overview({ onStart, tx }: Step0OverviewProps) {
           <div className="lg:col-span-5 flex flex-col items-center justify-center pl-0 lg:pl-8 border-t lg:border-t-0 lg:border-l border-stone-150 py-6">
             <img src="/soc-logo.png" alt="SOC Report" className="w-full max-w-[280px] object-contain h-auto" />
             <p className="mt-8 text-xs font-bold text-stone-750 tracking-wide uppercase">{tx("Processing Pipeline", "Processing Pipeline")}</p>
-            <p className="text-[10px] text-stone-450 mt-1 leading-snug text-center max-w-[200px] font-semibold">{tx("Fully automated monthly SOC reporting workflow.", "Fully automated monthly SOC reporting workflow.")}</p>
+            <p className="text-[10px] text-stone-450 mt-1 leading-snug text-center max-w-[200px] font-semibold">{tx("Fully automated monthly reporting workflow.", "Fully automated monthly reporting workflow.")}</p>
           </div>
         </div>
       </div>

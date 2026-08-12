@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import ScrollReveal from "@/components/ScrollReveal";
-import { t } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 
 interface AccountSettingsTabProps {
   fullName: string;
@@ -51,11 +51,7 @@ export default function AccountSettingsTab({
   setShowConfirmPw,
   getAvatarInitial,
 }: AccountSettingsTabProps) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   return (
     <ScrollReveal animation="fadeInUp" delay={100}>

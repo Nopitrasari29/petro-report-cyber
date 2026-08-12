@@ -6,41 +6,18 @@ import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import ScrollReveal from "@/components/ScrollReveal";
-import { t, getLanguage } from "@/utils/i18n";
-import { API_BASE_URL } from "@/utils/api";
+import { getLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
+import { API_BASE_URL, getToken, authHeaders } from "@/utils/api";
 import { sanitizeFilename, downloadBlobAsFile } from "@/utils/downloadFile";
 import HistoryStatsCards from "./components/HistoryStatsCards";
 import HistoryFilterBar from "./components/HistoryFilterBar";
 import HistoryTable from "./components/HistoryTable";
 import { ToastContainer } from "@/components/ToastModal";
-
-interface ReportItem {
-  id: number;
-  title: string;
-  data_type: string;
-  status: string;
-  input_file_name: string;
-  period_start: string;
-  period_end: string;
-  template_type: string;
-  output_format: string;
-  language: string;
-  ai_confidence: number;
-  created_by_name: string;
-  threat_count_critical: number;
-  threat_count_high: number;
-  threat_count_medium: number;
-  threat_count_low: number;
-  total_records_parsed: number;
-  created_at: string;
-}
+import type { ReportItem } from "@/types/report";
 
 export default function ReportHistoryPage() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   const router = useRouter();
   const [reports, setReports] = useState<ReportItem[]>([]);
@@ -74,12 +51,6 @@ export default function ReportHistoryPage() {
     setLoading(true);
     setErrorMsg("");
     try {
-      const token = localStorage.getItem("token");
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
       // Fix #10: Server-side filtering — kirim parameter ke backend, bukan filter semua di client
       // Backend sudah mendukung ?search=&status=&skip=&limit= secara native
       const params = new URLSearchParams();
@@ -100,7 +71,7 @@ export default function ReportHistoryPage() {
 
       const res = await fetch(
         `${API_BASE_URL}/api/v1/history/?${params.toString()}`,
-        { headers },
+        { headers: authHeaders() },
       );
 
       if (res.status === 401 || res.status === 403) {
@@ -167,15 +138,9 @@ export default function ReportHistoryPage() {
   // Delete Action handler
   const handleDelete = async (id: number) => {
     try {
-      const token = localStorage.getItem("token");
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
       const res = await fetch(`${API_BASE_URL}/api/v1/history/${id}`, {
         method: "DELETE",
-        headers,
+        headers: authHeaders(),
       });
 
       if (!res.ok) {
@@ -192,17 +157,9 @@ export default function ReportHistoryPage() {
   // Bulk Delete Action handler
   const handleBulkDelete = async (ids: number[]) => {
     try {
-      const token = localStorage.getItem("token");
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
       const res = await fetch(`${API_BASE_URL}/api/v1/history/bulk-delete`, {
         method: "POST",
-        headers,
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(ids),
       });
 
@@ -220,15 +177,9 @@ export default function ReportHistoryPage() {
   // Retry AI Action handler
   const handleRetry = async (id: number) => {
     try {
-      const token = localStorage.getItem("token");
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
       const res = await fetch(`${API_BASE_URL}/api/v1/history/${id}/retry`, {
         method: "POST",
-        headers,
+        headers: authHeaders(),
       });
 
       if (!res.ok) {
@@ -314,6 +265,15 @@ export default function ReportHistoryPage() {
           return "Threat Hunting";
         case "ids_ips":
           return "IDS/IPS Report";
+        case "keuangan":
+        case "financial":
+          return "Financial Report";
+        case "kpi_hr":
+          return "KPI & HR Report";
+        case "procurement":
+          return "Procurement Report";
+        case "operasional":
+          return "Operational Report";
         default:
           return item || tx("Unknown", "Unknown");
       }
@@ -324,6 +284,10 @@ export default function ReportHistoryPage() {
       if (t.includes("threat")) return "Threat Trend";
       if (t.includes("email") || t.includes("phish")) return "Threat Hunting";
       if (t.includes("ids") || t.includes("ips")) return "IDS/IPS Report";
+      if (t.includes("financial") || t.includes("keuangan")) return "Financial Report";
+      if (t.includes("kpi") || t.includes("hr")) return "KPI & HR Report";
+      if (t.includes("procurement") || t.includes("pengadaan")) return "Procurement Report";
+      if (t.includes("operasional") || t.includes("operational")) return "Operational Report";
       return item.template_type;
     }
     switch (item.data_type?.toLowerCase()) {
@@ -335,6 +299,15 @@ export default function ReportHistoryPage() {
         return "Threat Hunting";
       case "ids_ips":
         return "IDS/IPS Report";
+      case "keuangan":
+      case "financial":
+        return "Financial Report";
+      case "kpi_hr":
+        return "KPI & HR Report";
+      case "procurement":
+        return "Procurement Report";
+      case "operasional":
+        return "Operational Report";
       default:
         return item.data_type || tx("Unknown", "Unknown");
     }
@@ -354,10 +327,13 @@ export default function ReportHistoryPage() {
   const draftCount = reports.filter(
     (r) => r.status === "draft" || r.status === "parsed",
   ).length;
+  // BUG DIPERBAIKI: sebelumnya mengukur checkbox format yang dipilih saat UPLOAD
+  // (output_format) — itu preferensi, bukan aktivitas download sungguhan, jadi hampir selalu
+  // ~100% tanpa mencerminkan apakah user benar-benar pernah mengunduh laporannya. file_pdf_path/
+  // file_ppt_path di backend HANYA ke-set di dalam handler download (lihat history.py) begitu
+  // user benar-benar klik unduh PDF/PPT — sinyal yang jauh lebih akurat utk "sudah di-export".
   const exportedCount = reports.filter(
-    (r) =>
-      typeof r.output_format === "string" &&
-      (r.output_format.includes("PDF") || r.output_format.includes("PPTX")),
+    (r) => !!r.file_pdf_path || !!r.file_ppt_path,
   ).length;
 
   const approvedPercent = totalCount
@@ -480,21 +456,18 @@ export default function ReportHistoryPage() {
     a.click();
   };
 
+  // BUG DIPERBAIKI: fungsi ini sebelumnya pakai alert() bawaan browser (blocking, menghentikan
+  // interaksi sampai di-klik OK) padahal fungsi lain di file yang sama (hapus, retry) sudah
+  // pakai sistem toast (addToast) yang lebih halus - sekarang konsisten pakai toast juga.
   const handleDownloadFile = async (id: number, format: "pdf" | "pptx") => {
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    if (!token) {
-      alert("Token akses tidak ditemukan. Silakan login ulang.");
+    if (!getToken()) {
+      addToast("Token akses tidak ditemukan. Silakan login ulang.", "error");
       return;
     }
 
     try {
       const url = `${API_BASE_URL}/api/v1/history/${id}/${format}`;
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await fetch(url, { headers: authHeaders() });
 
       if (!res.ok) {
         let detail = `Gagal mengunduh file ${format.toUpperCase()}.`;
@@ -502,7 +475,7 @@ export default function ReportHistoryPage() {
           const data = await res.json();
           detail = data.detail || detail;
         } catch {}
-        alert(detail);
+        addToast(detail, "error");
         return;
       }
 
@@ -511,7 +484,7 @@ export default function ReportHistoryPage() {
       const filenameBase = sanitizeFilename(reportTitle, `soc_report_${id}`);
       await downloadBlobAsFile(blob, `${filenameBase}.${format}`);
     } catch (err: any) {
-      alert(err.message || "Terjadi kesalahan saat mengunduh file.");
+      addToast(err.message || "Terjadi kesalahan saat mengunduh file.", "error");
     }
   };
 
@@ -583,6 +556,15 @@ export default function ReportHistoryPage() {
               </Link>
             </div>
           </div>
+
+          {/* BUG DIPERBAIKI: errorMsg sebelumnya di-set saat fetch riwayat gagal, tapi tidak
+              pernah dirender di mana pun - tabel cuma tampil kosong tanpa penjelasan apa pun
+              ke user, seolah memang belum ada laporan padahal gagal koneksi/server. */}
+          {errorMsg && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-xs font-semibold text-left">
+              {errorMsg}
+            </div>
+          )}
 
           {/* Metric Stats Cards Row */}
           <ScrollReveal animation="fadeInUp" delay={100}>

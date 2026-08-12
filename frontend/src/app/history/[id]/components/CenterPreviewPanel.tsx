@@ -1,34 +1,13 @@
-import { useState, useEffect } from "react";
-import { t } from "@/utils/i18n";
+import { useState, useEffect, useCallback } from "react";
+import { useTx } from "@/hooks/useTx";
 import ChartNarasiLayout from "@/app/generate/components/ChartNarasiLayout";
 import RichTextEditor from "@/app/generate/components/RichTextEditor";
 import FullscreenStudioModal from "@/app/generate/components/FullscreenStudioModal";
 import ReportBlockRenderer from "@/components/ReportBlockRenderer";
-import { fetchReportBlocks } from "@/utils/reportBlocksApi";
-import type { ReportBlock } from "@/utils/reportTheme";
-import type { ReportPage } from "@/utils/reportSections";
-
-interface ReportDetails {
-  id: number;
-  title: string;
-  data_type: string;
-  status: string;
-  input_file_name: string;
-  period_start: string;
-  period_end: string;
-  template_type: string;
-  output_format: string;
-  language: string;
-  ai_confidence: number;
-  created_by_name: string;
-  threat_count_critical: number;
-  threat_count_high: number;
-  threat_count_medium: number;
-  threat_count_low: number;
-  total_records_parsed: number;
-  created_at: string;
-  ai_summary: Record<string, any>;
-}
+import DataQualityPanel from "./DataQualityPanel";
+import type { ReportBlock, VisualStyle } from "@/utils/reportTheme";
+import { getPageByNumber, type ReportPage } from "@/utils/reportSections";
+import type { ReportDetails } from "@/types/report";
 
 interface CenterPreviewPanelProps {
   activeTab: "preview" | "edit" | "charts";
@@ -43,6 +22,10 @@ interface CenterPreviewPanelProps {
   isSaving: boolean;
   saveSuccess: boolean;
   pages: ReportPage[];
+  blocks: ReportBlock[];
+  visualStyle?: VisualStyle;
+  blocksLoading: boolean;
+  blocksError: string;
 }
 
 export default function CenterPreviewPanel({
@@ -58,44 +41,30 @@ export default function CenterPreviewPanel({
   isSaving,
   saveSuccess,
   pages,
+  blocks,
+  visualStyle,
+  blocksLoading,
+  blocksError,
 }: CenterPreviewPanelProps) {
-  const [previewFormat, setPreviewFormat] = useState<"pdf" | "pptx">("pdf");
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Blocks yang SAMA PERSIS dipakai backend untuk merender PDF/PPTX (build_report_blocks) —
-  // supaya tab Preview ini dijamin menampilkan section & angka yang sama dengan file yang
-  // benar-benar diunduh, bukan implementasi tampilan yang dikarang terpisah.
-  const [blocks, setBlocks] = useState<ReportBlock[]>([]);
-  const [blocksLoading, setBlocksLoading] = useState(true);
-  const [blocksError, setBlocksError] = useState("");
-
-  useEffect(() => {
-    if (!report?.id) return;
-    let cancelled = false;
-    setBlocksLoading(true);
-    setBlocksError("");
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    fetchReportBlocks(report.id, token)
-      .then((b) => {
-        if (!cancelled) setBlocks(b);
-      })
-      .catch((err) => {
-        if (!cancelled) setBlocksError(err.message || "Gagal memuat preview.");
-      })
-      .finally(() => {
-        if (!cancelled) setBlocksLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [report?.id]);
+  // useCallback (bukan arrow function inline di JSX) — BUG NYATA YANG DIPERBAIKI: FullscreenStudioModal
+  // menaruh requestFullscreen()/exitFullscreen() di useEffect yang depends on [isOpen, onClose]. Prop
+  // onClose inline dibuat ULANG tiap render CenterPreviewPanel (mis. tiap kali activePage/activeTab
+  // berubah krn klik halaman lain di panel Pages) — identity baru memicu effect itu jalan ulang: cleanup
+  // lama memanggil exitFullscreen(), lalu requestFullscreen() baru DITOLAK browser krn bukan lagi respons
+  // langsung dari user gesture, dan "fullscreenchange" yang terpicu dari exit tadi langsung menutup modal.
+  // Referensi stabil di sini menghentikan effect itu re-run tiap klik halaman.
+  const closeFullscreen = useCallback(() => setIsFullscreen(false), []);
+  // Tab "Quality" SENGAJA dipisah dari activeTab (preview/edit/charts) - state itu juga
+  // dipakai FullscreenStudioModal di bawah yang tidak didesain utk tampilan tabel kualitas
+  // data, jadi diberi state lokal sendiri alih-alih memperluas kontrak activeTab bersama.
+  const [showQuality, setShowQuality] = useState(false);
+  const { tx } = useTx();
+  const isActivePageEditable = getPageByNumber(pages, activePage)?.editable ?? false;
+  // Preview cuma render 1 block aktif (bukan seluruh dokumen ditumpuk) — pages 1:1 urutan
+  // dengan blocks (lihat buildPagesFromBlocks), jadi indexnya tinggal activePage - 1.
+  const activeBlock = blocks[Number(activePage) - 1];
 
   // Listener tombol Escape untuk melepaskan mode Fullscreen
   useEffect(() => {
@@ -108,26 +77,38 @@ export default function CenterPreviewPanel({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFullscreen]);
 
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
-
   return (
-    <div className="lg:col-span-9 bg-white border border-stone-200/85 rounded-2xl shadow-sm flex flex-col h-[520px] overflow-hidden">
+    <div className="lg:col-span-9 bg-white dark:bg-stone-900 border border-stone-200/85 dark:border-stone-700/80 rounded-2xl shadow-sm flex flex-col h-[520px] overflow-hidden">
       {/* Tab Navigation header */}
-      <div className="bg-white border-b border-stone-100 px-5 flex items-center justify-between">
+      <div className="bg-white dark:bg-stone-900 border-b border-stone-100 dark:border-stone-800 px-5 flex items-center justify-between">
         <div className="flex gap-4">
           {["preview", "edit", "charts"].map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab as any)}
+              onClick={() => {
+                setActiveTab(tab as any);
+                setShowQuality(false);
+              }}
               className={`py-3.5 font-bold text-xs capitalize relative transition-colors ${
-                activeTab === tab
-                  ? "text-stone-900 border-b-2 border-petro-green font-black"
-                  : "text-stone-400 hover:text-stone-700"
+                !showQuality && activeTab === tab
+                  ? "text-stone-900 dark:text-stone-100 border-b-2 border-petro-green font-black"
+                  : "text-stone-400 dark:text-stone-500 hover:text-stone-700 dark:hover:text-stone-300"
               }`}
             >
               {tab === "edit" ? tx("Edit Text", "Edit Text") : tx(tab, tab)}
             </button>
           ))}
+          {/* Tab Quality — lihat catatan showQuality di atas kenapa dipisah dari activeTab */}
+          <button
+            onClick={() => setShowQuality(true)}
+            className={`py-3.5 font-bold text-xs relative transition-colors ${
+              showQuality
+                ? "text-stone-900 dark:text-stone-100 border-b-2 border-petro-green font-black"
+                : "text-stone-400 dark:text-stone-500 hover:text-stone-700 dark:hover:text-stone-300"
+            }`}
+          >
+            {tx("Kualitas Data", "Data Quality")}
+          </button>
         </div>
 
         {/* Zoom Selector & Fullscreen Button */}
@@ -186,9 +167,11 @@ export default function CenterPreviewPanel({
 
       {/* Tab Contents Container dengan Zoom scale */}
       <div className="flex-1 overflow-y-auto p-6 bg-[#EFECE5]/60 scroll-smooth">
+        {showQuality && report?.id && <DataQualityPanel reportId={report.id} />}
         <div
           className="transition-transform duration-200 ease-out"
           style={{
+            display: showQuality ? "none" : undefined,
             transform: zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : "none",
             transformOrigin: "top center",
           }}
@@ -196,35 +179,7 @@ export default function CenterPreviewPanel({
           {/* PREVIEW TAB */}
           {activeTab === "preview" && (
             <div className="space-y-4">
-              {/* Format Preview Toggle (PDF / PPTX) */}
-              <div className="flex justify-center">
-                <div className="inline-flex p-1 bg-white rounded-xl border border-stone-200/80 shadow-sm gap-1">
-                  <button
-                    onClick={() => setPreviewFormat("pdf")}
-                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
-                      previewFormat === "pdf"
-                        ? "bg-petro-green text-white shadow-sm"
-                        : "text-stone-500 hover:text-stone-800"
-                    }`}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
-                    {tx("PDF Document View", "PDF Document View")}
-                  </button>
-                  <button
-                    onClick={() => setPreviewFormat("pptx")}
-                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
-                      previewFormat === "pptx"
-                        ? "bg-petro-green text-white shadow-sm"
-                        : "text-stone-500 hover:text-stone-800"
-                    }`}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                    {tx("PPTX Slide View", "PPTX Slide View")}
-                  </button>
-                </div>
-              </div>
-
-              {/* Loading / error states — sama utk kedua mode */}
+              {/* Loading / error states */}
               {blocksLoading && (
                 <div className="max-w-2xl mx-auto flex items-center justify-center gap-2 py-16 text-stone-400">
                   <div className="w-4 h-4 border-2 border-stone-300 border-t-petro-green rounded-full animate-spin" />
@@ -239,26 +194,28 @@ export default function CenterPreviewPanel({
                 </div>
               )}
 
-              {/* MODE 1: PDF DOCUMENT VIEW — tumpukan halaman, isi PERSIS sama dgn build_report_blocks */}
-              {!blocksLoading && !blocksError && previewFormat === "pdf" && (
-                <div className="max-w-2xl mx-auto space-y-4">
-                  {blocks.map((block, i) => (
-                    <ReportBlockRenderer key={i} block={block} />
-                  ))}
+              {/* Cuma 1 halaman aktif yang ditampilkan (bukan seluruh dokumen ditumpuk) —
+                  dibungkus rasio 16:9 (ukuran slide asli, 13.333x7.5in — PDF & PPTX SAMA-SAMA
+                  dirender sebagai "slide" berukuran identik, lihat _page() di export_pdf.py
+                  dan SLIDE_W/SLIDE_H di export_ppt.py). Toggle PDF/PPTX sebelumnya di sini
+                  dihapus — preview-nya 1 komponen yang sama utk kedua format, tidak pernah
+                  benar-benar meniru file yang diunduh secara berbeda. */}
+              {!blocksLoading && !blocksError && activeBlock && (
+                <div className="max-w-2xl mx-auto">
+                  {/* BUG DIPERBAIKI (dilaporkan user): `h-auto` (kotak tumbuh melebihi 16:9)
+                      dibalik lagi — bikin rasio kotak berubah-ubah antar halaman, padahal file
+                      PPT/PDF sungguhan SELALU 16:9 tetap. `overflow-y-auto` dikembalikan ke
+                      kotak ini SENDIRI (bukan cuma di panel luar) supaya bentuknya SELALU
+                      persis 16:9 & konten yang kepanjangan di-scroll di dalam kotaknya, bukan
+                      bikin kotaknya melar. */}
+                  <div className="aspect-video overflow-y-auto bg-white border border-stone-300 shadow-sm">
+                    <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} />
+                  </div>
                 </div>
               )}
-
-              {/* MODE 2: PPTX SLIDE VIEW — tiap block jadi 1 "slide" 16:9, tumpukan bisa di-scroll */}
-              {!blocksLoading && !blocksError && previewFormat === "pptx" && (
-                <div className="max-w-2xl mx-auto space-y-6">
-                  {blocks.map((block, i) => (
-                    <div
-                      key={i}
-                      className="aspect-video rounded-2xl border-2 border-stone-300 shadow-xl overflow-y-auto"
-                    >
-                      <ReportBlockRenderer block={block} />
-                    </div>
-                  ))}
+              {!blocksLoading && !blocksError && !activeBlock && (
+                <div className="max-w-2xl mx-auto text-center text-stone-400 text-xs font-bold py-16">
+                  {tx("No page selected.", "Tidak ada halaman yang dipilih.")}
                 </div>
               )}
             </div>
@@ -275,11 +232,20 @@ export default function CenterPreviewPanel({
                   )}{" "}
                   ({tx(getPageTitle(activePage), getPageTitle(activePage))})
                 </label>
-                <RichTextEditor
-                  value={getPageText(activePage)}
-                  onChange={handleTextChange}
-                  tx={tx}
-                />
+                {isActivePageEditable ? (
+                  <RichTextEditor
+                    value={getPageText(activePage)}
+                    onChange={handleTextChange}
+                    tx={tx}
+                  />
+                ) : (
+                  <div className="flex-1 bg-stone-50 border border-stone-200 text-stone-500 text-xs font-medium p-6 rounded-xl text-center flex items-center justify-center">
+                    {tx(
+                      "This section is generated automatically from your data — there's no free-form text to edit here.",
+                      "Bagian ini dibuat otomatis dari data laporan — tidak ada teks bebas untuk diedit di sini.",
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Action buttons save edits */}
@@ -343,6 +309,7 @@ export default function CenterPreviewPanel({
               </div>
               <ChartNarasiLayout
                 blocks={blocks}
+                visualStyle={visualStyle}
                 blocksLoading={blocksLoading}
                 blocksError={blocksError}
                 tx={tx}
@@ -355,15 +322,13 @@ export default function CenterPreviewPanel({
       {/* Shared Fullscreen Studio Modal */}
       <FullscreenStudioModal
         isOpen={isFullscreen}
-        onClose={() => setIsFullscreen(false)}
+        onClose={closeFullscreen}
         reportTitle={report?.title || tx("Untitled report", "Untitled report")}
         dataType={report?.data_type || tx("Unknown", "Unknown")}
         activePage={activePage}
         setActivePage={setActivePage}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        previewFormat={previewFormat}
-        setPreviewFormat={setPreviewFormat}
         zoomLevel={zoomLevel}
         setZoomLevel={setZoomLevel}
         getPageTitle={getPageTitle}
@@ -374,11 +339,9 @@ export default function CenterPreviewPanel({
         saveSuccess={saveSuccess}
         pages={pages}
         blocks={blocks}
+        visualStyle={visualStyle}
         blocksLoading={blocksLoading}
         blocksError={blocksError}
-        headerTitle="PT PETROKIMIA GRESIK"
-        headerSubtitle="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
-        themeColor="green"
         inputFile={report?.input_file_name || "-"}
         tx={tx}
       />

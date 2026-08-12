@@ -2,27 +2,8 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { t } from "@/utils/i18n";
-
-interface ReportItem {
-  id: number;
-  title: string;
-  data_type: string;
-  status: string;
-  input_file_name: string;
-  period_start: string;
-  period_end: string;
-  template_type: string;
-  output_format: string;
-  language: string;
-  ai_confidence: number;
-  created_by_name: string;
-  threat_count_critical: number;
-  threat_count_high: number;
-  threat_count_medium: number;
-  threat_count_low: number;
-  total_records_parsed: number;
-  created_at: string;
-}
+import ConfirmDialog from "@/components/ConfirmDialog";
+import type { ReportItem } from "@/types/report";
 
 interface HistoryTableProps {
   loading: boolean;
@@ -67,6 +48,12 @@ export default function HistoryTable({
 }: HistoryTableProps) {
   const [mounted, setMounted] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  // BUG DIPERBAIKI (dilaporkan user): hapus 1 laporan sebelumnya langsung eksekusi tanpa
+  // konfirmasi apa pun begitu diklik, sementara hapus massal di bawah sudah pakai dialog —
+  // sekarang keduanya pakai ConfirmDialog yang sama, konsisten.
+  const [pendingDelete, setPendingDelete] = useState<
+    { type: "single"; id: number; title: string } | { type: "bulk"; ids: number[] } | null
+  >(null);
 
   useEffect(() => {
     setMounted(true);
@@ -89,12 +76,18 @@ export default function HistoryTable({
 
   const onBulkDeleteClick = () => {
     if (!selectedIds.length) return;
-    if (confirm(`Apakah Anda yakin ingin menghapus ${selectedIds.length} laporan terpilih?`)) {
-      if (handleBulkDelete) {
-        handleBulkDelete(selectedIds);
-        setSelectedIds([]);
-      }
+    setPendingDelete({ type: "bulk", ids: selectedIds });
+  };
+
+  const confirmPendingDelete = () => {
+    if (!pendingDelete) return;
+    if (pendingDelete.type === "single") {
+      handleDelete(pendingDelete.id);
+    } else if (handleBulkDelete) {
+      handleBulkDelete(pendingDelete.ids);
+      setSelectedIds([]);
     }
+    setPendingDelete(null);
   };
 
   return (
@@ -319,7 +312,9 @@ export default function HistoryTable({
 
                       {/* Delete Action */}
                       <button
-                        onClick={() => handleDelete(item.id)}
+                        onClick={() =>
+                          setPendingDelete({ type: "single", id: item.id, title: item.title })
+                        }
                         className="p-1.5 rounded-lg border border-red-700 bg-red-600 hover:bg-red-700 text-white transition-colors shadow-sm cursor-pointer"
                         title={tx("Delete Report", "Delete Report")}
                       >
@@ -459,6 +454,26 @@ export default function HistoryTable({
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={
+          pendingDelete?.type === "bulk"
+            ? tx("Delete Reports", "Delete Reports")
+            : tx("Delete Report", "Delete Report")
+        }
+        message={
+          pendingDelete?.type === "bulk"
+            ? `Apakah Anda yakin ingin menghapus ${pendingDelete.ids.length} laporan terpilih? Tindakan ini tidak bisa dibatalkan.`
+            : pendingDelete?.type === "single"
+              ? `Apakah Anda yakin ingin menghapus laporan "${pendingDelete.title}"? Tindakan ini tidak bisa dibatalkan.`
+              : ""
+        }
+        danger
+        confirmLabel={tx("Delete", "Delete")}
+        onConfirm={confirmPendingDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </>
   );
 }

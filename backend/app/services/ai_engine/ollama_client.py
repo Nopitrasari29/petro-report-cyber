@@ -1,5 +1,6 @@
 # app/services/ai_engine/ollama_client.py
 import json
+import logging
 import re
 import ollama
 import requests
@@ -16,6 +17,8 @@ from app.services.ai_engine.data_profiler import (
     format_statistics_as_text,
     format_schema_as_text,
 )
+
+logger = logging.getLogger(__name__)
 
 # Dipakai bersama oleh _normalize_json_keys (nilai fallback per key) dan analysis.py
 # (Fix deteksi laporan yang "sukses" tapi isinya cuma teks default ini semua).
@@ -45,7 +48,7 @@ _KEY_ALIASES: dict[str, list[str]] = {
 # "sections" (PART A3): array {id,title,content} dinamis, diisi HANYA kalau prompt menyertakan
 # daftar section terpilih (lihat get_analysis_prompt selected_sections) — additive, tidak
 # menggantikan 6 key wajib, supaya laporan lama & rendering lama tetap kompatibel.
-_OPTIONAL_KEYS = ["key_findings", "metrics_table", "chart_captions", "sections"]
+_OPTIONAL_KEYS = ["key_findings", "chart_captions", "sections"]
 
 _NUMBERED_OR_BULLET_RE = re.compile(r"\s*(?:\d+[\)\.]|[•\-\*])\s+")
 _TITLE_DETAIL_RE = re.compile(r"^([A-Z][^:]{2,50}):\s*(.+)$", re.DOTALL)
@@ -223,7 +226,7 @@ def get_ai_settings() -> dict:
             "temperature": float(config.get("ai_temperature", 0.3))
         }
     except Exception as err:
-        print(f"[OLLAMA SETTINGS WARNING] Gagal membaca settings dari DB: {err}")
+        logger.warning(f"[OLLAMA] Gagal membaca settings dari DB: {err}")
     return {
         "model": settings.OLLAMA_MODEL,
         "temperature": 0.3
@@ -292,6 +295,14 @@ class OllamaClient:
             "messages": messages,
             "stream": True,
             "think": False,
+            # RCA: Ollama meng-unload model dari memori kalau idle (default 5 menit) — setiap
+            # request setelah jeda itu kena "pajak" cold-load ~100+ detik (diukur langsung: 111s
+            # di mesin CPU-only) SEBELUM token pertama sempat digenerate sama sekali, kadang
+            # membuat total job (load + prefill + generate) melampaui OLLAMA_TIMEOUT_SECONDS
+            # walau generate sendiri sebenarnya cepat. "keep_alive" minta Ollama menahan model
+            # tetap di memori jauh lebih lama, supaya request analisis berikutnya (dan retry
+            # attempt ke-2/3 dalam job yang sama) tidak kena reload ulang.
+            "keep_alive": "30m",
             "options": {"temperature": ai_cfg["temperature"]},
         }
         if json_mode:
@@ -450,6 +461,7 @@ class OllamaClient:
         stats_text: str,
         file_name: str | None = None,
         domain_hint: str | None = None,
+        language: str | None = None,
     ) -> list[dict] | None:
         """
         PART A1 — usulkan struktur section laporan (bebas, boleh di luar preset 4-domain) lewat
@@ -466,6 +478,7 @@ class OllamaClient:
             stats_text=stats_text,
             file_name=file_name,
             domain_hint=domain_hint,
+            language=language,
         )
         try:
             raw_response = self.generate(
@@ -534,7 +547,7 @@ class OllamaClient:
 
             return result if result else None
         except Exception as e:
-            print(f"[SECTION SUGGESTER] Gagal mendapatkan usulan section dari AI: {e}")
+            logger.warning(f"[SECTION SUGGESTER] Gagal mendapatkan usulan section dari AI: {e}")
             return None
 
     def analyze_security_data(
@@ -589,21 +602,25 @@ class OllamaClient:
         # Precompute statistik & schema dari SELURUH data (bukan sampel) via pandas — deterministik,
         # selalu benar. Model tinggal MENARASIKAN angka ini, bukan menghitung sendiri dari data mentah.
         stats = compute_statistics(parsed_data, data_type)
-        stats_text = format_statistics_as_text(stats)
+        stats_text = format_statistics_as_text(stats, language=language)
         schema = compute_schema_summary(parsed_data)
         schema_text = format_schema_as_text(schema)
 
-        # Cuma 15 baris ILUSTRATIF dikirim (bukan lagi ratusan baris) — sumber angka utama
-        # sekarang stats_text di atas, bukan data mentah ini.
-        sample_rows = parsed_data[:15]
-        data_str = json.dumps(sample_rows, indent=2, ensure_ascii=False)
+        # RCA nyata (bukan dugaan — dikonfirmasi dari laporan produksi): mengirim contoh BARIS
+        # mentah (walau cuma 15 baris) membuat qwen3:8b kadang menarasikan key_findings/
+        # recommendations/conclusion dari subset kecil itu alih-alih stats_text di bawah,
+        # menghasilkan laporan yang kontradiksi dengan dirinya sendiri (mis. cover bicara 42
+        # data periode Nov-Apr, tapi Kesimpulan tiba-tiba bicara 15 data khusus Desember —
+        # persis subset baris contoh yang dulu dikirim). Baris data mentah TIDAK LAGI dikirim
+        # sama sekali — schema_text sudah menyertakan contoh NILAI per kolom, cukup untuk model
+        # tahu kosakata/gaya isi tanpa memberi "dataset kecil" tandingan yang bisa dinarasikan.
 
         # Hasilkan prompt dengan metadata lengkap + domain_type untuk konteks spesifik
         prompt = get_analysis_prompt(
             data_type=data_type,
-            data_content=data_str,
             stats_text=stats_text,
             schema_text=schema_text,
+            total_records=stats.get("total_records"),
             period_start=period_start,
             period_end=period_end,
             template_type=template_type,
@@ -619,14 +636,18 @@ class OllamaClient:
             raw_response = self.generate(
                 prompt, system_prompt=SYSTEM_PROMPT, json_mode=True, on_progress=on_progress
             )
-            print(f"[OLLAMA RAW]\n{raw_response[:2000]}")
+            logger.debug(f"[OLLAMA RAW]\n{raw_response[:2000]}")
             result_json = self._extract_json_robust(raw_response)
-            
-            # Fallback jika chart_captions kosong
-            if not result_json.get("chart_captions"):
-                from app.services.ai_engine.data_profiler import build_chart_captions_from_stats
-                result_json["chart_captions"] = build_chart_captions_from_stats(stats, domain_type or "general")
-                
+            # BUG NYATA YANG DIPERBAIKI (dilaporkan user, disertai tangkapan layar): dulu di
+            # sini ada fallback list POSISIONAL (build_chart_captions_from_stats) kalau AI tidak
+            # mengisi chart_captions sama sekali — tapi itu menghasilkan caption "salah pasang"
+            # (mis. narasi pola hari-terpadat nyasar tampil di bawah chart distribusi kategori,
+            # bukan chart tren waktu yang sebenarnya dimaksud), karena list itu dikonsumsi lewat
+            # counter urutan render, bukan dikunci ke jenis chart-nya. Fallback yang BENAR-BENAR
+            # akurat & terkunci per jenis chart sudah dipindah ke report_render_logic.py
+            # (`_get_chart_caption(kind, fallback=...)`, dibangun dari angka LIVE yang SAMA
+            # dipakai chart itu sendiri saat dirender) — di sini cukup biarkan chart_captions
+            # kosong/apa adanya, tidak perlu isi apa pun lagi.
             return result_json
         except Exception as e:
             # Sama seperti guard Ollama-offline di atas — dulu mengembalikan dict "berhasil"

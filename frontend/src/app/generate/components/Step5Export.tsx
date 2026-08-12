@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import ScrollReveal from "@/components/ScrollReveal";
-import { API_BASE_URL } from "@/utils/api";
+import { API_BASE_URL, getToken, authHeaders } from "@/utils/api";
 import { sanitizeFilename, downloadBlobAsFile } from "@/utils/downloadFile";
 
 interface Step5ExportProps {
@@ -11,6 +11,7 @@ interface Step5ExportProps {
   reportTitle?: string;
   exportFormats: Record<string, boolean>;
   onReset: () => void;
+  onBack: () => void;
   tx: (key: string, fallback: string) => string;
 }
 
@@ -20,18 +21,12 @@ async function downloadAuthorizedFile(
   format: "pdf" | "pptx",
 ) {
   if (!reportId) return;
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  if (!token) {
+  if (!getToken()) {
     throw new Error("Token tidak ditemukan. Silakan login ulang.");
   }
 
   const url = `${API_BASE_URL}/api/v1/history/${reportId}/${format}`;
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-  };
-
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) {
     let detail = `Gagal mengunduh ${format.toUpperCase()}.`;
     if (res.status === 401) {
@@ -57,6 +52,7 @@ export default function Step5Export({
   reportTitle,
   exportFormats,
   onReset,
+  onBack,
   tx,
 }: Step5ExportProps) {
   const [downloadingFormat, setDownloadingFormat] = useState<"pdf" | "pptx" | null>(null);
@@ -77,7 +73,14 @@ export default function Step5Export({
   const showPdf = exportFormats?.pdf || !exportFormats?.pptx;
   const showPptx = exportFormats?.pptx || !exportFormats?.pdf;
   return (
-    <ScrollReveal animation="scaleIn" className="space-y-6 max-w-xl mx-auto">
+    // Sebelumnya root-nya sendiri dibatasi "max-w-xl mx-auto" — SATU-SATUNYA step yang
+    // dibatasi begitu (Step0/1/2/4 semua mengisi penuh "max-w-6xl" dari page.tsx), makanya
+    // proporsinya kelihatan kecil/beda sendiri dibanding step lain. Pembatas lebar sekarang
+    // cuma di div pembungkus konten sukses di bawah (biar checkmark+kartu tetap ringkas &
+    // tidak melebar aneh), bar tombol Back/Generate-Another-Report di paling bawah mengisi
+    // lebar penuh & pakai pola bottom-nav-bar yang sama seperti step lain.
+    <ScrollReveal animation="scaleIn" className="space-y-6">
+    <div className="max-w-xl mx-auto space-y-6">
       {/* Success Checkmark Circle */}
       <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mx-auto">
         <svg
@@ -103,8 +106,8 @@ export default function Step5Export({
         </h2>
         <p className="text-xs text-stone-500 font-semibold">
           {tx(
-            "Your SOC Security report is now ready for download.",
-            "Your SOC Security report is now ready for download.",
+            "Your report is now ready for download.",
+            "Your report is now ready for download.",
           )}
         </p>
       </div>
@@ -165,12 +168,27 @@ export default function Step5Export({
           </button>
         )}
       </div>
+    </div>
 
-      {/* Reset button to start over */}
-      <div className="pt-6 border-t border-stone-100 flex justify-center">
+      {/* Back ke Step 4 (Preview & Edit) + Reset button to start over — sebelumnya step ini
+          SATU-SATUNYA yang tidak punya jalan balik sama sekali (dilaporkan user). Back di sini
+          TIDAK membatalkan laporan yang sudah jadi — laporannya tetap ada, cuma kembali melihat
+          tab Preview/Edit sebelum export. Bar ini sekarang mengisi lebar penuh & pakai ukuran
+          tombol yang sama seperti bottom-nav-bar step lain (Step1/2/4), bukan lagi text-xs
+          kecil berdempetan di dalam kolom sempit. */}
+      <div className="flex justify-between pt-5 border-t border-stone-200/60 mt-8">
+        <button
+          onClick={onBack}
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold text-sm shadow-sm transition-all duration-200 cursor-pointer"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+          </svg>
+          {tx("Back", "Back")}
+        </button>
         <button
           onClick={onReset}
-          className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold text-xs shadow-sm transition-all cursor-pointer"
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-petro-green hover:bg-petro-green-hover text-white font-bold text-sm shadow transition-all duration-200 cursor-pointer"
         >
           {tx("Generate Another Report", "Generate Another Report")}
         </button>

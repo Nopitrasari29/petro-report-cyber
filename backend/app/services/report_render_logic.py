@@ -18,6 +18,8 @@ paragraf tulisan AI yang menghormati bahasa ini, sementara semua judul/label tet
 Bahasa Indonesia apa pun pengaturannya.
 """
 import datetime
+import os
+import random
 
 from app.crud.report import get_parsed_data
 from app.services.ai_engine.data_profiler import compute_statistics, _classify_severity_value
@@ -30,6 +32,19 @@ SEVERITY_LABEL = {
 }
 
 
+def find_logo_path() -> str | None:
+    """Cari file logo perusahaan di frontend/public — SEBELUMNYA disalin persis (path resolusi
+    identik) di export_pdf.py (_resolve_logo_b64) & export_ppt.py (_resolve_logo_path), cuma
+    beda di langkah TERAKHIR (PDF butuh base64 utk <img src="data:...">, PPT butuh path file
+    apa adanya utk add_picture()) — bagian PENCARIAN path-nya sendiri disatukan di sini."""
+    base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public"))
+    for name in ("LOGO_PETRO_DANANTARA.png", "LOGO_PETRO.png"):
+        p = os.path.join(base, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def is_english(report) -> bool:
     return bool(getattr(report, "language", None)) and report.language.strip().lower() == "english"
 
@@ -39,19 +54,72 @@ def _L(report, id_text: str, en_text: str) -> str:
     return en_text if is_english(report) else id_text
 
 
+# Dipakai laporan LAMA (dibuat sebelum kolom report.visual_style ada, jadi NULL) — satu set
+# tetap yang cocok dgn styling default sebelumnya (cover split, chart bar, kartu grid biasa),
+# supaya laporan lama tidak pernah error/berubah tampilan sendiri gara-gara migrasi ini.
+DEFAULT_VISUAL_STYLE = {
+    "cover_style": "split",
+    "category_style": "bar",
+    "status_style": "bar",
+    "asset_style": "cards",
+    "recommendation_style": "cards",
+    "panel_side": "right",
+    "stat_cols": 3,
+    "card_cols": 3,
+    "accent_bar_color": "green",
+    "flourish_corner": "bottom_right",
+}
+
+
+def pick_visual_style() -> dict:
+    """Pilih SATU kombinasi varian tampilan (bentuk cover, gaya chart, gaya kartu, dst) —
+    dipanggil SEKALI oleh analysis.py tepat saat analisis AI berhasil, hasilnya DISIMPAN ke
+    report.visual_style (bukan di-random ulang tiap kali file diunduh seperti sebelumnya).
+    BUG YANG DIPERBAIKI (dilaporkan user): dulu setiap generate_ppt_report/generate_pdf_report
+    dipanggil, pilihan acak baru diambil lagi — preview web (yang selalu 1 tampilan tetap)
+    jadi bisa terlihat SANGAT berbeda dari file yang benar-benar diunduh. Sekarang preview,
+    PDF, dan PPTX bertiga membaca `report.visual_style` yang SAMA, jadi dijamin konsisten utk
+    1 laporan yang sama — regenerate laporan (analisis AI baru) boleh dapat kombinasi lain,
+    laporan yang sudah ada tidak pernah berubah bentuk sendiri kapan pun dilihat/diunduh."""
+    rnd = random.Random()
+    return {
+        "cover_style": rnd.choice(["solid", "split"]),
+        "category_style": rnd.choice(["bar", "donut", "stacked"]),
+        "status_style": rnd.choice(["bar", "donut", "stacked"]),
+        "asset_style": rnd.choice(["cards", "podium", "bars"]),
+        "recommendation_style": rnd.choice(["cards", "timeline", "banners"]),
+        "panel_side": rnd.choice(["left", "right"]),
+        "stat_cols": rnd.choice([2, 3]),
+        "card_cols": rnd.choice([2, 3]),
+        "accent_bar_color": rnd.choice(["green", "gold"]),
+        "flourish_corner": rnd.choice(["bottom_right", "top_right", "bottom_left"]),
+    }
+
+
+def get_visual_style(report) -> dict:
+    """Baca report.visual_style, fallback ke DEFAULT_VISUAL_STYLE kalau NULL (laporan lama)
+    ATAU kalau formatnya tidak lengkap (jaga-jaga field baru ditambah di masa depan)."""
+    stored = getattr(report, "visual_style", None) or {}
+    return {**DEFAULT_VISUAL_STYLE, **stored}
+
+
 # Domain NON-keamanan yang punya nilai data_type tetap (lihat domainToDataType di
 # generate/page.tsx & _DOMAIN_TITLE_LABELS di upload.py) — di luar ini (firewall,
 # email_security, ids_ips, vapt, atau apapun yang tidak dikenal) DIANGGAP domain keamanan,
 # mempertahankan SELURUH kosakata SOC/insiden yang sudah ada sebagai perilaku default/lama.
 _NON_SECURITY_DATA_TYPES = {"keuangan", "financial", "kpi_hr", "operasional", "general", "procurement"}
 
+
+# BUG YANG DIPERBAIKI (dilaporkan user): dulu label tunggal per key, dipakai apa adanya
+# terlepas dari report.language — "procurement" misalnya SELALU tampil "Pengadaan Barang &
+# Jasa" walau laporannya berbahasa Inggris. Sekarang tiap key punya varian (id, en).
 _DATA_TYPE_DISPLAY_LABELS = {
-    "keuangan": "Keuangan",
-    "financial": "Financial",
-    "kpi_hr": "KPI & HR",
-    "operasional": "Operasional",
-    "general": "Umum",
-    "procurement": "Pengadaan Barang & Jasa",
+    "keuangan": ("Keuangan", "Finance"),
+    "financial": ("Keuangan", "Finance"),
+    "kpi_hr": ("KPI & SDM", "KPI & HR"),
+    "operasional": ("Operasional", "Operational"),
+    "general": ("Umum", "General"),
+    "procurement": ("Pengadaan Barang & Jasa", "Goods & Services Procurement"),
 }
 
 
@@ -66,7 +134,10 @@ def is_security_domain(report) -> bool:
 
 def humanize_data_type(report) -> str:
     dt = str(getattr(report, "data_type", "") or "").strip().lower()
-    return _DATA_TYPE_DISPLAY_LABELS.get(dt) or dt.replace("_", " ").title() or "-"
+    labels = _DATA_TYPE_DISPLAY_LABELS.get(dt)
+    if labels:
+        return labels[1] if is_english(report) else labels[0]
+    return dt.replace("_", " ").title() or "-"
 
 
 def format_report_date(dt: datetime.datetime, language: str | None) -> str:
@@ -114,10 +185,20 @@ def classify_open_status(value) -> bool | None:
 
 def pick_category(top_categories: dict, preferred: list, used: set):
     """Coba tiap label di `preferred` urut, kembalikan (label, items) pertama yang ADA
-    isinya & belum dipakai slide/halaman lain — else None (bagian terkait di-skip aman)."""
+    isinya & belum dipakai slide/halaman lain — else None (bagian terkait di-skip aman).
+
+    BUG NYATA YANG DIPERBAIKI (data VAPT nyata): kolom yang cocok lewat NAMA (mis. "asset"/
+    "host", lihat _CATEGORY_INTENTS di data_profiler.py) dipilih tanpa cek apakah isinya
+    genuinely berulang — beda dengan jalur fallback berbasis-isi (_rank_categorical_candidates)
+    yang sudah punya filter rasio-unik sendiri. Kolom nama aset yang hampir semua barisnya
+    unik (mis. tiap baris nama beda) tetap dipaksa tampil sebagai "3 aset paling sering jadi
+    sasaran" padahal count-nya cuma 1 tiap item — bukan pola nyata, cuma kebetulan urutan
+    data. Kalau item TERATAS (paling sering muncul) count-nya cuma 1, berarti SEMUA nilai di
+    kolom itu unik (1 = nilai minimum sekaligus maksimum) — lewati kandidat ini, coba label
+    berikutnya di `preferred` daripada memaksakan tampilan yang menyesatkan."""
     for label in preferred:
         items = top_categories.get(label)
-        if items and label not in used:
+        if items and label not in used and items[0].get("count", 0) > 1:
             used.add(label)
             return label, items
     return None
@@ -263,16 +344,24 @@ def build_report_blocks(report) -> list[dict]:
     _raw_chart_captions = ai_summary.get("chart_captions")
     _chart_caption_state = {"i": 0}
 
-    def _get_chart_caption(kind: str):
+    def _get_chart_caption(kind: str, fallback: str | None = None):
+        """`fallback` (opsional) — BUG NYATA YANG DIPERBAIKI (dilaporkan user, disertai contoh
+        laporan): sebelum ini, kalau AI mengisi "chart_captions" TAPI cuma sebagian (mis. isi
+        "category" & lupa "severity"/"status" — dict-nya TIDAK kosong, jadi fallback level-atas
+        di ollama_client.py TIDAK PERNAH kepicu), chart yang key-nya tidak diisi AI tampil TANPA
+        penjelasan sama sekali di laporan. Tiap pemanggil sekarang menyertakan fallback
+        deterministik (dibangun dari angka yang SAMA persis dipakai `intro`/`legend` blok itu,
+        lihat tiap titik panggilnya) — dipakai HANYA kalau AI benar-benar tidak mengisi key
+        ini, supaya SETIAP chart selalu punya penjelasan di sampingnya, bukan cuma visual."""
         if isinstance(_raw_chart_captions, dict):
             val = _raw_chart_captions.get(kind)
-            return sanitize_text(val) if val else None
+            return sanitize_text(val) if val else fallback
         if isinstance(_raw_chart_captions, list):
             captions = [sanitize_text(c) for c in _raw_chart_captions if c]
             idx = _chart_caption_state["i"]
             _chart_caption_state["i"] += 1
-            return captions[idx] if idx < len(captions) else None
-        return None
+            return captions[idx] if idx < len(captions) else fallback
+        return fallback
 
     # Detect domain & language. report.domain_type baru reliable utk laporan yang diunggah
     # lewat detector baru (section_suggester.py) — laporan LAMA defaultnya None/"general" walau
@@ -293,6 +382,33 @@ def build_report_blocks(report) -> list[dict]:
 
     blocks: list[dict] = []
     sec_domain = is_security_domain(report)
+
+    # "Hero stat" — satu angka/persentase paling representatif utk laporan ini, dipakai di
+    # cover (varian split-warna, lihat export_pdf.py/export_ppt.py) DAN slide section dinamis
+    # (aux_stat, sudah ada sebelumnya) — DIPINDAH ke sini (sebelumnya cuma dihitung di dekat
+    # section dinamis, jauh sesudah cover di-append) supaya SATU logika prioritas yang sama
+    # dipakai di kedua tempat, bukan dua salinan yang bisa diam-diam beda. Prioritas: proporsi
+    # Critical (kalau ada data severity) > kategori teratas > rata-rata kolom numerik > total
+    # data mentah sebagai fallback paling umum.
+    numeric_summary_items = list((report_stats.get("numeric_summary") or {}).items())
+    hero_stat = None
+    if total_sev:
+        hero_stat = (
+            f"{round(severity.get('critical', 0) / total_sev * 100, 1)}%",
+            _L(report, "Proporsi Critical", "Critical Share") if sec_domain else _L(report, "Proporsi Tertinggi", "Highest Share"),
+        )
+    elif category_pick:
+        top_item = category_pick[1][0]
+        hero_stat = (str(top_item["count"]), humanize_label(category_pick[0], source_cols))
+    elif numeric_summary_items:
+        col, nstats = numeric_summary_items[0]
+        avg_val = nstats.get("mean")
+        formatted = f"{avg_val:,.0f}" if avg_val is not None else "-"
+        if not is_english(report):
+            formatted = formatted.replace(",", ".")
+        hero_stat = (formatted, _L(report, f"Rata-rata {humanize_label(col, source_cols)}", f"Average {humanize_label(col, source_cols)}"))
+    else:
+        hero_stat = (str(total_records), _L(report, "Total Data", "Total Records"))
 
     # ---------------- Cover ----------------
     cat_count = len(top_categories)
@@ -325,6 +441,8 @@ def build_report_blocks(report) -> list[dict]:
         "critical_count": crit_count,
         "info_line": info_line,
         "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
+        "hero_stat": hero_stat,
+        "hero_stat_kicker": _L(report, "CAPAIAN KESELURUHAN", "OVERALL FIGURE"),
     })
 
     # ---------------- Latar Belakang & Tujuan (Domain & Language Aware) ----------------
@@ -395,7 +513,10 @@ def build_report_blocks(report) -> list[dict]:
             "total_records_text": _L(report, f"{total_records} entri log", f"{total_records} log entries") if sec_domain
             else _L(report, f"{total_records} data", f"{total_records} records"),
             "source_file_label": _L(report, "Sumber Berkas", "Source File"),
-            "input_file_name": report.input_file_name or "-",
+            # BUG KECIL YANG DIPERBAIKI (dilaporkan user): nama file asli kadang berisi spasi
+            # ganda/berlebih (mis. "Data Dummy PKG   - Pengadaan.pdf") — dirapikan jadi 1 spasi
+            # di sini (tampilan saja, TIDAK mengubah nama file sebenarnya di sistem/DB).
+            "input_file_name": " ".join((report.input_file_name or "-").split()),
             "data_type_label_label": _L(report, "Jenis Data", "Data Type"),
             "data_type_label": humanize_data_type(report),
             "footnote": _L(
@@ -484,25 +605,9 @@ def build_report_blocks(report) -> list[dict]:
     # (temuan user: boros ruang kosong, semua slide identik) — setiap section dilengkapi 1
     # potongan angka/daftar kecil dari STATISTIK PYTHON (bukan karangan AI), berselang-seling
     # 2 pola tata letak (panel angka besar vs daftar ringkas) supaya tidak monoton.
-    numeric_summary_items = list((report_stats.get("numeric_summary") or {}).items())
-    aux_stat_value = None
-    if total_sev:
-        aux_stat_value = (
-            f"{round(severity.get('critical', 0) / total_sev * 100, 1)}%",
-            _L(report, "Proporsi Critical", "Critical Share") if sec_domain else _L(report, "Proporsi Tertinggi", "Highest Share"),
-        )
-    elif category_pick:
-        top_item = category_pick[1][0]
-        aux_stat_value = (str(top_item["count"]), humanize_label(category_pick[0], source_cols))
-    elif numeric_summary_items:
-        col, nstats = numeric_summary_items[0]
-        avg_val = nstats.get("mean")
-        formatted = f"{avg_val:,.0f}" if avg_val is not None else "-"
-        if not is_english(report):
-            formatted = formatted.replace(",", ".")
-        aux_stat_value = (formatted, _L(report, f"Rata-rata {humanize_label(col, source_cols)}", f"Average {humanize_label(col, source_cols)}"))
-    else:
-        aux_stat_value = (str(total_records), _L(report, "Total Data", "Total Records"))
+    # aux_stat_value = hero_stat yang sama dipakai cover (dihitung sekali di atas, lihat
+    # catatan panjang di sana) — supaya angka headline konsisten di seluruh laporan.
+    aux_stat_value = hero_stat
 
     aux_list_items = None
     if category_pick:
@@ -517,6 +622,54 @@ def build_report_blocks(report) -> list[dict]:
             {"label": it["value"], "value": f"{round(it['count'] / status_total * 100, 1)}%"}
             for it in status_items[:4]
         ]
+
+    # ---------------- Trend Analysis / Severity Analysis / Risk Assessment ----------------
+    # 3 dari 6 field WAJIB yang AI SELALU tulis & bisa diedit user di tab Edit Text (lihat
+    # reportSections.ts, urutan page 02/03/04 persis di bawah ini) — SEBELUMNYA tidak pernah
+    # dibaca sama sekali di sini, jadi hasil generate maupun edit user untuk ketiganya hilang
+    # tanpa jejak begitu di-export ke PDF/PPT (bug ditemukan lewat audit). Ditempatkan tepat
+    # setelah Ringkasan Eksekutif, SEBELUM section dinamis AI & chart detail — bacanya jadi
+    # wajar: ringkasan besar dulu, baru narasi lebih spesifik, baru breakdown per-chart.
+    # Judul "Severity Analysis" DIHINDARI untuk domain non-keamanan (sama seperti bagian lain
+    # di file ini) karena isinya genuinely membahas distribusi/prioritas data, bukan cuma
+    # istilah keamanan siber — konten AI-nya sendiri sudah domain-neutral (lihat SYSTEM_PROMPT),
+    # cuma LABEL slide-nya yang perlu ikut netral.
+    if is_included("trend_analysis") and ai_summary.get("trend_analysis"):
+        blocks.append({
+            "kind": "dynamic_section",
+            "dark": False,
+            "kicker": _L(report, "ANALISIS", "ANALYSIS"),
+            "title": _L(report, "Analisis Tren", "Trend Analysis"),
+            "text": sanitize_text(ai_summary.get("trend_analysis")),
+            "layout_variant": "stat",
+            "aux_stat": aux_stat_value,
+            "aux_list": None,
+        })
+
+    if is_included("severity_analysis") and ai_summary.get("severity_analysis"):
+        blocks.append({
+            "kind": "dynamic_section",
+            "dark": False,
+            "kicker": _L(report, "ANALISIS", "ANALYSIS"),
+            "title": _L(report, "Analisis Tingkat Keparahan", "Severity Analysis") if sec_domain
+            else _L(report, "Analisis Distribusi & Prioritas", "Distribution & Priority Analysis"),
+            "text": sanitize_text(ai_summary.get("severity_analysis")),
+            "layout_variant": "list" if aux_list_items else "stat",
+            "aux_stat": None if aux_list_items else aux_stat_value,
+            "aux_list": aux_list_items,
+        })
+
+    if is_included("risk_assessment") and ai_summary.get("risk_assessment"):
+        blocks.append({
+            "kind": "dynamic_section",
+            "dark": False,
+            "kicker": _L(report, "ANALISIS", "ANALYSIS"),
+            "title": _L(report, "Penilaian Risiko", "Risk Assessment"),
+            "text": sanitize_text(ai_summary.get("risk_assessment")),
+            "layout_variant": "stat",
+            "aux_stat": aux_stat_value,
+            "aux_list": None,
+        })
 
     dynamic_sections = [s for s in (ai_summary.get("sections") or []) if isinstance(s, dict)]
     for idx, sec in enumerate(dynamic_sections[1:]):
@@ -574,7 +727,15 @@ def build_report_blocks(report) -> list[dict]:
                 f"{top_items[0]['value']} menjadi kontributor volume terbesar pada kategori ini.",
                 f"{top_items[0]['value']} is the largest volume contributor in this category.",
             )),
-            "ai_caption": _get_chart_caption("category"),
+            "ai_caption": _get_chart_caption("category", fallback=sanitize_text(_L(
+                report,
+                f"{top_items[0]['value']} mencatat volume tertinggi dengan {top_items[0]['count']} dari {cat_total} data "
+                f"({round(top_items[0]['count']/cat_total*100,1)}%). Konsentrasi pada kategori ini bisa jadi dasar "
+                f"evaluasi kebijakan atau alokasi sumber daya operasional ke depan.",
+                f"{top_items[0]['value']} recorded the highest volume with {top_items[0]['count']} of {cat_total} records "
+                f"({round(top_items[0]['count']/cat_total*100,1)}%). This concentration can guide policy evaluation or "
+                f"operational resource allocation going forward.",
+            ))),
         })
 
     # ---------------- Distribusi Severity ----------------
@@ -606,7 +767,13 @@ def build_report_blocks(report) -> list[dict]:
             "crit_pct": crit_pct,
             "panel_text": _L(report, "dari seluruh event berstatus Critical Severity", "of all events at Critical severity"),
             "detail_text": detail_text,
-            "ai_caption": _get_chart_caption("severity"),
+            "ai_caption": _get_chart_caption("severity", fallback=sanitize_text(_L(
+                report,
+                f"Critical mencapai {crit_pct}% dan High {high_pct}% dari seluruh {total_sev} event. "
+                f"Gabungan proporsi setinggi ini perlu diprioritaskan penanganannya agar tidak berdampak lebih luas ke operasional.",
+                f"Critical accounts for {crit_pct}% and High {high_pct}% of all {total_sev} events. "
+                f"This combined high proportion should be prioritized to avoid broader operational impact.",
+            ))),
         })
 
     # ---------------- Status Penanganan Insiden ----------------
@@ -629,7 +796,13 @@ def build_report_blocks(report) -> list[dict]:
             "categories": [i["value"] for i in top_status_items],
             "values": [i["count"] for i in top_status_items],
             "intro": intro,
-            "ai_caption": _get_chart_caption("status"),
+            "ai_caption": _get_chart_caption("status", fallback=sanitize_text(_L(
+                report,
+                f"{round(top_status['count']/status_total*100,1)}% dari {status_total} event berstatus {top_status['value']}. "
+                f"Sisanya tersebar di status lain yang perlu terus dipantau agar tidak menumpuk jadi backlog.",
+                f"{round(top_status['count']/status_total*100,1)}% of {status_total} events are in {top_status['value']} status. "
+                f"The remainder is spread across other statuses that need ongoing monitoring to avoid becoming a backlog.",
+            ))),
         })
 
     # ---------------- Tabel Insiden Critical/Prioritas Tinggi ----------------
@@ -695,6 +868,8 @@ def build_report_blocks(report) -> list[dict]:
             card_items.append({
                 "num": str(idx + 1),
                 "name": item["value"],
+                "count": item["count"],
+                "pct": pct,
                 "stat": _L(report, f"{item['count']} event", f"{item['count']} events") if sec_domain
                 else _L(report, f"{item['count']} data", f"{item['count']} entries"),
                 "detail": sanitize_text(_L(
@@ -765,6 +940,24 @@ def build_report_blocks(report) -> list[dict]:
                 detail_txt = rest.strip() or None
                 if not title_txt:
                     title_txt = raw_detail
+                elif not detail_txt and len(title_txt) > 70:
+                    # BUG NYATA YANG DIPERBAIKI (dilaporkan user): kalau AI menulis SATU
+                    # kalimat panjang tanpa kalimat kedua (umum sebelum prompt diperbaiki utk
+                    # eksplisit minta {title, detail}), title_txt di atas jadi kalimat PANJANG
+                    # itu utuh — kartu tampil sebagai satu paragraf tanpa judul pendek yang bisa
+                    # di-scan cepat. Potong ke batas KATA (bukan karakter kasar) jadi judul
+                    # singkat, kalimat ASLI UTUH tetap ditampilkan penuh sebagai detail (sedikit
+                    # pengulangan di awal detail masih lebih baik daripada kartu tanpa judul).
+                    words = title_txt.split()
+                    short_words, length = [], 0
+                    for w in words:
+                        if length + len(w) + 1 > 55:
+                            break
+                        short_words.append(w)
+                        length += len(w) + 1
+                    if short_words and len(short_words) < len(words):
+                        detail_txt = title_txt
+                        title_txt = " ".join(short_words) + "…"
             rec_items.append({
                 "num": str(idx + 1),
                 "title": sanitize_text(title_txt),
@@ -822,12 +1015,18 @@ def build_report_blocks(report) -> list[dict]:
         })
 
     # ---------------- Penutup ----------------
+    # hero_stat/header_title diulang dari cover (variabel yang sama, masih di scope function
+    # ini) — dibutuhkan varian cover_style="split" (bookend angka hero yang sama di cover &
+    # penutup, gaya laporan eksekutif) baik di exporter PPT/PDF maupun preview React
+    # (ClosingBlock, lihat ReportBlockRenderer.tsx) supaya keduanya konsisten.
     blocks.append({
         "kind": "closing",
         "dark": True,
         "title": report.title,
         "thank_you": _L(report, "Terima Kasih", "Thank You"),
         "note": _L(report, "Diskusi dan pertanyaan dipersilakan.", "Questions and discussion are welcome."),
+        "hero_stat": hero_stat,
+        "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
     })
 
     return blocks

@@ -1,6 +1,5 @@
-import { useState, useEffect } from "react";
 import ScrollReveal from "@/components/ScrollReveal";
-import { t } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 
 interface HistoryStatsCardsProps {
   totalCount: number;
@@ -25,11 +24,7 @@ export default function HistoryStatsCards({
   draftPercent,
   exportedPercent,
 }: HistoryStatsCardsProps) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   return (
     <ScrollReveal animation="fadeInUp" delay={100}>

@@ -3,7 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { t, getLanguage, setLanguage as setUiLanguage } from "@/utils/i18n";
-import { API_BASE_URL } from "@/utils/api";
+import { API_BASE_URL, authHeaders } from "@/utils/api";
+import { useAppearance } from "@/hooks/useAppearance";
+import { APPEARANCE_STORAGE_KEY, type Appearance } from "@/utils/theme";
 import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import ScrollReveal from "@/components/ScrollReveal";
@@ -37,22 +39,17 @@ export default function SettingsPage() {
   const [language, setLanguage] = useState("English");
   const [notifySuccess, setNotifySuccess] = useState(true);
   const [notifyFailed, setNotifyFailed] = useState(true);
+  const { appearance, setAppearance } = useAppearance();
 
   // Fetch initial profile & settings on mount
   const loadData = async () => {
     setLoading(true);
     setErrorMsg("");
     try {
-      const token = localStorage.getItem("token");
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
       // 1. Fetch User Profile (termasuk preferensi personal: language, appearance, notifikasi)
       const profileRes = await fetch(
         `${API_BASE_URL}/api/v1/settings/profile`,
-        { headers },
+        { headers: authHeaders() },
       );
       if (profileRes.status === 401 || profileRes.status === 403) {
         router.push("/login");
@@ -74,6 +71,16 @@ export default function SettingsPage() {
         setUiLanguage(langVal);
         setNotifySuccess(profile.notify_report_success ?? true);
         setNotifyFailed(profile.notify_report_failed ?? true);
+
+        // Sinkron dari server HANYA kalau browser ini belum pernah punya preferensi
+        // appearance tersimpan sendiri (device/browser baru) - supaya tidak menimpa pilihan
+        // yang MEMANG sudah disengaja di browser ini dengan nilai lama dari device lain.
+        if (
+          !localStorage.getItem(APPEARANCE_STORAGE_KEY) &&
+          (profile.appearance === "light" || profile.appearance === "dark" || profile.appearance === "system")
+        ) {
+          setAppearance(profile.appearance as Appearance);
+        }
       }
     } catch (err: any) {
       console.error(err);
@@ -86,7 +93,6 @@ export default function SettingsPage() {
   useEffect(() => {
     loadData();
     if (typeof window !== "undefined") {
-      window.document.documentElement.classList.remove("dark");
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get("tab");
       if (tabParam === "account" || tabParam === "general") {
@@ -131,15 +137,9 @@ export default function SettingsPage() {
       setNotifySuccess(true);
       setNotifyFailed(true);
 
-      const token = localStorage.getItem("token");
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
       await fetch(`${API_BASE_URL}/api/v1/settings/profile`, {
         method: "PUT",
-        headers,
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           language: "English",
           notify_report_success: true,
@@ -181,14 +181,6 @@ export default function SettingsPage() {
 
     setIsSaving(true);
     try {
-      const token = localStorage.getItem("token");
-      const authHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (token) {
-        authHeaders["Authorization"] = `Bearer ${token}`;
-      }
-
       // 1. Menyatukan data Profile, Avatar, dan preferensi personal ke dalam satu payload JSON.
       // Semua field ini per-user — tidak lagi menyentuh pengaturan global sama sekali.
       const profileBody: Record<string, any> = {
@@ -196,7 +188,7 @@ export default function SettingsPage() {
         email: emailAddress,
         avatar_url: avatarUrl, // Mengirimkan string Base64 langsung ke DB
         language: language,
-        appearance: "light",
+        appearance: appearance,
         notify_report_success: notifySuccess,
         notify_report_failed: notifyFailed,
       };
@@ -210,7 +202,7 @@ export default function SettingsPage() {
         `${API_BASE_URL}/api/v1/settings/profile`,
         {
           method: "PUT",
-          headers: authHeaders,
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify(profileBody),
         },
       );

@@ -1,7 +1,7 @@
 "use client";
 
 import ReportBlockRenderer from "@/components/ReportBlockRenderer";
-import type { ReportBlock } from "@/utils/reportTheme";
+import type { ReportBlock, VisualStyle } from "@/utils/reportTheme";
 
 const CHART_BLOCK_KINDS = [
   "category_distribution",
@@ -11,6 +11,7 @@ const CHART_BLOCK_KINDS = [
 
 interface ChartNarasiLayoutProps {
   blocks: ReportBlock[];
+  visualStyle?: VisualStyle;
   blocksLoading: boolean;
   blocksError: string;
   tx: (key: string, fallback: string) => string;
@@ -26,6 +27,7 @@ interface ChartNarasiLayoutProps {
  */
 export default function ChartNarasiLayout({
   blocks,
+  visualStyle,
   blocksLoading,
   blocksError,
   tx,
@@ -69,7 +71,7 @@ export default function ChartNarasiLayout({
     <div className="space-y-6">
       {chartBlocks.map((block, idx) => (
         <div key={idx} className="rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
-          <ReportBlockRenderer block={block} />
+          <ReportBlockRenderer block={block} visualStyle={visualStyle} />
         </div>
       ))}
     </div>

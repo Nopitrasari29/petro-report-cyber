@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react";
-import { t } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 
 interface HistoryFilterBarProps {
   searchQuery: string;
@@ -26,11 +25,7 @@ export default function HistoryFilterBar({
   setSortOrder,
   setCurrentPage,
 }: HistoryFilterBarProps) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   return (
     <div className="p-4 sm:p-5 border-b border-stone-150 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">

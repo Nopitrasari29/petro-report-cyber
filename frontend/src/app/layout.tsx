@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ScrollProgressBar from "@/components/ScrollProgressBar";
+import { themeInitScriptString } from "@/utils/theme";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,7 +28,13 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        {/* Diterapkan SEBELUM React hidrasi supaya tidak ada kedipan tema terang sesaat
+            sebelum berganti gelap (lihat utils/theme.ts) */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScriptString() }} />
+      </head>
       <body className="min-h-full flex flex-col font-sans">
         <ScrollProgressBar />
         {children}

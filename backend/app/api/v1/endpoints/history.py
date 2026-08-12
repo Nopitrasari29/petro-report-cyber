@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -6,15 +7,17 @@ import io
 import re
 import urllib.parse
 
+logger = logging.getLogger(__name__)
+
 from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
-from app.crud.report import get_owned_report, delete_report
+from app.crud.report import get_owned_report, delete_report, try_acquire_ai_lock
 from app.crud.audit_log import log_action  # Fix #9: Audit Log
 from app.schemas.report import ReportResponse
 from app.models.report import Report
 from app.services.export_pdf import PDFExporter
 from app.services.export_ppt import PPTXExporter
-from app.services.report_render_logic import build_report_blocks
+from app.services.report_render_logic import build_report_blocks, get_visual_style
 
 from datetime import datetime, date
 
@@ -134,7 +137,11 @@ def get_report_preview_blocks(
         )
 
     blocks = build_report_blocks(db_report)
-    return {"blocks": blocks}
+    # visual_style dikirim terpisah (bukan diselipkan ke tiap block) supaya frontend cukup
+    # baca 1 objek kecil ini utk tahu varian mana yg harus dirender (cover solid/split, chart
+    # bar/donut/stacked, dst) — lihat pick_visual_style() di report_render_logic.py utk kenapa
+    # ini WAJIB persis sama dgn yg dipakai export_pdf.py/export_ppt.py saat laporan ini diunduh.
+    return {"blocks": blocks, "visual_style": get_visual_style(db_report)}
 
 @router.delete("/{report_id}")
 def remove_report(
@@ -151,7 +158,7 @@ def remove_report(
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
     report_title = db_report.title  # Simpan sebelum dihapus
-    delete_report(db, report_id)
+    delete_report(db, report_id, user_id=current_user.id)
     # Fix #9: Catat aksi delete ke audit log
     try:
         log_action(
@@ -223,9 +230,23 @@ def retry_report_analysis(
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
 
-    db_report.status = "processing"
-    db_report.tokens_generated = 0
-    db.commit()
+    # Kunci "1 proses AI per waktu di server" yang sama dengan endpoint generate (analysis.py)
+    # — sebelumnya retry TIDAK mengecek kunci ini sama sekali, bisa memicu 2 job Ollama jalan
+    # bersamaan kalau user retry sementara laporan lain (siapa pun usernya) sedang diproses.
+    if not try_acquire_ai_lock(db, report_id):
+        db.refresh(db_report)
+        if db_report.status == "processing":
+            raise HTTPException(status_code=429, detail="Laporan ini sudah sedang diproses.")
+        other_active_job = (
+            db.query(Report)
+            .filter(Report.status == "processing", Report.id != report_id)
+            .first()
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Sistem sedang memproses analisis AI untuk laporan lain (ID: {other_active_job.id if other_active_job else '?'}). Mohon tunggu sebentar sebelum mencoba lagi."
+        )
+
     db.refresh(db_report)
 
     from app.api.v1.endpoints.analysis import _run_analysis_job
@@ -299,9 +320,10 @@ def download_pdf_report(
             db_report.file_pdf_path = pdf_cache_path
             db.commit()
         except Exception as e:
+            logger.error(f"Gagal ekspor PDF utk report {report_id}: {e}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Gagal melakukan ekspor PDF: {str(e)}"
+                detail="Gagal membuat berkas PDF untuk laporan ini. Silakan coba lagi atau hubungi admin."
             )
 
     # Fix #9: Catat aksi download PDF ke audit log
@@ -362,9 +384,10 @@ def download_pptx_report(
             db_report.file_ppt_path = ppt_cache_path
             db.commit()
         except Exception as e:
+            logger.error(f"Gagal ekspor PPTX utk report {report_id}: {e}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Gagal melakukan ekspor PPTX: {str(e)}"
+                detail="Gagal membuat berkas PPTX untuk laporan ini. Silakan coba lagi atau hubungi admin."
             )
 
     # Fix #9: Catat aksi download PPTX ke audit log

@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import secrets
 from app.models.user import User
 from app.schemas.user import UserCreate
@@ -14,23 +15,28 @@ def get_user_by_username(db: Session, username: str):
 
 
 def get_user_by_email(db: Session, email: str):
-    return db.query(User).filter(User.email == email).first()
+    # BUG DIPERBAIKI: dulu case-sensitive murni ("Budi@Gmail.com" dan "budi@gmail.com"
+    # dianggap 2 akun beda) - bisa bikin gagal login karena beda huruf ketikan, atau akun
+    # ganda tak sengaja lewat Google OAuth utk orang yang sama. func.lower() di KEDUA sisi
+    # supaya tetap konsisten dgn email lama di DB yang belum sempat dinormalisasi juga.
+    return db.query(User).filter(func.lower(User.email) == email.lower()).first()
 
 
 def create_user(db: Session, user: UserCreate):
     hashed_password = get_password_hash(user.password)
-    
+    normalized_email = user.email.lower()
+
     # Auto-generate unique username dari email
-    base_username = user.email.split("@")[0]
+    base_username = normalized_email.split("@")[0]
     username = base_username
     counter = 1
     while db.query(User).filter(User.username == username).first():
         username = f"{base_username}{counter}"
         counter += 1
-        
+
     db_user = User(
         username=username,
-        email=user.email,
+        email=normalized_email,
         hashed_password=hashed_password,
         full_name=user.full_name or username.title(),
         role="Analyst",
@@ -71,7 +77,7 @@ def create_user_oauth(db: Session, email: str, username: str, full_name: str | N
     
     db_user = User(
         username=username,
-        email=email,
+        email=email.lower(),
         hashed_password=hashed_password,
         full_name=full_name or username.title(),
         avatar_url=avatar_url,

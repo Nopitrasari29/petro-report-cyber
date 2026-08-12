@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
-import { t } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 import { API_BASE_URL } from "@/utils/api";
 
 interface Step2EmailVerificationProps {
@@ -14,11 +14,7 @@ export default function Step2EmailVerification({
   onBack,
   onBackToLogin,
 }: Step2EmailVerificationProps) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   const [resent, setResent] = useState(false);
   const [loading, setLoading] = useState(false);

@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { t, getLanguage } from "@/utils/i18n";
-import { API_BASE_URL } from "@/utils/api";
+import { getLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
+import { API_BASE_URL, getToken, authHeaders } from "@/utils/api";
 import LandingHero from "./components/landing/LandingHero";
 import LandingHowItWorks from "./components/landing/LandingHowItWorks";
 import LandingModulesList from "./components/landing/LandingModulesList";
@@ -16,12 +17,7 @@ export default function LandingPage() {
   const [lang, setLang] = useState("English");
 
   // Pengaman Hidrasi (Hydration Guard)
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  const tx = (key: string, fallback: string) => mounted ? t(key) : fallback;
+  const { tx } = useTx();
 
   useEffect(() => {
     setLang(getLanguage());
@@ -36,16 +32,13 @@ export default function LandingPage() {
 
   useEffect(() => {
     const fetchUser = async () => {
-      const token = localStorage.getItem("token");
-      if (!token) {
+      if (!getToken()) {
         setLoadingUser(false);
         return;
       }
       try {
         const res = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
-          headers: {
-            "Authorization": `Bearer ${token}`
-          }
+          headers: authHeaders()
         });
         if (!res.ok) {
           throw new Error("Session expired or invalid");

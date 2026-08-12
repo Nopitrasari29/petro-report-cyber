@@ -7,7 +7,20 @@ class Settings(BaseSettings):
 
     # App
     APP_NAME: str = "AI Security Analysis & Reporting Platform"
-    DEBUG: bool = False
+    # BUG DIPERBAIKI: setting ini ADA tapi sebelumnya tidak pernah benar-benar dibaca kode
+    # manapun (dokumentasi API /docs & /redoc selalu aktif apa pun nilainya). Sekarang jadi
+    # gerbang nyata (lihat main.py) — default TRUE (bukan False) SENGAJA, supaya perilaku
+    # development lokal sekarang (tanpa DEBUG di .env) TIDAK berubah sama sekali. Begitu
+    # deploy ke server produksi, set DEBUG=False eksplisit di .env server itu untuk mematikan
+    # /docs & /redoc di sana — mengikuti pola sama seperti pengaturan produksi lain di file ini.
+    DEBUG: bool = True
+
+    # Alamat frontend yang sebenarnya diakses user (dipakai bikin link di email verifikasi/
+    # reset password, lihat email.py) — SEBELUMNYA hardcode "localhost:3000" langsung di
+    # email.py, jadi begitu aplikasi ini dipasang di server sungguhan, setiap link email
+    # yang terkirim tetap mengarah ke localhost (tidak pernah bisa diakses user manapun).
+    # Isi lewat .env begitu deploy ke server sungguhan.
+    FRONTEND_URL: str = "http://localhost:3000"
 
     # Database — default SQLite untuk dev lokal, ganti ke Postgres lewat .env
     DATABASE_URL: str = "sqlite:///./sql_app.db"
@@ -34,7 +47,13 @@ class Settings(BaseSettings):
     # Dikonfirmasi lewat tes langsung: generate laporan 6-section lengkap di hardware ini
     # genuinely butuh beberapa menit (bukan cuma masalah prompt/model) — 180s kepotong
     # sebelum selesai, jadi dinaikkan supaya proses yang sebenarnya SUKSES tidak dianggap gagal.
-    OLLAMA_TIMEOUT_SECONDS: int = 600
+    # Dinaikkan lagi dari 600 -> 1200: diukur langsung di mesin CPU-only ini, model qwen3:8b
+    # butuh ~111 detik HANYA untuk cold-load ke memori (sebelum token pertama sekalipun) kalau
+    # sempat di-unload Ollama karena idle — 600s kadang tidak cukup lagi setelah menghitung
+    # cold-load + prefill prompt besar + generate token sungguhan. Dipasangkan dengan
+    # "keep_alive" di ollama_client.py (menahan model tetap di memori) supaya cold-load itu
+    # sendiri jarang terjadi berulang, tapi timeout tetap dilonggarkan sebagai jaring pengaman.
+    OLLAMA_TIMEOUT_SECONDS: int = 1200
 
     @property
     def OLLAMA_BASE_URL(self) -> str:

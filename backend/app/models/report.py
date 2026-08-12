@@ -62,6 +62,17 @@ class Report(Base):
     tone = Column(String, nullable=True, default="Professional")  # Professional, Technical, Executive
     default_level = Column(String, nullable=True, default="Standard")  # Standard, Detailed, Summary Only
 
+    # Pilihan varian visual (cover_style, category_style, status_style, asset_style,
+    # recommendation_style, panel_side, stat_cols, card_cols, accent_bar_color, flourish_corner,
+    # kicker_ringkasan, kicker_analisis) — DITENTUKAN SEKALI saat analisis AI berhasil (lihat
+    # _pick_visual_style di analysis.py), BUKAN di-random ulang tiap kali PPT/PDF diunduh seperti
+    # sebelumnya. Dibaca bersama oleh build_report_blocks (report_render_logic.py) supaya web
+    # preview, PDF, dan PPTX SELALU menampilkan bentuk yang SAMA untuk 1 laporan yang sama —
+    # regenerate laporan baru (analisis AI baru) boleh dapat kombinasi berbeda, laporan yang
+    # sudah ada tidak pernah berubah bentuk sendiri. NULL untuk laporan lama sebelum kolom ini
+    # ada (build_report_blocks fallback ke satu set default tetap kalau ini NULL).
+    visual_style = Column(JSON, nullable=True)
+
 
     # Jumlah token yang sudah dihasilkan Ollama sejauh ini selama status="processing" (di-update
     # live oleh background job lewat streaming /api/chat), dan jadi angka final (eval_count) begitu

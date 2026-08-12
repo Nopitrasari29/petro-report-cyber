@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ScrollReveal from "@/components/ScrollReveal";
 
 type ProcessingStep = "idle" | "uploading" | "analyzing" | "fetching" | "done";
@@ -16,6 +16,7 @@ interface Step3AIProcessingProps {
   onBack: () => void;
   onProceed: () => void;
   onRetry?: () => void;
+  onCancel?: () => void;
   tx: (key: string, fallback: string) => string;
 }
 
@@ -41,10 +42,73 @@ function stepIndex(step: ProcessingStep): number {
 const STEP_PROGRESS: Record<ProcessingStep, number> = {
   idle: 0,
   uploading: 10,
-  analyzing: 35,
+  analyzing: 35, // fallback SEBELUM ada data token sama sekali — lihat computeAnalyzingProgress
   fetching: 90,
   done: 100,
 };
+
+// Dalam tahap "analyzing" (yang paling lama, bisa beberapa menit), progress DULU diam di
+// angka tetap "35%" sepanjang tahap ini berjalan lalu melompat ke "90%" begitu tahap fetching
+// mulai — user mengeluhkan ini terlihat seperti macet padahal sebenarnya jalan. Sekarang
+// dihitung LIVE dari kemajuan token ASLI (tokensGenerated/expectedTotalTokens, sumber yang
+// sama dipakai estimasi "Estimated remaining" di bawah) supaya benar-benar bergerak naik
+// sesuai progres sungguhan, bukan animasi. Kalau user belum punya riwayat laporan sama sekali
+// (expectedTotalTokens belum ada) atau token pertama belum datang, naik pelan berdasarkan
+// waktu berjalan sebagai fallback jujur — dibatasi 90% dari rentang supaya tidak "mendahului"
+// tahap fetching sebelum benar-benar selesai.
+const ANALYZING_RANGE_START = 15;
+const ANALYZING_RANGE_END = 88;
+const ANALYZING_FALLBACK_ASSUMED_SEC = 180;
+
+function computeAnalyzingProgress(
+  tokensGenerated: number | null,
+  expectedTotalTokens: number | null,
+  elapsedSeconds: number,
+): number {
+  if (tokensGenerated && expectedTotalTokens && expectedTotalTokens > 0) {
+    const ratio = Math.min(tokensGenerated / expectedTotalTokens, 1);
+    return (
+      ANALYZING_RANGE_START + ratio * (ANALYZING_RANGE_END - ANALYZING_RANGE_START)
+    );
+  }
+  const ratio = Math.min(elapsedSeconds / ANALYZING_FALLBACK_ASSUMED_SEC, 0.9);
+  return (
+    ANALYZING_RANGE_START + ratio * (ANALYZING_RANGE_END - ANALYZING_RANGE_START)
+  );
+}
+
+// Narasi "AI lagi ngapain" per fase — BUKAN pesan acak/karangan, tapi dipetakan dari urutan 6
+// key JSON WAJIB yang benar-benar diminta ke model (lihat SYSTEM_PROMPT di prompts.py:
+// executive_summary -> trend_analysis -> severity_analysis -> risk_assessment ->
+// recommendations -> conclusion). Karena model diminta menulis JSON dengan urutan key persis
+// itu, rasio token yang sudah dihasilkan (rasio yang sama dipakai computeAnalyzingProgress)
+// dipakai sebagai ESTIMASI fase mana yang kemungkinan besar sedang ditulis sekarang — bukan
+// kepastian mutlak (field bisa saja panjangnya tidak rata), tapi jauh lebih informatif &
+// tetap jujur (berbasis progres token asli) dibanding cuma menampilkan angka token mentah.
+const AI_PHASE_LABELS: [string, string][] = [
+  ["Menyusun ringkasan eksekutif...", "Drafting executive summary..."],
+  ["Menganalisis tren & pergerakan data...", "Analyzing trends & data movement..."],
+  ["Mengevaluasi distribusi & prioritas data...", "Evaluating distribution & priority data..."],
+  ["Menilai risiko & potensi kendala...", "Assessing risks & potential issues..."],
+  ["Merumuskan rekomendasi tindakan...", "Formulating action recommendations..."],
+  ["Menyusun kesimpulan akhir...", "Writing final conclusion..."],
+];
+
+function computeAiPhaseIndex(
+  tokensGenerated: number | null,
+  expectedTotalTokens: number | null,
+  elapsedSeconds: number,
+): number | null {
+  if (!tokensGenerated || tokensGenerated <= 0) return null;
+  const ratio =
+    expectedTotalTokens && expectedTotalTokens > 0
+      ? Math.min(tokensGenerated / expectedTotalTokens, 0.999)
+      : Math.min(elapsedSeconds / ANALYZING_FALLBACK_ASSUMED_SEC, 0.9);
+  return Math.min(
+    Math.floor(ratio * AI_PHASE_LABELS.length),
+    AI_PHASE_LABELS.length - 1,
+  );
+}
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -92,6 +156,7 @@ export default function Step3AIProcessing({
   onBack,
   onProceed,
   onRetry,
+  onCancel,
   tx,
 }: Step3AIProcessingProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -108,8 +173,35 @@ export default function Step3AIProcessing({
     return () => clearInterval(interval);
   }, [processingStartedAt, aiStatus]);
 
-  const progressPct =
-    aiStatus === "completed" ? 100 : STEP_PROGRESS[processingStep];
+  const rawProgressPct =
+    aiStatus === "completed"
+      ? 100
+      : processingStep === "analyzing"
+        ? Math.round(
+            computeAnalyzingProgress(
+              tokensGenerated,
+              expectedTotalTokens,
+              elapsedSeconds,
+            ),
+          )
+        : STEP_PROGRESS[processingStep];
+
+  // BUG NYATA YANG DIPERBAIKI (dilaporkan user): backend me-reset tokens_generated ke 0 saat
+  // auto-retry internal (Ollama gagal & dicoba ulang, lihat analysis.py) — tanpa clamp ini,
+  // progress bar & angka persen di sini ikut anjlok balik ke bawah begitu polling berikutnya
+  // membaca token count yang baru saja direset, padahal dari sudut pandang user prosesnya
+  // "masih jalan", bukan mundur. Ref menyimpan persentase TERTINGGI yang pernah terlihat
+  // sepanjang SATU sesi processing (direset ke 0 tiap kali sesi baru mulai lewat
+  // processingStartedAt) — ditampilkan itu, bukan angka mentah, supaya progress selalu naik.
+  const maxProgressRef = useRef(0);
+  useEffect(() => {
+    maxProgressRef.current = 0;
+  }, [processingStartedAt]);
+  const progressPct = Math.max(rawProgressPct, maxProgressRef.current);
+  if (progressPct > maxProgressRef.current) {
+    maxProgressRef.current = progressPct;
+  }
+
   const currentIdx = stepIndex(processingStep);
 
   // Live, self-correcting (bisa naik/turun sendiri kalau kecepatan model berubah) — dipakai
@@ -125,9 +217,17 @@ export default function Step3AIProcessing({
       ? tokensGenerated / elapsedSeconds
       : null;
 
+  const aiPhaseIdx = computeAiPhaseIndex(
+    tokensGenerated,
+    expectedTotalTokens,
+    elapsedSeconds,
+  );
+  const aiPhaseLabel =
+    aiPhaseIdx !== null ? tx(...AI_PHASE_LABELS[aiPhaseIdx]) : null;
+
   // Deskripsi per-tahap lebih detail — dikonfirmasi lewat pengetesan langsung bahwa tahap
   // analisis AI (Ollama, model qwen3:8b "thinking") genuinely butuh beberapa menit untuk
-  // menghasilkan 6 bagian narasi laporan, bukan cuma beberapa detik seperti kesan progress
+  // menghasilkan seluruh narasi laporan, bukan cuma beberapa detik seperti kesan progress
   // bar lama yang statis "68%".
   const checklistItems: {
     label: string;
@@ -144,17 +244,17 @@ export default function Step3AIProcessing({
     },
     {
       label: tx("Running AI analysis (Ollama)", "Running AI analysis (Ollama)"),
-      // Begitu token pertama sudah datang dari background job, tampilkan progress ASLI
-      // (jumlah token + kecepatan token/detik) — sebelum itu, tampilkan deskripsi umum.
+      // Begitu token pertama sudah datang dari background job, tampilkan narasi fase (lihat
+      // AI_PHASE_LABELS) — angka token mentah SENGAJA tidak ditampilkan di sini (permintaan
+      // user: detail teknis token/detik cuma membingungkan, apalagi bisa terlihat "mundur"
+      // saat backend retry internal me-reset counter-nya, lihat catatan clamp progressPct
+      // di atas). Narasi fase saja sudah cukup informatif tentang "AI-nya lagi ngapain".
       detail:
-        tokensGenerated && tokensGenerated > 0
-          ? tx(
-              `~${tokensGenerated} token dihasilkan${tokensPerSecond ? ` (~${tokensPerSecond.toFixed(1)} token/detik)` : ""}.`,
-              `~${tokensGenerated} tokens generated${tokensPerSecond ? ` (~${tokensPerSecond.toFixed(1)} tokens/sec)` : ""}.`,
-            )
+        tokensGenerated && tokensGenerated > 0 && aiPhaseLabel
+          ? aiPhaseLabel
           : tx(
-              "Model AI lokal (qwen3:8b) menyusun 6 bagian narasi laporan — biasanya beberapa menit tergantung ukuran data.",
-              "Model AI lokal (qwen3:8b) menyusun 6 bagian narasi laporan — biasanya beberapa menit tergantung ukuran data.",
+              "Model AI lokal (qwen3:8b) menyusun narasi laporan (ringkasan, tren, rekomendasi, dst) — biasanya beberapa menit tergantung ukuran data.",
+              "Model AI lokal (qwen3:8b) menyusun narasi laporan (ringkasan, tren, rekomendasi, dst) — biasanya beberapa menit tergantung ukuran data.",
             ),
       stepAt: "analyzing",
     },
@@ -448,27 +548,67 @@ export default function Step3AIProcessing({
         </p>
 
         <div className="flex justify-between items-center w-full">
-          <button
-            onClick={onBack}
-            disabled={aiStatus === "processing"}
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold text-sm shadow-sm transition-all duration-200 disabled:opacity-50 cursor-pointer"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={2.5}
-              stroke="currentColor"
-              className="w-3.5 h-3.5"
+          {/* Selagi aiStatus "processing", tombol Back di sini SELALU disabled (tidak ada
+              gunanya) — jadi diganti tombol "Batalkan Proses" yang genuinely bisa diklik,
+              menempati slot kiri yang sama persis (bukan lagi berdempetan di slot kanan
+              sebelah tombol "Processing..." yang disabled). Klik ini membatalkan proses DAN
+              langsung kembali ke Step 2, jadi fungsinya menggantikan Back sepenuhnya. Di
+              status lain (completed/pending/retry) Back tetap seperti biasa, selalu aktif. */}
+          {aiStatus === "processing" && onCancel ? (
+            <button
+              onClick={() => {
+                if (
+                  window.confirm(
+                    tx(
+                      "Batalkan proses analisis AI ini? Progres yang sudah berjalan akan hilang.",
+                      "Cancel this AI analysis? Progress made so far will be lost.",
+                    ),
+                  )
+                ) {
+                  onCancel();
+                  onBack();
+                }
+              }}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-white border border-red-200 hover:bg-red-50 text-red-600 font-bold text-sm shadow-sm transition-all duration-200 cursor-pointer"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"
-              />
-            </svg>
-            {tx("Back", "Back")}
-          </button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={2.5}
+                stroke="currentColor"
+                className="w-3.5 h-3.5"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"
+                />
+              </svg>
+              {tx("Batalkan Proses", "Cancel Process")}
+            </button>
+          ) : (
+            <button
+              onClick={onBack}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold text-sm shadow-sm transition-all duration-200 cursor-pointer"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={2.5}
+                stroke="currentColor"
+                className="w-3.5 h-3.5"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"
+                />
+              </svg>
+              {tx("Back", "Back")}
+            </button>
+          )}
 
           {aiStatus === "completed" ? (
             <button

@@ -3,7 +3,14 @@
 # System Prompt - Universal, berlaku untuk semua domain data (SOC, Keuangan, KPI, Operasional, dll.)
 SYSTEM_PROMPT = """
 Anda adalah Senior Data Analyst & Business Intelligence Specialist di PT Petrokimia Gresik.
-Tugas Anda adalah menganalisis data yang diberikan (log keamanan siber, data keuangan, data KPI/kinerja mitra, data operasional, atau data bisnis umum) dan menyusun laporan naratif eksekutif yang komprehensif, profesional, akurat, dan langsung dapat ditindaklanjuti oleh manajemen eksekutif.
+Tugas Anda adalah menganalisis data bisnis/operasional apa pun domainnya yang diberikan pengguna
+(bisa berupa data keuangan, KPI/kinerja mitra, operasional, pengadaan barang & jasa, keamanan
+siber/SOC, atau domain bisnis lain di luar itu) dan menyusun laporan naratif eksekutif yang
+komprehensif, profesional, akurat, dan langsung dapat ditindaklanjuti oleh manajemen eksekutif.
+Sesuaikan istilah & sudut pandang analisis Anda SEPENUHNYA dengan domain data yang SEBENARNYA
+diberikan (lihat SKEMA & STATISTIK TERHITUNG di prompt pengguna) - JANGAN membawa kosakata
+domain lain (mis. istilah keamanan siber seperti "insiden"/"serangan"/"severity") ke laporan
+yang datanya bukan itu.
 
 Gunakan data mentah dan statistik terhitung yang dikirim oleh pengguna untuk mengisi setiap bagian analisis. Anda harus menganalisis tren, temuan utama, penilaian risiko atau gap pencapaian, dan memberikan rekomendasi taktis serta strategis yang relevan dengan konteks bisnis data tersebut.
 
@@ -14,9 +21,9 @@ Format keluaran analisis Anda HARUS berupa JSON valid dengan struktur 6 kunci ut
   "severity_analysis": "Analisis distribusi tingkat keparahan, kategori utama, atau segmentasi prioritas data beserta dampaknya terhadap operasional/bisnis.",
   "risk_assessment": "Penilaian risiko, potensi kendala, atau gap pencapaian target saat ini berdasarkan temuan data, disertai potensi dampak bisnis bila tidak ditangani.",
   "recommendations": [
-    "Rekomendasi tindakan 1 (tindakan cepat/mitigasi segera)",
-    "Rekomendasi tindakan 2 (tindakan jangka menengah/kebijakan operasional)",
-    "Rekomendasi tindakan 3 (tindakan jangka panjang/perbaikan sistem)"
+    {"title": "Judul singkat tindakan 1 (frasa aksi, maks 6-8 kata)", "detail": "Penjelasan 1-2 kalimat kenapa & bagaimana tindakan cepat/mitigasi segera ini dilakukan."},
+    {"title": "Judul singkat tindakan 2 (frasa aksi, maks 6-8 kata)", "detail": "Penjelasan 1-2 kalimat untuk tindakan jangka menengah/kebijakan operasional ini."},
+    {"title": "Judul singkat tindakan 3 (frasa aksi, maks 6-8 kata)", "detail": "Penjelasan 1-2 kalimat untuk tindakan jangka panjang/perbaikan sistem ini."}
   ],
   "conclusion": "Kesimpulan akhir mengenai kondisi/postur saat ini dan langkah strategis ke depan."
 }
@@ -27,8 +34,15 @@ PENTING:
 - TULIS DENGAN KADAR TEKNIS/EKSEKUTIF YANG PAS, HINDARI FRASA FILLER KLISE (misal: JANGAN gunakan 'Secara keseluruhan', 'Berdasarkan analisis di atas', 'Perlu dicatat bahwa', 'Dapat disimpulkan bahwa'). Langsung sampaikan temuan & implikasinya.
 
 KONTRAK "recommendations" (WAJIB DIPATUHI PERSIS):
-- HARUS array - tiap elemen SATU tindakan/rekomendasi yang berdiri sendiri.
-- JANGAN menggabung semua rekomendasi jadi satu string panjang.
+- HARUS array of OBJECT {"title": "...", "detail": "..."} - BUKAN array of string polos.
+- "title": frasa aksi SINGKAT (maksimal 6-8 kata, ideal di bawah 50 karakter) yang bisa dibaca
+  sekilas sebagai headline kartu - JANGAN berupa kalimat penuh/lengkap dengan subjek-predikat
+  panjang (mis. "Perluas Tender Terbuka" BENAR, "Perluas penggunaan tender terbuka untuk semua
+  kontrak bernilai tinggi di atas Rp 250 juta" SALAH karena itu kalimat utuh, bukan judul).
+- "detail": 1-2 kalimat penjelasan LENGKAP (kenapa & bagaimana tindakan ini, grounded pada
+  STATISTIK TERHITUNG) - JANGAN mengulang persis kata-kata yang sudah ada di "title".
+- Tiap elemen array = SATU tindakan/rekomendasi yang berdiri sendiri.
+- JANGAN menggabung semua rekomendasi jadi satu string/objek panjang.
 - JANGAN memberi penomoran manual di dalam teks (mis. "1) ... 2) ..." SALAH) - urutan array JSON sudah otomatis.
 - JANGAN membungkus kalimat dengan tanda kurung pembuka/penutup di awal/akhir - tulis kalimat biasa.
 
@@ -42,8 +56,15 @@ executive_summary, trend_analysis, severity_analysis, risk_assessment, recommend
 
 KEY OPSIONAL TAMBAHAN:
 - "key_findings": array string, masing-masing satu temuan kunci yang ringkas (1 kalimat per poin).
-- "metrics_table": array objek {"label": "...", "value": "...", "percentage": "..."} untuk angka penting yang layak ditonjolkan sebagai kartu ringkasan (mis. total insiden, jumlah critical). Gunakan HANYA angka dari STATISTIK TERHITUNG.
 - "chart_captions": OBJEK (bukan array), dengan HANYA key berikut yang boleh dipakai: "category" (grafik distribusi kategori/jenis event), "severity" (grafik distribusi tingkat keparahan), "status" (grafik status penanganan). Sertakan HANYA key yang benar-benar relevan dengan STATISTIK TERHITUNG yang diberikan (mis. kalau tidak ada data status penanganan, JANGAN sertakan key "status" sama sekali) — JANGAN mengarang isi untuk chart yang datanya tidak ada. Tiap value 2-3 kalimat bergaya ANALIS, bukan cuma deskripsi datar, mencakup TIGA hal sekaligus dalam satu paragraf mengalir: (a) apa yang TERLIHAT di grafik (sebutkan angka dari STATISTIK TERHITUNG), (b) apa ARTINYA angka itu, (c) IMPLIKASI atau risikonya kalau tidak ditindaklanjuti. Contoh gaya yang benar (angka di sini cuma ilustrasi, GANTI dengan angka statistik yang sebenarnya): "Hampir 69% pengukuran berstatus Critical, jauh di atas ambang aman. Lonjakan terpusat di Kantor Pusat dan Pabrik III. Ini menandakan tekanan kapasitas serius yang berpotensi memicu gangguan layanan bila tidak segera ditangani."
+  PENTING utk "chart_captions" (kesalahan nyata yang pernah terjadi, WAJIB dihindari):
+  * Caption "category" HARUS membahas distribusi KATEGORI/JENIS - bukan pola waktu (hari/jam
+    tersibuk) atau topik lain yang sebenarnya lebih cocok jadi bagian trend_analysis. Caption
+    "severity"/"status" sama - tetap PERSIS pada topik yang namanya tersebut, jangan melenceng
+    ke pola lain hanya karena kebetulan datanya menarik.
+  * SELURUH isi (termasuk kata/istilah apa pun di dalamnya, mis. nama hari) HARUS satu bahasa
+    yang sama seperti field lain (lihat instruksi bahasa di atas) - DILARANG menyisipkan kata
+    tunggal berbahasa lain di tengah kalimat (mis. "Friday" di tengah kalimat Bahasa Indonesia).
 - "sections": array objek {"id": "...", "title": "...", "content": "..."} — HANYA diisi kalau di bagian prompt DI BAWAH ada blok eksplisit "DAFTAR SECTION YANG WAJIB DIISI". Kalau blok itu TIDAK ADA di prompt, WAJIB kosongkan array ini ([]) — jangan mengarang isinya. Kalau ADA, isi PERSIS section yang diminta di blok itu: gunakan "id" & "title" yang sama persis seperti diberikan, urutan array sama dengan urutan "order"-nya, JANGAN menambah/mengurangi section, dan "content" berisi narasi 2-4 paragraf grounded pada STATISTIK TERHITUNG untuk topik section tsb.
 
 CONTOH DENGAN KEY OPSIONAL (few-shot kedua, ilustrasi format saja):
@@ -52,17 +73,12 @@ CONTOH DENGAN KEY OPSIONAL (few-shot kedua, ilustrasi format saja):
   "trend_analysis": "...",
   "severity_analysis": "...",
   "risk_assessment": "...",
-  "recommendations": ["...", "...", "..."],
+  "recommendations": [{"title": "...(judul singkat, lihat KONTRAK di atas)...", "detail": "..."}, {"title": "...", "detail": "..."}],
   "conclusion": "...",
   "key_findings": [
     "11 dari 50 insiden (22%) berstatus critical dan memerlukan tindak lanjut segera.",
     "Kategori SOC dan Firewall mendominasi volume insiden periode ini.",
     "Aktivitas memuncak setiap hari Rabu pukul 09:00."
-  ],
-  "metrics_table": [
-    {"label": "Total Insiden", "value": "50", "percentage": ""},
-    {"label": "Critical", "value": "11", "percentage": "22%"},
-    {"label": "High", "value": "19", "percentage": "38%"}
   ],
   "chart_captions": {
     "category": "Kategori SOC menjadi kontributor insiden terbanyak dibanding kategori lain. Konsentrasi ini mengindikasikan area tersebut sebagai titik risiko utama saat ini. Perlu audit lebih dalam pada kategori ini untuk mencegah eskalasi lebih lanjut.",
@@ -131,6 +147,13 @@ Fokus analisis untuk data KEUANGAN / FINANCIAL:
 - Evaluasi efisiensi pengeluaran dibandingkan target RKAP yang telah ditetapkan.
 - Berikan rekomendasi langkah efisiensi biaya dan optimalisasi alokasi anggaran ke depan.
 - Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif keuangan (tren, gap, persentase).
+- WAJIB untuk key JSON 'severity_analysis': data ini TIDAK PUNYA konsep tingkat keparahan
+  insiden keamanan - isi field ini dengan SKALA/MAGNITUDO varians anggaran: urutkan pos mana
+  yang deviasinya (over/under budget) PALING BESAR dan berdampak paling signifikan ke kesehatan
+  finansial, JANGAN pernah menulis "tidak ada severity/tidak berlaku" untuk field ini.
+- WAJIB untuk key JSON 'risk_assessment': isi dengan risiko KEUANGAN nyata dari data - potensi
+  cost overrun, tekanan arus kas, atau pos yang berisiko melenceng jauh dari RKAP bila tren
+  saat ini berlanjut, JANGAN pernah menulis "tidak ada risiko/tidak berlaku" untuk field ini.
 """,
     "financial": """
 Fokus analisis untuk data KEUANGAN / FINANCIAL:
@@ -141,6 +164,13 @@ Fokus analisis untuk data KEUANGAN / FINANCIAL:
 - Evaluasi efisiensi pengeluaran dibandingkan target RKAP yang telah ditetapkan.
 - Berikan rekomendasi langkah efisiensi biaya dan optimalisasi alokasi anggaran ke depan.
 - Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif keuangan (tren, gap, persentase).
+- WAJIB untuk key JSON 'severity_analysis': data ini TIDAK PUNYA konsep tingkat keparahan
+  insiden keamanan - isi field ini dengan SKALA/MAGNITUDO varians anggaran: urutkan pos mana
+  yang deviasinya (over/under budget) PALING BESAR dan berdampak paling signifikan ke kesehatan
+  finansial, JANGAN pernah menulis "tidak ada severity/tidak berlaku" untuk field ini.
+- WAJIB untuk key JSON 'risk_assessment': isi dengan risiko KEUANGAN nyata dari data - potensi
+  cost overrun, tekanan arus kas, atau pos yang berisiko melenceng jauh dari RKAP bila tren
+  saat ini berlanjut, JANGAN pernah menulis "tidak ada risiko/tidak berlaku" untuk field ini.
 """,
     "kpi_hr": """
 Fokus analisis untuk data KPI / KINERJA MITRA / SDM:
@@ -151,6 +181,13 @@ Fokus analisis untuk data KPI / KINERJA MITRA / SDM:
 - Evaluasi tren kinerja jika data tersedia untuk beberapa periode atau kuartal.
 - Rekomendasikan program pembinaan, intervensi manajemen, atau redistribusi target yang tepat sasaran.
 - Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif pencapaian dan ranking kinerja.
+- WAJIB untuk key JSON 'severity_analysis': data ini TIDAK PUNYA konsep tingkat keparahan
+  insiden keamanan - isi field ini dengan SEGMENTASI skor kinerja: kelompokkan entitas ke
+  tingkat pencapaian (tinggi/sedang/rendah terhadap target), JANGAN pernah menulis "tidak ada
+  severity/tidak berlaku" untuk field ini.
+- WAJIB untuk key JSON 'risk_assessment': isi dengan GAP pencapaian target - entitas/indikator
+  mana yang paling berisiko tidak mencapai target bila tidak ada intervensi/pembinaan, JANGAN
+  pernah menulis "tidak ada risiko/tidak berlaku" untuk field ini.
 """,
     "operasional": """
 Fokus analisis untuk data OPERASIONAL:
@@ -161,6 +198,13 @@ Fokus analisis untuk data OPERASIONAL:
 - Identifikasi pola musiman atau anomali yang mempengaruhi performa operasional.
 - Rekomendasikan perbaikan proses atau alokasi sumber daya yang lebih optimal.
 - Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif kinerja dan tren operasional.
+- WAJIB untuk key JSON 'severity_analysis': data ini TIDAK PUNYA konsep tingkat keparahan
+  insiden keamanan - isi field ini dengan tingkat keparahan BOTTLENECK/penurunan kinerja per
+  area (area mana yang dampaknya paling parah ke operasional), JANGAN pernah menulis "tidak ada
+  severity/tidak berlaku" untuk field ini.
+- WAJIB untuk key JSON 'risk_assessment': isi dengan risiko OPERASIONAL nyata - potensi
+  downtime, keterlambatan, atau penurunan kapasitas lebih lanjut bila kondisi saat ini
+  berlanjut, JANGAN pernah menulis "tidak ada risiko/tidak berlaku" untuk field ini.
 """,
     "procurement": """
 Fokus analisis untuk data PENGADAAN BARANG & JASA:
@@ -171,23 +215,59 @@ Fokus analisis untuk data PENGADAAN BARANG & JASA:
 - Identifikasi risiko keterlambatan atau ketidaksesuaian proses pengadaan terhadap prosedur standar.
 - Rekomendasikan langkah peningkatan transparansi, efisiensi proses, dan mitigasi risiko vendor.
 - Dalam field 'chart_captions': jelaskan setiap grafik dari perspektif volume, nilai, dan efisiensi proses pengadaan.
+- WAJIB untuk key JSON 'severity_analysis': data ini TIDAK PUNYA konsep tingkat keparahan
+  insiden keamanan - isi field ini dengan SEGMENTASI PRIORITAS pengadaan: kelompokkan
+  berdasarkan nilai kontrak/urgensi (kontrak bernilai besar atau proses paling bermasalah lebih
+  diprioritaskan), JANGAN pernah menulis "tidak ada severity/tidak berlaku" untuk field ini.
+- WAJIB untuk key JSON 'risk_assessment': isi dengan risiko PENGADAAN nyata - ketergantungan
+  vendor tunggal, potensi keterlambatan proses, atau ketidaksesuaian terhadap prosedur standar,
+  JANGAN pernah menulis "tidak ada risiko/tidak berlaku" untuk field ini.
 """,
 }
 
-# Fallback untuk tipe data yang tidak dikenal / general
+# Fallback untuk tipe data yang tidak dikenal / general — dipakai kalau data_type/domain_type
+# TIDAK cocok salah satu dari 4 domain di atas (mis. data bandwidth/jaringan, IoT/sensor, data
+# survei, atau domain lain yang sistem belum punya panduan khususnya). SENGAJA ditulis eksplisit
+# menyuruh model MEMBACA & BERADAPTASI ke data yang SEBENARNYA ada (lewat SKEMA & STATISTIK
+# TERHITUNG di bagian lain prompt) — BUKAN memaksakan pola analisis salah satu dari 4 domain di
+# atas ke data yang jelas-jelas bukan itu (mis. data bandwidth jangan dipaksa dibahas seolah data
+# pengadaan/keuangan/SDM/keamanan cuma karena itu domain yang sistem "kenal").
 _DEFAULT_CONTEXT = """
-Lakukan analisis data menyeluruh berdasarkan data yang tersedia.
-Fokus pada: distribusi dan tren data utama, identifikasi anomali atau outlier, entitas atau kategori yang paling signifikan,
-dan berikan rekomendasi tindakan yang spesifik dan dapat dilaksanakan berdasarkan temuan data.
-Dalam field 'chart_captions': tulis satu kalimat interpretasi untuk setiap grafik yang dihasilkan, menjelaskan apa yang ditunjukkan grafik tersebut.
+Data ini TIDAK cocok salah satu dari 4 kategori domain khusus yang sistem kenal (pengadaan,
+KPI/SDM, keuangan, keamanan siber) - JANGAN memaksakan kosakata atau sudut pandang analisis
+dari salah satu domain itu ke data ini. Sebaliknya, BACA SENDIRI skema kolom & statistik
+terhitung yang diberikan, lalu tentukan sudut analisis yang PALING MASUK AKAL untuk data
+SPESIFIK ini apa adanya (mis. data trafik/bandwidth jaringan fokus ke pola pemakaian & lonjakan
+kapasitas; data sensor/IoT fokus ke pembacaan di luar ambang normal & pola waktu; data survei
+fokus ke distribusi jawaban & segmen responden - ini cuma CONTOH, sesuaikan dengan kolom yang
+BENAR-BENAR ada di data, bukan daftar tertutup).
+
+Fokus umum yang berlaku untuk data domain apa pun: distribusi dan tren data utama berdasarkan
+kolom yang benar-benar terdeteksi, identifikasi anomali/outlier atau entitas paling signifikan
+(pakai NAMA KOLOM ASLI dari skema, bukan istilah generik "kategori 1/2/3"), dan rekomendasi
+tindakan yang spesifik & dapat dilaksanakan berdasarkan temuan data - grounded pada STATISTIK
+TERHITUNG, bukan asumsi domain yang tidak berlaku.
+Dalam field 'chart_captions': tulis interpretasi yang benar-benar membahas topik grafik itu
+sendiri (kategori/severity/status sesuai key-nya) - JANGAN menyisipkan pola lain yang tidak
+relevan (mis. pola hari/jam tersibuk) ke caption chart yang topiknya beda.
+
+WAJIB untuk key JSON 'severity_analysis': data ini kemungkinan besar TIDAK PUNYA konsep tingkat
+keparahan insiden keamanan - isi field ini dengan SEGMENTASI/PENGELOMPOKAN prioritas data yang
+PALING MASUK AKAL untuk data spesifik ini (mis. entitas dengan nilai/volume paling ekstrem,
+kategori paling dominan) - JANGAN menulis "tidak ada severity/tidak berlaku" hanya karena tidak
+ada kolom bernama severity, cari sudut segmentasi lain yang relevan dari data yang tersedia.
+WAJIB untuk key JSON 'risk_assessment': isi dengan potensi kendala/risiko NYATA yang bisa
+disimpulkan dari pola data ini (mis. konsentrasi berlebih pada satu entitas, tren menurun,
+gap terhadap target bila ada) - JANGAN menulis "tidak ada risiko/tidak berlaku" begitu saja,
+selalu cari implikasi bisnis yang genuinely bisa ditarik dari STATISTIK TERHITUNG yang ada.
 """
 
 
 def get_analysis_prompt(
     data_type: str,
-    data_content: str,
     stats_text: str = "",
     schema_text: str = "",
+    total_records: int | None = None,
     period_start: str | None = None,
     period_end: str | None = None,
     template_type: str | None = None,
@@ -202,8 +282,15 @@ def get_analysis_prompt(
     Setiap kombinasi mendapatkan konteks analisis spesifik sehingga output AI lebih akurat
     dan relevan, baik untuk data SOC/keamanan, keuangan, KPI/HR, maupun data operasional.
 
-    stats_text/schema_text: hasil precompute Python/pandas (lihat data_profiler.py) - SUMBER
-    UTAMA angka & struktur data. data_content di sini cuma 15 baris ilustratif, BUKAN sumber angka.
+    stats_text/schema_text: hasil precompute Python/pandas (lihat data_profiler.py) - SATU-
+    SATUNYA sumber angka & struktur data yang dikirim ke model. Prompt ini SENGAJA TIDAK lagi
+    menyertakan contoh baris data mentah (lihat catatan panjang di bagian bawah fungsi ini soal
+    kenapa itu dibuang) - model qwen3:8b terbukti (laporan nyata, bukan dugaan) kadang menarasikan
+    key_findings/recommendations/conclusion dari potongan baris mentah itu alih-alih stats_text,
+    menghasilkan angka/tanggal/nama vendor yang KONTRADIKSI dengan bagian lain laporan yang sama
+    (mis. cover bicara 42 data periode Nov-Apr, tapi Kesimpulan tiba-tiba bicara 15 data khusus
+    Desember - persis subset baris contoh yang dulu dikirim). schema_text tetap menyertakan
+    contoh NILAI per kolom (bukan baris utuh) untuk model tetap tahu kosakata/gaya isi kolom.
     domain_type: domain yang dideteksi AI (soc_security, financial, kpi_hr, general) - dipakai
     sebagai fallback jika data_type tidak ada entry spesifik di _DATA_TYPE_CONTEXT.
     selected_sections: daftar section dinamis yang dipilih user di Settings (hasil AI section
@@ -218,11 +305,21 @@ def get_analysis_prompt(
     """
     period_str = f"dari tanggal {period_start} hingga {period_end}" if (period_start and period_end) else "saat ini"
     template_str = f"Template Laporan yang diminta: '{template_type}'" if template_type else ""
-    lang_str = (
-        f"PENTING: Seluruh nilai teks dalam objek JSON HARUS ditulis dalam {language}."
-        if language else
-        "PENTING: Seluruh nilai teks dalam objek JSON HARUS ditulis dalam Bahasa Indonesia."
-    )
+    # BUG YANG DIPERBAIKI (dilaporkan user): laporan berbahasa Inggris kadang tetap keluar
+    # narasi Bahasa Indonesia walau instruksi bahasa sudah ada di prompt — qwen3:8b (model
+    # lokal, bukan model besar) rawan "ke-anchor" ke bahasa DOMINAN di seluruh prompt (hampir
+    # semua instruksi meta di prompt ini sendiri ditulis Bahasa Indonesia). Diperkuat 2 cara:
+    # (1) instruksi bahasa DIULANG di akhir prompt (posisi paling dekat dengan output model
+    # mulai menulis, secara empiris lebih dipatuhi drpd cuma sekali di awal), (2) kalimatnya
+    # eksplisit menyebut bahasa yang JANGAN dipakai, bukan cuma bahasa yang harus dipakai.
+    if language and language.strip().lower() == "english":
+        lang_str = (
+            "PENTING: Seluruh nilai teks dalam objek JSON HARUS ditulis dalam Bahasa Inggris "
+            "(English) — JANGAN sekali-kali menulis dalam Bahasa Indonesia walau instruksi di "
+            "prompt ini sendiri ditulis dalam Bahasa Indonesia."
+        )
+    else:
+        lang_str = "PENTING: Seluruh nilai teks dalam objek JSON HARUS ditulis dalam Bahasa Indonesia."
 
     _TONE_INSTRUCTIONS = {
         "professional": "Gunakan gaya bahasa PROFESIONAL FORMAL yang seimbang - cukup teknis untuk kredibel, tapi tetap mudah dipahami manajemen non-teknis.",
@@ -307,16 +404,24 @@ di atas ternyata tidak relevan dengan data aktual di bawah, tetap isi 6 field wa
 biasa dan jelaskan di dalamnya bahwa aspek tersebut tidak berlaku/tidak terdeteksi.
 --- AKHIR PANDUAN ---
 
-Berikut maksimal 15 baris CONTOH data (HANYA ilustrasi struktur/isi kolom, BUKAN sumber angka):
-{data_content}
-
-PENTING: Gunakan HANYA angka dari bagian STATISTIK TERHITUNG di atas untuk semua klaim numerik
-(jumlah, persentase, tren). DILARANG mengarang atau menghitung ulang angka yang tidak muncul di sana.
+PENTING - SUMBER ANGKA (WAJIB DIPATUHI DI SETIAP FIELD, TERMASUK key_findings/recommendations/
+conclusion, BUKAN CUMA executive_summary):
+- Anda TIDAK diberi baris data mentah sama sekali - hanya SKEMA dan STATISTIK TERHITUNG di atas.
+- Setiap klaim angka (jumlah transaksi/insiden, persentase, rentang tanggal, nama entitas
+  terbanyak seperti vendor/kategori/departemen) HARUS PERSIS sama dengan yang tertulis di bagian
+  STATISTIK TERHITUNG - dilarang mengarang, membulatkan sendiri, atau menyebut subset/periode
+  yang lebih sempit (mis. "khusus bulan Desember" atau "15 dari data ini") yang TIDAK muncul di
+  STATISTIK TERHITUNG.
+- Total data yang dianalisis SELALU {total_records if total_records is not None else "seperti tertulis di STATISTIK TERHITUNG"} - jangan pernah menyebut angka total lain di bagian manapun dari laporan ini.
+- Kalau perlu menyebut contoh transaksi/nama spesifik, gunakan HANYA nama yang muncul di daftar
+  "Top nilai kolom" pada STATISTIK TERHITUNG - jangan mengarang nama baru.
 {sections_block}
 Silakan analisis data di atas mengikuti panduan spesifik di atas, dan hasilkan output JSON
 dengan 6 key wajib (executive_summary, trend_analysis, severity_analysis,
-risk_assessment, recommendations, conclusion) - TANPA key tambahan lain di luar 4 key opsional
-yang sudah dijelaskan di SYSTEM_PROMPT (key_findings, metrics_table, chart_captions, sections).
+risk_assessment, recommendations, conclusion) - TANPA key tambahan lain di luar 3 key opsional
+yang sudah dijelaskan di SYSTEM_PROMPT (key_findings, chart_captions, sections).
+
+{lang_str}
 """
 
 
@@ -329,20 +434,28 @@ SECTION_SUGGESTION_SYSTEM_PROMPT = """
 Anda adalah Senior Data Analyst yang bertugas MERANCANG STRUKTUR LAPORAN (bukan menulis isi
 laporan) berdasarkan skema kolom & statistik data yang diberikan.
 
-Baca skema kolom dan statistik data yang diberikan, lalu usulkan 5-8 section laporan yang
-PALING RELEVAN untuk data tersebut, BESERTA URUTAN terbaiknya. Section TIDAK harus mengikuti
-daftar umum (ringkasan eksekutif, analisis tren, dst) - BEBAS mengusulkan judul section lain
-di luar itu bila data benar-benar menuntutnya (mis. "Analisis Distribusi Regional" untuk data
-dengan kolom lokasi, atau "Perbandingan Shift Kerja" untuk data operasional dengan kolom shift).
+Baca skema kolom dan statistik data yang diberikan, lalu usulkan section laporan yang PALING
+RELEVAN untuk data tersebut, BESERTA URUTAN terbaiknya. Section TIDAK harus mengikuti daftar
+umum (ringkasan eksekutif, analisis tren, dst) - BEBAS mengusulkan judul section lain di luar
+itu bila data benar-benar menuntutnya (mis. "Analisis Distribusi Regional" untuk data dengan
+kolom lokasi, atau "Perbandingan Shift Kerja" untuk data operasional dengan kolom shift).
+
+JUMLAH SECTION: SECUKUPNYA sesuai kompleksitas & keragaman data yang SEBENARNYA ada - JANGAN
+dipatok ke angka tetap. Data sederhana dengan sedikit kolom/dimensi analisis wajar cuma
+menghasilkan 3-4 section; data kaya dengan banyak dimensi berbeda (mis. banyak kolom kategorikal
+independen, kombinasi keuangan+operasional+SDM sekaligus) boleh menghasilkan 12+ section kalau
+itu semua BENAR-BENAR menambah nilai analisis berbeda satu sama lain. JANGAN menambahkan
+section "filler"/pengisi generik cuma untuk mengejar jumlah tertentu, dan JANGAN memotong
+section yang genuinely relevan cuma karena sudah "cukup banyak" - biarkan data yang menentukan.
 
 Format keluaran HARUS berupa SATU JSON OBJECT valid dengan TEPAT SATU key top-level "sections"
-berisi ARRAY 5-8 elemen (JANGAN mengembalikan array telanjang di root - HARUS dibungkus objek
-seperti contoh ini, karena parser sistem hanya menerima bentuk objek):
+berisi ARRAY (JANGAN mengembalikan array telanjang di root - HARUS dibungkus objek seperti
+contoh ini, karena parser sistem hanya menerima bentuk objek):
 {
   "sections": [
     {
       "id": "snake_case_singkat_unik",
-      "title": "Judul Section (Bahasa Indonesia, singkat, jelas)",
+      "title": "Judul Section (singkat, jelas, bahasa mengikuti instruksi bahasa di prompt user)",
       "description": "Satu kalimat penjelasan section ini akan membahas apa.",
       "order": 0,
       "recommended": true
@@ -351,8 +464,8 @@ seperti contoh ini, karena parser sistem hanya menerima bentuk objek):
 }
 
 PENTING:
-- Array "sections" HARUS berisi 5-8 elemen, field "order" berurutan mulai dari 0 sesuai urutan
-  yang Anda usulkan.
+- Jumlah elemen array "sections" MENGIKUTI KOMPLEKSITAS DATA (lihat panduan jumlah di atas -
+  BUKAN angka tetap), field "order" berurutan mulai dari 0 sesuai urutan yang Anda usulkan.
 - "recommended": true untuk section yang wajib/sangat relevan bagi data ini; false untuk section
   pelengkap yang boleh di-uncheck user (tetap sertakan di array, jangan dihilangkan).
 - Section dengan "order": 0 SELALU semacam ringkasan eksekutif tingkat tinggi.
@@ -368,14 +481,24 @@ def get_section_suggestion_prompt(
     stats_text: str,
     file_name: str | None = None,
     domain_hint: str | None = None,
+    language: str | None = None,
 ) -> str:
     """
     Prompt untuk AI mengusulkan struktur section laporan (id/title/description/order/recommended)
     berdasarkan skema & statistik data - dipanggil oleh section_suggester.py sebelum user masuk
     ke langkah Settings, BUKAN saat generation (itu memakai get_analysis_prompt di atas).
+
+    `language` — BUG YANG DIPERBAIKI (dilaporkan user): dulu tidak ada instruksi bahasa sama
+    sekali di sini, title/description section usulan AI selalu keluar Bahasa Indonesia terlepas
+    dari bahasa yang akan diminta user di Report Settings.
     """
     file_str = f"Nama berkas: {file_name}\n" if file_name else ""
     domain_str = f"Dugaan awal domain data (boleh Anda koreksi lewat pilihan section): {domain_hint}\n" if domain_hint else ""
+    lang_str = (
+        f"PENTING: Nilai \"title\" dan \"description\" tiap section HARUS ditulis dalam {language}."
+        if language else
+        "PENTING: Nilai \"title\" dan \"description\" tiap section HARUS ditulis dalam Bahasa Indonesia."
+    )
     return f"""
 {file_str}{domain_str}
 --- SKEMA DATA (nama kolom, tipe, contoh nilai) ---
@@ -386,7 +509,9 @@ def get_section_suggestion_prompt(
 {stats_text}
 --- AKHIR STATISTIK ---
 
-Berdasarkan skema & statistik di atas, usulkan struktur section laporan (5-8 section, format
-objek JSON {{"sections": [...]}} dengan field id/title/description/order/recommended per
-elemen) sesuai ketentuan yang sudah dijelaskan.
+{lang_str}
+
+Berdasarkan skema & statistik di atas, usulkan struktur section laporan (jumlah section
+mengikuti kompleksitas data, format objek JSON {{"sections": [...]}} dengan field
+id/title/description/order/recommended per elemen) sesuai ketentuan yang sudah dijelaskan.
 """

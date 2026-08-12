@@ -3,7 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { t, getLanguage } from "@/utils/i18n";
+import { getLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
+import { confirmNavAway } from "@/utils/navGuard";
+
+// Dipakai di onClick semua link navigasi di bawah — kalau ada proses penting sedang berjalan
+// (saat ini: analisis AI Step 3 wizard Generate, lihat utils/navGuard.ts), munculkan dialog
+// konfirmasi dulu; batalkan navigasi kalau pengguna klik "Cancel".
+function guardedNavClick(e: React.MouseEvent) {
+  if (!confirmNavAway()) e.preventDefault();
+}
 
 const menuItems = [
   {
@@ -45,15 +54,9 @@ export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // ==========================================
-  // EFFECT 1: Pengaman Hidrasi (Hydration Guard)
+  // EFFECT 1: Pengaman Hidrasi (Hydration Guard) — lihat hooks/useTx.ts
   // ==========================================
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Fungsi pembantu untuk menerjemahkan teks secara aman setelah hidrasi selesai
-  const tx = (key: string, fallback: string) => mounted ? t(key) : fallback;
+  const { tx } = useTx();
 
   useEffect(() => {
     setLang(getLanguage());
@@ -105,6 +108,7 @@ export default function Sidebar() {
       {/* Brand Header */}
       <Link
         href="/"
+        onClick={guardedNavClick}
         className="py-5 px-6 border-b border-white/10 flex items-center gap-3 hover:bg-white/5 transition-all duration-300 group animate-fadeIn"
       >
         <div className="w-9 h-9 rounded-xl bg-petro-yellow flex items-center justify-center shadow-lg transition-transform duration-300 group-hover:scale-105 shrink-0">
@@ -137,6 +141,7 @@ export default function Sidebar() {
                 >
                   <Link
                     href={item.path}
+                    onClick={guardedNavClick}
                     className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 overflow-hidden ${active
                       ? "bg-white/15 text-white"
                       : "text-white/70 hover:text-white"
@@ -172,6 +177,7 @@ export default function Sidebar() {
                 >
                   <Link
                     href={item.path}
+                    onClick={guardedNavClick}
                     className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 overflow-hidden ${active
                       ? "bg-white/15 text-white"
                       : "text-white/70 hover:text-white"

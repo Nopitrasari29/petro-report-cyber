@@ -8,9 +8,9 @@ const translations: Record<string, Record<string, string>> = {
 
 export function getLanguage(): string {
   if (typeof window !== "undefined") {
-    return localStorage.getItem("ui_language") || "English";
+    return localStorage.getItem("ui_language") || "Indonesian";
   }
-  return "English";
+  return "Indonesian";
 }
 
 export function setLanguage(lang: string) {

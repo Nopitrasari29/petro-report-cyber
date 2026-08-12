@@ -1,4 +1,5 @@
 # backend/app/api/v1/endpoints/settings.py
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Any, Dict
@@ -8,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal, get_db
 from app.api.v1.endpoints.auth import get_current_user
+
+logger = logging.getLogger(__name__)
 from app.models.system_setting import SystemSetting
 
 router = APIRouter()
@@ -60,7 +63,7 @@ def load_settings() -> dict:
         cleaned = {k: v for k, v in merged_data.items() if k in default_data}
         return cleaned
     except Exception as e:
-        print(f"[SETTINGS WARNING] Gagal memuat dari DB: {e}. Fallback ke file.")
+        logger.warning(f"Gagal memuat dari DB: {e}. Fallback ke file.")
         return load_settings_file()
     finally:
         db.close()
@@ -74,7 +77,8 @@ def get_settings(current_user = Depends(get_current_user)):
     try:
         return load_settings()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal memuat pengaturan: {str(e)}")
+        logger.error(f"Gagal memuat pengaturan: {e}")
+        raise HTTPException(status_code=500, detail="Gagal memuat pengaturan. Silakan coba lagi atau hubungi admin.")
 
 
 @router.put("/")
@@ -114,4 +118,5 @@ def update_settings(
 
         return {"status": "success", "message": "Pengaturan organisasi berhasil diperbarui.", "settings": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal memperbarui pengaturan: {str(e)}")
+        logger.error(f"Gagal memperbarui pengaturan: {e}")
+        raise HTTPException(status_code=500, detail="Gagal memperbarui pengaturan. Periksa kembali data yang dikirim atau hubungi admin.")

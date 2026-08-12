@@ -18,6 +18,8 @@ pdfplumber==0.11.4
 plotly>=6.1.1
 kaleido>=1.0.0
 xhtml2pdf==0.2.10
+weasyprint==62.3
+pydyf==0.11.0
 python-pptx==1.0.2
 google-auth==2.29.0
 requests==2.32.3

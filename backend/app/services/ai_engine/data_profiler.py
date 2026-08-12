@@ -276,8 +276,37 @@ def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dic
     return stats
 
 
-def format_statistics_as_text(stats: Dict[str, Any]) -> str:
-    """Ubah dict statistik jadi teks ringkas siap tempel ke prompt (mudah dibaca model)."""
+def _humanize_stats_label(label: str, source_cols: Dict[str, str]) -> str:
+    """Ganti label generik "category_N" dengan nama kolom ASLI dari file yang diupload (mis.
+    "Vendor", "Departemen") kalau tersedia di `_source_columns` — supaya model AI tahu PERSIS
+    konsep apa yang sedang dilihat (bukan cuma "category_1"), mengurangi ambiguitas yang bisa
+    ikut berkontribusi model salah mengaitkan angka ke entitas yang keliru. Duplikat kecil dari
+    logika `humanize_label` di report_render_logic.py (bukan diimpor dari sana) supaya modul ini
+    tidak circular-import (report_render_logic.py justru yang mengimpor dari modul ini)."""
+    if label.startswith("category_"):
+        real_name = source_cols.get(label)
+        if real_name:
+            return str(real_name).replace("_", " ").strip().title()
+    return label.replace("_", " ").title()
+
+
+_DAY_NAME_ID = {
+    "Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu", "Thursday": "Kamis",
+    "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu",
+}
+
+
+def format_statistics_as_text(stats: Dict[str, Any], language: str | None = None) -> str:
+    """Ubah dict statistik jadi teks ringkas siap tempel ke prompt (mudah dibaca model).
+
+    `language`: bahasa laporan (default None = Indonesia, konsisten dengan default lain di
+    seluruh pipeline ini) — BUG NYATA YANG DIPERBAIKI (dilaporkan user): `peak_day_of_week`
+    dihitung lewat `pandas.Series.dt.day_name()`, yang SELALU mengembalikan nama hari Bahasa
+    Inggris ("Friday") apa pun locale server, lalu ikut ditempel ke stats_text apa adanya —
+    model AI lantas mengutip kata Inggris itu mentah-mentah di tengah caption Bahasa Indonesia
+    (laporan nyata: "...pola hari Jumat..." tercampur "Friday"). Diterjemahkan di SINI (lapisan
+    presentasi/teks-ke-prompt), bukan di `_compute_time_pattern` — supaya nilai di dict statistik
+    sendiri tetap murni/tidak berasumsi bahasa apa pun."""
     if stats.get("total_records", 0) == 0:
         return "Tidak ada data untuk dianalisis."
 
@@ -292,16 +321,22 @@ def format_statistics_as_text(stats: Dict[str, Any]) -> str:
             sev_str = ", ".join(f"{k}: {v}" for k, v in sev.items())
         lines.append(f"Distribusi severity/kategori: {sev_str}")
 
+    source_cols = stats.get("_source_columns") or {}
     for label, items in (stats.get("top_categories") or {}).items():
         if not items:
             continue
+        label = _humanize_stats_label(label, source_cols)
         top_str = ", ".join(f"{it['value']} ({it['count']}x)" for it in items[:10])
         lines.append(f"Top nilai kolom '{label}': {top_str}")
 
+    is_english = (language or "").strip().lower() == "english"
     tp = stats.get("time_pattern")
     if tp:
         if "peak_day_of_week" in tp:
-            lines.append(f"Hari dengan aktivitas terbanyak: {tp['peak_day_of_week']}")
+            day_name = tp["peak_day_of_week"]
+            if not is_english:
+                day_name = _DAY_NAME_ID.get(day_name, day_name)
+            lines.append(f"Hari dengan aktivitas terbanyak: {day_name}")
         if "peak_hour" in tp:
             lines.append(f"Jam dengan aktivitas terbanyak: {tp['peak_hour']}:00")
         if "trend" in tp:
@@ -369,89 +404,3 @@ def format_schema_as_text(schema: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def build_metrics_table_from_stats(stats: Dict[str, Any]) -> List[Dict[str, str]]:
-    """
-    Bangun metrics_table {label, value, percentage} LANGSUNG dari statistik terhitung
-    (compute_statistics) — dipakai sebagai fallback kartu KPI kalau AI tidak mengisi
-    metrics_table sendiri (qwen3:8b tidak konsisten mengisi field opsional ini), supaya
-    kartu KPI di laporan SELALU tampil dengan angka yang pasti benar, bukan tergantung AI.
-    """
-    total = stats.get("total_records", 0)
-    items: List[Dict[str, str]] = [
-        {"label": "Total Records", "value": str(total), "percentage": ""}
-    ]
-
-    sev = stats.get("severity_distribution") or {}
-    sev_total = sum(sev.values())
-    if sev_total:
-        for level, nice_label in [("critical", "Critical"), ("high", "High")]:
-            count = sev.get(level, 0)
-            if count:
-                pct = round(count / sev_total * 100, 1)
-                items.append({"label": nice_label, "value": str(count), "percentage": f"{pct}%"})
-
-    numeric_summary = stats.get("numeric_summary") or {}
-    if numeric_summary and len(items) < 4:
-        col_name, s = next(iter(numeric_summary.items()))
-        items.append({"label": f"Rata-rata {col_name}", "value": str(s.get("mean", "-")), "percentage": ""})
-
-    return items[:4]
-
-
-def build_chart_captions_from_stats(stats: Dict[str, Any], domain_type: str = "general") -> List[str]:
-    """
-    Fallback otomatis untuk chart_captions jika AI tidak menghasilkan narasi grafik.
-    Membuat caption bermakna berbasis data statistik terhitung.
-    """
-    captions = []
-    total = stats.get("total_records", 0)
-
-    # Caption 1: Tren waktu / total record
-    tp = stats.get("time_pattern") or {}
-    if "peak_hour" in tp:
-        captions.append(
-            f"Aktivitas atau transaksi tertinggi terjadi pada jam {tp['peak_hour']}:00 dengan total {total} rekaman data. "
-            f"Hal ini menunjukkan jam sibuk operasional yang memerlukan pengawasan kapasitas lebih intensif."
-        )
-    elif "peak_day_of_week" in tp:
-        captions.append(
-            f"Puncak aktivitas terdeteksi pada hari {tp['peak_day_of_week']}. "
-            f"Pola ini memberikan panduan alokasi sumber daya operasional yang lebih terukur."
-        )
-    else:
-        captions.append(
-            f"Total {total} data berhasil dianalisis pada periode ini. "
-            f"Distribusi data menunjukkan stabilitas operasional tanpa lonjakan ekstrem."
-        )
-
-    # Caption 2: Severity / Kategori distribusi
-    sev = stats.get("severity_distribution") or {}
-    crit_high = sev.get("critical", 0) + sev.get("high", 0)
-    sev_total = sum(sev.values())
-    if sev_total > 0 and crit_high > 0:
-        pct = round(crit_high / sev_total * 100, 1)
-        captions.append(
-            f"Kategori prioritas tinggi/kritis mencakup {crit_high} dari {sev_total} kejadian ({pct}%). "
-            f"Tingginya proporsi ini memerlukan tindakan mitigasi prioritas untuk menjaga keandalan sistem."
-        )
-    else:
-        top_cats = stats.get("top_categories") or {}
-        if top_cats:
-            first_key, items = next(iter(top_cats.items()))
-            if items:
-                top_item = items[0]
-                captions.append(
-                    f"Kategori '{top_item['value']}' mendominasi dengan {top_item['count']} entri. "
-                    f"Dominasi ini menandakan fokus perhatian utama untuk evaluasi kebijakan operasional."
-                )
-
-    # Caption 3: Numeric summary / Kategori sekunder
-    numeric = stats.get("numeric_summary") or {}
-    if numeric:
-        col_name, s = next(iter(numeric.items()))
-        captions.append(
-            f"Nilai rata-rata pada indikator '{col_name}' tercatat sebesar {s.get('mean', 0)} (kisaran {s.get('min', 0)} - {s.get('max', 0)}). "
-            f"Variasi ini mencerminkan fluktuasi kinerja yang perlu dipantau secara berkala."
-        )
-
-    return captions

@@ -1,14 +1,12 @@
 import React from "react";
 import ScrollReveal from "@/components/ScrollReveal";
-import ReportChartPanel from "./ReportChartPanel";
 import ChartNarasiLayout from "./ChartNarasiLayout";
 import RichTextEditor from "./RichTextEditor";
 import FullscreenStudioModal from "./FullscreenStudioModal";
 import EditableReportTitle from "@/components/EditableReportTitle";
 import ReportBlockRenderer from "@/components/ReportBlockRenderer";
-import { fetchReportBlocks } from "@/utils/reportBlocksApi";
-import type { ReportBlock } from "@/utils/reportTheme";
-import type { ReportPage } from "@/utils/reportSections";
+import type { ReportBlock, VisualStyle } from "@/utils/reportTheme";
+import { getPageByNumber, type ReportPage } from "@/utils/reportSections";
 
 // Mendeteksi apakah suatu string konten itu HTML (hasil rich text editor) atau teks polos
 // (AI-generated asli / laporan lama sebelum editor ini ada). Dipakai biar tab Preview bisa
@@ -29,9 +27,10 @@ interface Step4PreviewEditProps {
   reportTitle?: string;
   editedSummary: any;
   pages: ReportPage[];
-  headerTitle?: string;
-  headerSubtitle?: string;
-  themeColor?: string;
+  blocks: ReportBlock[];
+  visualStyle?: VisualStyle;
+  blocksLoading: boolean;
+  blocksError: string;
   getPageText: (page: string) => string;
   getPageTitle: (page: string) => string;
   handleTextChange: (newVal: string) => void;
@@ -56,9 +55,10 @@ export default function Step4PreviewEdit({
   reportTitle = "",
   editedSummary,
   pages,
-  headerTitle = "PT PETROKIMIA GRESIK",
-  headerSubtitle = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
-  themeColor = "green",
+  blocks,
+  visualStyle,
+  blocksLoading,
+  blocksError,
   getPageText,
   getPageTitle,
   handleTextChange,
@@ -68,41 +68,51 @@ export default function Step4PreviewEdit({
   onRenameTitle,
   tx,
 }: Step4PreviewEditProps) {
-  const [previewFormat, setPreviewFormat] = React.useState<"pdf" | "pptx">(
-    "pdf",
-  );
   const [zoomLevel, setZoomLevel] = React.useState<number>(100);
   const [isFullscreen, setIsFullscreen] = React.useState<boolean>(false);
+  // useCallback (bukan arrow function inline di JSX) — lihat catatan panjang di CenterPreviewPanel.tsx:
+  // referensi onClose yang berubah tiap render (mis. tiap klik halaman lain) memicu useEffect
+  // fullscreen di FullscreenStudioModal jalan ulang & modalnya diam-diam tertutup sendiri.
+  const closeFullscreen = React.useCallback(() => setIsFullscreen(false), []);
 
-  // Blocks yang SAMA PERSIS dipakai backend untuk merender PDF/PPTX (build_report_blocks) —
-  // supaya tab Preview ini dijamin menampilkan section & angka yang sama dengan file yang
-  // benar-benar diunduh, bukan implementasi tampilan yang dikarang terpisah.
-  const [blocks, setBlocks] = React.useState<ReportBlock[]>([]);
-  const [blocksLoading, setBlocksLoading] = React.useState(true);
-  const [blocksError, setBlocksError] = React.useState("");
-
+  // Sinkronisasi tinggi panel "Pages" MENGIKUTI tinggi kartu Preview (bukan sebaliknya) —
+  // BUG NYATA YANG DIPERBAIKI (dilaporkan user, disertai screenshot): CSS grid/flex `stretch`
+  // biasa SELALU menyamakan ke yang PALING TINGGI di antara 2 kolom — kalau daftar Pages
+  // (bisa 12+ halaman) lebih tinggi dari kotak Preview, itu malah menarik kartu Preview ikut
+  // lebih tinggi dari kontennya sendiri (nyisa area putih kosong di bawah kotak preview).
+  // Grid/flex TIDAK punya cara murni CSS untuk bilang "tinggi kolom A mengikuti kolom B doang,
+  // B jangan ikut ditarik" — makanya di sini tinggi kartu Preview diukur lewat ResizeObserver
+  // (elemen ini SENGAJA diberi `self-start` di JSX supaya tidak pernah ikut ditarik lebih
+  // tinggi oleh stretch, jadi angka yang terukur SELALU tinggi natural kontennya sendiri),
+  // lalu dipakai sebagai `max-height` utk kartu Pages — daftar di dalamnya scroll sendiri
+  // (lihat min-h-0 di bawah) kalau tidak muat, alih-alih memaksa baris jadi lebih tinggi.
+  const previewCardRef = React.useRef<HTMLDivElement>(null);
+  const [previewCardHeight, setPreviewCardHeight] = React.useState<number | undefined>(
+    undefined,
+  );
   React.useEffect(() => {
-    const reportId = reportDetails?.id;
-    if (!reportId) return;
-    let cancelled = false;
-    setBlocksLoading(true);
-    setBlocksError("");
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    fetchReportBlocks(reportId, token)
-      .then((b) => {
-        if (!cancelled) setBlocks(b);
-      })
-      .catch((err) => {
-        if (!cancelled) setBlocksError(err.message || "Gagal memuat preview.");
-      })
-      .finally(() => {
-        if (!cancelled) setBlocksLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reportDetails?.id]);
+    const el = previewCardRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        // entry.contentRect TIDAK termasuk padding & border (p-6 + border kartu ini ~50px) —
+        // BUG DITEMUKAN saat pengujian: tanpa borderBoxSize, kartu Pages jadi ~50px lebih
+        // pendek dari kartu Preview yang sebenarnya (cuma menyamai area KONTEN Preview,
+        // bukan tinggi kotak penuhnya). borderBoxSize memberi tinggi kotak penuh yang benar.
+        const borderBoxSize = entry.borderBoxSize?.[0];
+        setPreviewCardHeight(
+          borderBoxSize ? borderBoxSize.blockSize : entry.contentRect.height,
+        );
+      }
+    });
+    ro.observe(el, { box: "border-box" });
+    return () => ro.disconnect();
+  }, []);
+
+  const isActivePageEditable = getPageByNumber(pages, activePage)?.editable ?? false;
+  // Preview cuma render 1 block aktif (bukan seluruh dokumen ditumpuk) — pages 1:1 urutan
+  // dengan blocks (lihat buildPagesFromBlocks), jadi indexnya tinggal activePage - 1.
+  const activeBlock = blocks[Number(activePage) - 1];
 
   // Listener tombol Escape untuk keluar dari mode Fullscreen
   React.useEffect(() => {
@@ -136,14 +146,33 @@ export default function Step4PreviewEdit({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 text-left items-start mt-6">
-        {/* Left Panel: Pages List */}
-        <div className="lg:col-span-3 bg-white rounded-2xl border border-stone-200/80 p-5 shadow-sm space-y-4 premium-card-hover transition-colors">
-          <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 text-left mt-6 items-start">
+        {/* Left Panel: Pages List — tinggi kartu ini DIPAKU (height, dua arah: meregang kalau
+            lebih pendek dari Preview, kepotong+scroll kalau lebih panjang) ke tinggi kartu
+            Preview yang terukur lewat ResizeObserver di atas (lihat previewCardHeight),
+            BUKAN lewat CSS grid stretch biasa (yang justru menarik Preview ikut lebih tinggi
+            kalau daftar Pages lebih panjang — lihat catatan panjang di deklarasi
+            previewCardHeight). Pagination di-mt-auto supaya tetap di dasar kartu. */}
+        <div
+          className="lg:col-span-3 bg-white rounded-2xl border border-stone-200/80 p-5 shadow-sm premium-card-hover transition-colors flex flex-col min-h-0"
+          style={previewCardHeight ? { height: previewCardHeight } : undefined}
+        >
+          <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2 mb-4">
             {tx("Pages", "Pages")}
           </h3>
 
-          <div className="space-y-1.5">
+          {pages.length === 0 && (
+            <div className="flex items-center gap-2 text-stone-400 text-xs font-bold py-4">
+              <div className="w-3.5 h-3.5 border-2 border-stone-300 border-t-petro-green rounded-full animate-spin" />
+              {tx("Memuat halaman...", "Memuat halaman...")}
+            </div>
+          )}
+
+          {/* min-h-0 SENGAJA — tanpa ini, flexbox tetap memaksa div ini setinggi KONTENnya
+              (daftar 12+ halaman) walau parent-nya sudah dibatasi max-height, mengabaikan
+              overflow-y-auto di bawah sama sekali. Dengan min-h-0, div ini bisa menyusut
+              lebih pendek dari kontennya & scroll-y beneran aktif begitu tidak muat. */}
+          <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto">
             {pages.map((sec) => (
               <button
                 key={sec.page}
@@ -162,8 +191,10 @@ export default function Step4PreviewEdit({
             ))}
           </div>
 
-          {/* Pagination Buttons */}
-          <div className="flex justify-between items-center border-t border-stone-100 pt-3 text-[10px] font-bold text-stone-400">
+          {/* Pagination Buttons — mt-auto memaku baris ini ke dasar kartu (bukan langsung
+              menempel di bawah daftar), supaya kalau kartu jadi tinggi (stretch), pagination
+              tetap di posisi paling bawah, bukan mengambang di tengah. */}
+          <div className="flex justify-between items-center border-t border-stone-100 pt-3 mt-4 text-[10px] font-bold text-stone-400">
             <button
               disabled={activePage === "01"}
               onClick={() => {
@@ -175,10 +206,10 @@ export default function Step4PreviewEdit({
               &lt; {tx("Prev", "Prev")}
             </button>
             <span>
-              {tx("Page", "Page")} {activePage} {tx("of", "of")} {pages[pages.length - 1].page}
+              {tx("Page", "Page")} {activePage} {tx("of", "of")} {pages.length > 0 ? pages[pages.length - 1].page : "01"}
             </span>
             <button
-              disabled={activePage === pages[pages.length - 1].page}
+              disabled={pages.length === 0 || activePage === pages[pages.length - 1].page}
               onClick={() => {
                 const next = String(Number(activePage) + 1).padStart(2, "0");
                 setActivePage(next);
@@ -190,8 +221,15 @@ export default function Step4PreviewEdit({
           </div>
         </div>
 
-        {/* Center Panel: Preview & Edit Workspace (Expanded to 9 cols after removing Properties panel) */}
-        <div className="lg:col-span-9 bg-white rounded-2xl border border-stone-200/80 p-6 shadow-sm space-y-6 premium-card-hover transition-colors">
+        {/* Center Panel: Preview & Edit Workspace (Expanded to 9 cols after removing Properties panel).
+            ref di sini dipakai ResizeObserver (lihat previewCardHeight di atas) — grid diberi
+            `items-start` supaya kartu ini SELALU tampil setinggi kontennya sendiri (tidak
+            pernah ikut diregangkan lebih tinggi oleh kartu Pages), jadi angka yang terukur di
+            sini selalu tinggi natural yang benar utk dijadikan acuan tinggi kartu Pages. */}
+        <div
+          ref={previewCardRef}
+          className="lg:col-span-9 bg-white rounded-2xl border border-stone-200/80 p-6 shadow-sm space-y-6 premium-card-hover transition-colors"
+        >
           {/* Tab Selector */}
           <div className="flex justify-between items-center border-b border-stone-150 pb-2">
             <div className="flex gap-2">
@@ -317,37 +355,9 @@ export default function Step4PreviewEdit({
           >
             {activeTab === "preview" && (
               <div className="space-y-4">
-                {/* Format Preview Toggle (PDF Document / PPTX Slide) */}
-                <div className="flex justify-center">
-                  <div className="inline-flex p-1 bg-stone-100/90 rounded-xl border border-stone-200 shadow-inner gap-1">
-                    <button
-                      onClick={() => setPreviewFormat("pdf")}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                        previewFormat === "pdf"
-                          ? "bg-white text-stone-900 shadow-sm"
-                          : "text-stone-500 hover:text-stone-800"
-                      }`}
-                    >
-                      <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                      {tx("PDF Document View", "PDF Document View")}
-                    </button>
-                    <button
-                      onClick={() => setPreviewFormat("pptx")}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                        previewFormat === "pptx"
-                          ? "bg-white text-stone-900 shadow-sm"
-                          : "text-stone-500 hover:text-stone-800"
-                      }`}
-                    >
-                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                      {tx("PPTX Slide View", "PPTX Slide View")}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Loading / error states — sama utk kedua mode */}
+                {/* Loading / error states */}
                 {blocksLoading && (
-                  <div className="max-w-lg mx-auto flex items-center justify-center gap-2 py-16 text-stone-400">
+                  <div className="flex items-center justify-center gap-2 py-16 text-stone-400">
                     <div className="w-4 h-4 border-2 border-stone-300 border-t-petro-green rounded-full animate-spin" />
                     <span className="text-xs font-bold">
                       {tx("Memuat preview...", "Memuat preview...")}
@@ -355,31 +365,43 @@ export default function Step4PreviewEdit({
                   </div>
                 )}
                 {!blocksLoading && blocksError && (
-                  <div className="max-w-lg mx-auto bg-red-50 border border-red-200 text-red-700 text-xs font-medium p-4 rounded-xl">
+                  <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-medium p-4 rounded-xl">
                     {blocksError}
                   </div>
                 )}
 
-                {/* MODE 1: PDF DOCUMENT VIEW — tumpukan halaman, isi PERSIS sama dgn build_report_blocks */}
-                {!blocksLoading && !blocksError && previewFormat === "pdf" && (
-                  <div className="max-w-lg mx-auto space-y-4">
-                    {blocks.map((block, i) => (
-                      <ReportBlockRenderer key={i} block={block} />
-                    ))}
+                {/* Cuma 1 halaman aktif yang ditampilkan (bukan seluruh dokumen ditumpuk) —
+                    dibungkus rasio 16:9 (ukuran slide asli, 13.333x7.5in — PDF & PPTX SAMA-SAMA
+                    dirender sebagai "slide" berukuran identik, lihat _page() di export_pdf.py
+                    dan SLIDE_W/SLIDE_H di export_ppt.py). SEBELUMNYA ada toggle "PDF Document
+                    View / PPTX Slide View" di sini — dihapus karena preview ini SATU komponen
+                    yang sama utk kedua format (ReportBlockRenderer), tidak pernah benar-benar
+                    meniru salah satu file yang diunduh secara berbeda, jadi togglenya cuma
+                    kosmetik tanpa bedanya sama sekali. Sebelumnya dibatasi max-w-lg (~512px)
+                    walau kolom ini bisa jauh lebih lebar — dilepas SUPAYA kotak preview mengisi
+                    lebar kolom yang tersedia (rasio 16:9 tetap sama, cuma skalanya membesar
+                    mengikuti ruang asli, bukan dipaksa kecil lalu isinya di-scroll).
+
+                    BUG DIPERBAIKI (dilaporkan user): sempat dicoba `h-auto` (kotak tumbuh lebih
+                    tinggi kalau konten butuh lebih banyak ruang) supaya tidak ada yang terpotong
+                    — tapi itu bikin RASIO kotak berubah-ubah per halaman (kadang 16:9, kadang
+                    lebih tinggi), padahal file PPT/PDF sungguhan SELALU 13.333x7.5in (16:9)
+                    tetap, tidak pernah "memanjang" mengikuti isi. Preview harus konsisten meniru
+                    bentuk asli itu. Sekarang `aspect-video` TANPA `h-auto` (tinggi kotak SELALU
+                    persis 16:9, tidak pernah berubah bentuk) + `overflow-y-auto` — konten yang
+                    kepanjangan untuk muat di 16:9 di-scroll DI DALAM kotak (bukan bikin kotaknya
+                    sendiri melar), karena preview React ini tidak meniru logika auto-shrink font
+                    milik export_pdf.py/export_ppt.py yang sungguhan. */}
+                {!blocksLoading && !blocksError && activeBlock && (
+                  <div className="w-full">
+                    <div className="aspect-video overflow-y-auto bg-white border border-stone-300 shadow-sm">
+                      <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} />
+                    </div>
                   </div>
                 )}
-
-                {/* MODE 2: PPTX SLIDE VIEW — tiap block jadi 1 "slide" 16:9, tumpukan bisa di-scroll */}
-                {!blocksLoading && !blocksError && previewFormat === "pptx" && (
-                  <div className="max-w-lg mx-auto space-y-6">
-                    {blocks.map((block, i) => (
-                      <div
-                        key={i}
-                        className="aspect-video rounded-2xl border-2 border-stone-300 shadow-xl overflow-y-auto"
-                      >
-                        <ReportBlockRenderer block={block} />
-                      </div>
-                    ))}
+                {!blocksLoading && !blocksError && !activeBlock && (
+                  <div className="text-center text-stone-400 text-xs font-bold py-16">
+                    {tx("No page selected.", "Tidak ada halaman yang dipilih.")}
                   </div>
                 )}
               </div>
@@ -387,14 +409,25 @@ export default function Step4PreviewEdit({
 
             {activeTab === "edit" && (
               <div className="space-y-4">
-                <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">
-                  {tx("Edit Content", "Edit Content")}
-                </label>
-                <RichTextEditor
-                  value={getPageText(activePage)}
-                  onChange={handleTextChange}
-                  tx={tx}
-                />
+                {isActivePageEditable ? (
+                  <>
+                    <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">
+                      {tx("Edit Content", "Edit Content")}
+                    </label>
+                    <RichTextEditor
+                      value={getPageText(activePage)}
+                      onChange={handleTextChange}
+                      tx={tx}
+                    />
+                  </>
+                ) : (
+                  <div className="max-w-lg mx-auto bg-stone-50 border border-stone-200 text-stone-500 text-xs font-medium p-6 rounded-xl text-center">
+                    {tx(
+                      "This section is generated automatically from your data — there's no free-form text to edit here.",
+                      "Bagian ini dibuat otomatis dari data laporan — tidak ada teks bebas untuk diedit di sini.",
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -415,6 +448,7 @@ export default function Step4PreviewEdit({
                 {/* Chart + Narasi — blocks yang sama persis dengan tab Preview & file export */}
                 <ChartNarasiLayout
                   blocks={blocks}
+                  visualStyle={visualStyle}
                   blocksLoading={blocksLoading}
                   blocksError={blocksError}
                   tx={tx}
@@ -472,7 +506,7 @@ export default function Step4PreviewEdit({
       {/* Fullscreen Studio Modal */}
       <FullscreenStudioModal
         isOpen={isFullscreen}
-        onClose={() => setIsFullscreen(false)}
+        onClose={closeFullscreen}
         reportTitle={
           reportTitle ||
           reportDetails?.title ||
@@ -483,8 +517,6 @@ export default function Step4PreviewEdit({
         setActivePage={setActivePage}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        previewFormat={previewFormat}
-        setPreviewFormat={setPreviewFormat}
         zoomLevel={zoomLevel}
         setZoomLevel={setZoomLevel}
         getPageTitle={getPageTitle}
@@ -495,11 +527,9 @@ export default function Step4PreviewEdit({
         saveSuccess={saveSuccess}
         pages={pages}
         blocks={blocks}
+        visualStyle={visualStyle}
         blocksLoading={blocksLoading}
         blocksError={blocksError}
-        headerTitle={headerTitle}
-        headerSubtitle={headerSubtitle}
-        themeColor={themeColor}
         inputFile={reportDetails?.input_file_name || "-"}
         tx={tx}
       />

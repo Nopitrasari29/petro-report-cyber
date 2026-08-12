@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { t, getLanguage } from "@/utils/i18n";
+import { getLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 import { API_BASE_URL } from "@/utils/api";
 import AuthLeftPanel from "../register/components/AuthLeftPanel";
 import LoginForm from "./components/LoginForm";
@@ -26,12 +27,7 @@ export default function LoginPage() {
   const [lang, setLang] = useState("English");
 
   // Pengaman Hidrasi (Hydration Guard)
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   useEffect(() => {
     setLang(getLanguage());

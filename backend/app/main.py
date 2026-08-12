@@ -1,10 +1,31 @@
 # app/main.py - updated
 
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.api.v1.router import api_router
 from app.core.config import settings
+
+# Konfigurasi logging APLIKASI (bukan pengganti print_banner() di bawah, yang memang
+# dekorasi terminal murni saat startup) - sebelumnya semua log server (analisis AI, upload,
+# auth, dst) pakai print() polos: tidak ada level (info/warning/error), tidak bisa difilter
+# atau diarahkan ke file/monitoring terpisah dengan rapi begitu di-deploy ke produksi nanti.
+logging.basicConfig(
+    level=logging.DEBUG if settings.DEBUG else logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+# BUG DIPERBAIKI (ditemukan langsung dari log terminal): basicConfig() di atas mengatur ROOT
+# logger, yang otomatis diwarisi SEMUA logger termasuk punya library pihak ketiga (pdfminer,
+# httpx/httpcore, urllib3, dst) - begitu DEBUG=True (default lokal sekarang), log internal
+# library-library itu (detail parsing PDF per objek, detail koneksi HTTP per paket) ikut
+# banjir ke terminal, menenggelamkan log APLIKASI sendiri yang sebenarnya mau dilihat.
+# Dikunci ke WARNING supaya cuma masalah nyata dari library ini yang tetap tampil, terlepas
+# dari level DEBUG aplikasi sendiri.
+for _noisy_logger in ("pdfminer", "httpx", "httpcore", "urllib3", "PIL", "fontTools"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
 
 # ── ANSI Color Codes ──────────────────────────────────────────────
 G  = "\033[92m"   # Green
@@ -66,11 +87,17 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print(f"\n{Y}[SHUTDOWN]{R} Backend sedang dimatikan...")
 
+# BUG DIPERBAIKI: /docs & /redoc (Swagger UI, menampilkan SELURUH struktur API) dulu selalu
+# aktif di lingkungan apa pun, termasuk produksi nanti - setting DEBUG sendiri sudah ada di
+# config.py tapi tidak pernah benar-benar dibaca kode manapun. Sekarang jadi gerbang nyata:
+# dokumentasi interaktif cuma aktif kalau DEBUG=True (default lokal), dimatikan otomatis
+# begitu DEBUG=False di-set eksplisit di .env produksi - mengurangi permukaan yang terlihat
+# pihak luar tanpa mengubah apa pun untuk development sekarang.
 app = FastAPI(
     title=settings.APP_NAME,
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
 )
 
 app.add_middleware(

@@ -1,15 +1,19 @@
 # app/api/v1/endpoints/analysis.py
+import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db, SessionLocal
 from app.core.config import settings
 from app.api.v1.endpoints.auth import get_current_user
 from app.services.ai_engine.ollama_client import ollama_client, _REQUIRED_KEY_DEFAULTS
-from app.crud.report import get_owned_report, update_report
+from app.services.report_render_logic import pick_visual_style
+from app.crud.report import get_owned_report, update_report, try_acquire_ai_lock
 from app.models.report import Report
-from app.schemas.report import AnalysisProgress, ReportResponse, ReportUpdate
+from app.models.user import User
+from app.schemas.report import AnalysisProgress, ReportResponse, ReportUpdate, ReportUserEditableUpdate
 import time
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/ping")
@@ -97,6 +101,7 @@ def _run_analysis_job(report_id: int) -> None:
     sesi itu sudah ditutup begitu response dikirim (lihat get_db()'s finally block).
     """
     db = SessionLocal()
+    db_report = None
     try:
         db_report = db.query(Report).filter(Report.id == report_id).first()
         if not db_report:
@@ -147,7 +152,7 @@ def _run_analysis_job(report_id: int) -> None:
         for attempt in range(MAX_RETRIES + 1):
             try:
                 if attempt > 0:
-                    print(f"[ANALYSIS] 🔄 Retry attempt {attempt}/{MAX_RETRIES} untuk report {report_id}...")
+                    logger.info(f"Retry attempt {attempt}/{MAX_RETRIES} untuk report {report_id}...")
                     time.sleep(5)  # Tunggu 5 detik sebelum retry agar Ollama punya waktu recover
                     # Reset token counter untuk retry yang bersih
                     db_report.tokens_generated = 0
@@ -162,7 +167,7 @@ def _run_analysis_job(report_id: int) -> None:
                         with open(db_report.parsed_data_path, "r", encoding="utf-8") as pf:
                             parsed_data_to_use = _json.load(pf)
                     except Exception as fs_read_err:
-                        print(f"[ANALYSIS] ⚠️ Gagal baca parsed_data dari file ({db_report.parsed_data_path}), fallback ke DB column: {fs_read_err}")
+                        logger.warning(f"Gagal baca parsed_data dari file ({db_report.parsed_data_path}), fallback ke DB column: {fs_read_err}")
                         parsed_data_to_use = db_report.parsed_data
 
                 raw_result = ollama_client.analyze_security_data(
@@ -200,27 +205,32 @@ def _run_analysis_job(report_id: int) -> None:
                 break  # Sukses — keluar dari loop retry
             except Exception as ai_err:
                 last_err = ai_err
-                print(f"[ANALYSIS] ⚠️ Attempt {attempt + 1}/{MAX_RETRIES + 1} gagal untuk report {report_id}: {ai_err}")
+                logger.warning(f"Attempt {attempt + 1}/{MAX_RETRIES + 1} gagal untuk report {report_id}: {ai_err}")
 
         if last_err is not None or analysis_result is None:
-            print(f"[ANALYSIS] ❌ Semua {MAX_RETRIES + 1} attempt gagal untuk report {report_id}. Marking as failed.")
+            logger.error(f"Semua {MAX_RETRIES + 1} attempt gagal untuk report {report_id}. Marking as failed.")
             db_report.status = "failed"
             db.commit()
             try:
-                from app.schemas.notification import NotificationCreate
-                from app.crud.notification import create_notification
-                create_notification(
-                    db,
-                    NotificationCreate(
-                        user_id=db_report.user_id,
-                        type="warning",
-                        title="Analysis Failed",
-                        message=f"Gagal memproses analisis setelah {MAX_RETRIES + 1} percobaan. Coba lagi atau periksa status Ollama.",
-                        link="/history"
+                # BUG DIPERBAIKI: dulu notifikasi SELALU dibuat, tidak peduli user sudah
+                # matikan toggle "Notify on Failure" di Settings — preferensi itu tersimpan
+                # rapi di DB tapi tidak pernah benar-benar dicek di sini.
+                owner = db.query(User).filter(User.id == db_report.user_id).first()
+                if owner is None or owner.notify_report_failed:
+                    from app.schemas.notification import NotificationCreate
+                    from app.crud.notification import create_notification
+                    create_notification(
+                        db,
+                        NotificationCreate(
+                            user_id=db_report.user_id,
+                            type="warning",
+                            title="Analysis Failed",
+                            message=f"Gagal memproses analisis setelah {MAX_RETRIES + 1} percobaan. Coba lagi atau periksa status Ollama.",
+                            link="/history"
+                        )
                     )
-                )
             except Exception as notif_err:
-                print(f"[ANALYSIS] ⚠️ Gagal buat notifikasi failure: {notif_err}")
+                logger.warning(f"Gagal buat notifikasi failure: {notif_err}")
             return
 
         elapsed_time = round(time.time() - start_time)
@@ -264,29 +274,69 @@ def _run_analysis_job(report_id: int) -> None:
 
         ai_confidence_score = _calc_confidence(analysis_result)
 
+        # BUG DIPERBAIKI: job ini bisa jadi "yatim" (dibatalkan user lewat tombol Batalkan
+        # Proses, atau di-reap otomatis krn dianggap macet — lihat _reap_stale_processing_reports)
+        # SEMENTARA panggilan Ollama-nya sendiri masih terus jalan di background sampai selesai.
+        # Tanpa cek ini, hasil job yatim itu akan MENIMPA BALIK status "failed" yang sudah
+        # sengaja di-set jadi "analyzed" seolah tidak pernah dibatalkan. db.refresh() mengambil
+        # status TERKINI dari DB (bukan yang di-cache di object Python ini sejak awal job jalan).
+        db.refresh(db_report)
+        if db_report.status != "processing":
+            logger.info(
+                f"Report {report_id} sudah bukan 'processing' lagi (jadi '{db_report.status}') "
+                "saat job ini selesai — kemungkinan dibatalkan pengguna atau di-reap sbg macet. "
+                "Hasil analisis ini dibuang, tidak menimpa status yang sudah ada."
+            )
+            return
+
         db_report.status = "analyzed"
         db_report.ai_summary = analysis_result
         db_report.ai_confidence = ai_confidence_score
         db_report.sla_met = sla_met_status
         db_report.processing_time_sec = elapsed_time
+        # Varian tampilan (cover_style, category_style, dst) DIPILIH & DIKUNCI di sini, SEKALI
+        # per analisis yang berhasil — lihat docstring pick_visual_style() utk alasan lengkapnya
+        # (dulu di-random ulang tiap PPT/PDF diunduh, preview & hasil unduhan bisa beda bentuk).
+        db_report.visual_style = pick_visual_style()
         db.commit()
 
-        # Auto-trigger notification
+        # Auto-trigger notification — BUG DIPERBAIKI: dulu selalu dibuat, sekarang cek dulu
+        # toggle "Notify on Success" milik user (sama seperti notifikasi failure di atas).
         try:
-            from app.schemas.notification import NotificationCreate
-            from app.crud.notification import create_notification
-            create_notification(
-                db,
-                NotificationCreate(
-                    user_id=db_report.user_id,
-                    type="success" if not is_fallback else "warning",
-                    title="Report Generated",
-                    message=f"Analisis AI untuk {db_report.filename or 'laporan'} telah selesai.",
-                    link="/history"
+            owner = db.query(User).filter(User.id == db_report.user_id).first()
+            if owner is None or owner.notify_report_success:
+                from app.schemas.notification import NotificationCreate
+                from app.crud.notification import create_notification
+                create_notification(
+                    db,
+                    NotificationCreate(
+                        user_id=db_report.user_id,
+                        type="success" if not is_fallback else "warning",
+                        title="Report Generated",
+                        message=f"Analisis AI untuk {db_report.filename or 'laporan'} telah selesai.",
+                        link="/history"
+                    )
                 )
-            )
         except Exception as notif_err:
-            print(f"[ANALYSIS] ⚠️ Gagal buat notifikasi success: {notif_err}")
+            logger.warning(f"Gagal buat notifikasi success: {notif_err}")
+    except Exception as fatal_err:
+        # BUG DIPERBAIKI (akar masalah "kunci macet selamanya" yang dilaporkan user): SEBELUM
+        # ini, cuma panggilan Ollama di dalam loop retry (di atas) yang error-nya tertangkap —
+        # exception di LUAR itu (mis. proses data included_sections yang formatnya tak terduga,
+        # atau kegagalan db.commit() itu sendiri) TIDAK tertangkap SAMA SEKALI, jadi fungsi ini
+        # berhenti begitu saja tanpa pernah mengubah status jadi "analyzed"/"failed" — laporan
+        # macet SELAMANYA di "processing", yang berarti kunci global 1-job-sekaligus
+        # (try_acquire_ai_lock) ikut macet, memblokir SEMUA generate AI (laporan siapa pun)
+        # sampai server di-restart manual. Sekarang exception APA PUN yang lolos dari semua
+        # penanganan di atas dijamin berakhir dengan status "failed" (kunci lepas), bukan macet.
+        logger.error(f"[FATAL] Kesalahan tak terduga saat memproses report {report_id}: {fatal_err}", exc_info=True)
+        try:
+            if db_report is not None:
+                db.rollback()
+                db_report.status = "failed"
+                db.commit()
+        except Exception as recovery_err:
+            logger.error(f"[FATAL] Bahkan gagal menandai report {report_id} sbg 'failed' setelah error: {recovery_err}")
     finally:
         db.close()
 
@@ -313,30 +363,58 @@ def generate_ai_analysis(
     if not db_report.parsed_data and not db_report.parsed_data_path:
         raise HTTPException(status_code=400, detail="Data laporan kosong atau belum di-parsing.")
 
-    if db_report.status == "processing":
-        raise HTTPException(status_code=429, detail="Proses analisis AI untuk laporan ini sedang berjalan di background. Silakan tunggu hingga selesai.")
-
-    # RCA-08: Truly GLOBAL Rate Limiting — tolak jika ada laporan MANAPUN (siapapun usernya)
-    # yang sedang diproses AI di server ini, untuk mencegah crash Ollama akibat request paralel.
-    other_active_job = (
-        db.query(Report)
-        .filter(
-            Report.status == "processing",
-            Report.id != report_id,
+    # RCA-08 + fix race condition: kunci "1 proses AI per waktu di server" diambil lewat SATU
+    # UPDATE atomik (try_acquire_ai_lock), BUKAN cek status dulu baru commit status baru belakangan
+    # secara terpisah — pola lama itu ada celah waktu antara cek & tulis yang bisa ditembus 2
+    # request nyaris bersamaan (dua-duanya lolos pengecekan sebelum salah satu sempat commit).
+    if not try_acquire_ai_lock(db, report_id):
+        db.refresh(db_report)
+        if db_report.status == "processing":
+            raise HTTPException(status_code=429, detail="Proses analisis AI untuk laporan ini sedang berjalan di background. Silakan tunggu hingga selesai.")
+        other_active_job = (
+            db.query(Report)
+            .filter(Report.status == "processing", Report.id != report_id)
+            .first()
         )
-        .first()
-    )
-    if other_active_job:
         raise HTTPException(
             status_code=429,
-            detail=f"Sistem sedang memproses analisis AI untuk laporan lain (ID: {other_active_job.id}). Mohon tunggu sebentar sebelum memulai analisis baru."
+            detail=f"Sistem sedang memproses analisis AI untuk laporan lain (ID: {other_active_job.id if other_active_job else '?'}). Mohon tunggu sebentar sebelum memulai analisis baru."
         )
 
-    updated_report = update_report(
-        db, report_id, ReportUpdate(status="processing", tokens_generated=0)
-    )
+    db.refresh(db_report)
     background_tasks.add_task(_run_analysis_job, report_id)
-    return updated_report
+    return db_report
+
+
+@router.post("/{report_id}/cancel", response_model=ReportResponse)
+def cancel_analysis(
+    report_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Tombol "Batalkan Proses" (Step 3) — dipanggil user SENGAJA saat mau berhenti menunggu &
+    langsung mulai generate laporan lain, TANPA perlu menunggu job lama benar-benar selesai.
+
+    TIDAK benar-benar menghentikan panggilan Ollama yang sedang berjalan di thread background
+    (Python/library ollama yang dipakai di sini tidak punya cara aman untuk itu tanpa mengubah
+    jadi koneksi streaming yang bisa diputus paksa) — tapi MELEPAS KUNCI GLOBAL SEKARANG JUGA
+    (status jadi "failed") supaya user tidak perlu menunggu. Job lama yang masih jalan di
+    background nanti kalau selesai akan mengecek dulu apakah statusnya masih "processing"
+    sebelum menyimpan hasil (lihat catatan di _run_analysis_job) — karena sudah "failed" di
+    sini, hasilnya otomatis dibuang, tidak menimpa balik pembatalan ini.
+    """
+    db_report = get_owned_report(db, report_id, current_user.id)
+    if not db_report:
+        raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
+    if db_report.status != "processing":
+        raise HTTPException(status_code=400, detail="Laporan ini sedang tidak diproses.")
+
+    db_report.status = "failed"
+    db.commit()
+    db.refresh(db_report)
+    logger.info(f"Report {report_id} dibatalkan oleh user {current_user.id}.")
+    return db_report
 
 
 @router.get("/{report_id}/progress", response_model=AnalysisProgress)
@@ -364,17 +442,22 @@ def get_analysis_progress(
 @router.put("/{report_id}", response_model=ReportResponse)
 def update_report_analysis(
     report_id: int,
-    report_update: ReportUpdate,
+    report_update: ReportUserEditableUpdate,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Endpoint untuk fitur Preview & Edit (Step 4).
+    Endpoint untuk fitur Preview & Edit (Step 4) — ganti judul & simpan hasil edit teks laporan.
     Hanya bisa dilakukan oleh pemilik laporan tersebut.
+
+    Body dibatasi ke ReportUserEditableUpdate (title/ai_summary saja, lihat docstring-nya di
+    schemas/report.py) SENGAJA, bukan ReportUpdate penuh — supaya field yang seharusnya cuma
+    diisi sistem (status, ai_confidence, sla_met, dst — hasil analisis AI beneran) tidak bisa
+    dipalsukan lewat endpoint yang menerima input user ini.
     """
     db_report = get_owned_report(db, report_id, current_user.id)
     if not db_report:
         raise HTTPException(status_code=404, detail="Data laporan tidak ditemukan.")
 
-    updated = update_report(db, report_id, report_update)
+    updated = update_report(db, report_id, ReportUpdate(**report_update.model_dump(exclude_unset=True)), user_id=current_user.id)
     return updated

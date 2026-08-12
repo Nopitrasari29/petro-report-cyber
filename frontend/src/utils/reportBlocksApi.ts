@@ -1,13 +1,22 @@
 import { API_BASE_URL } from "@/utils/api";
-import type { ReportBlock } from "@/utils/reportTheme";
+import { DEFAULT_VISUAL_STYLE, type ReportBlock, type VisualStyle } from "@/utils/reportTheme";
+
+export interface ReportBlocksResult {
+  blocks: ReportBlock[];
+  visualStyle: VisualStyle;
+}
 
 // Satu-satunya cara frontend mengambil "isi laporan yang akan dirender" — sumbernya SAMA
 // (build_report_blocks di backend) dengan yang dipakai export_pdf.py/export_ppt.py, jadi
 // tab Preview dijamin menampilkan section & angka yang sama dengan file yang diunduh.
+// visualStyle ikut dikembalikan (lihat get_visual_style() di backend) — kombinasi bentuk
+// (cover solid/split, chart bar/donut/stacked, dst) yang DIKUNCI sekali sewaktu laporan ini
+// dianalisis, supaya ReportBlockRenderer merender bentuk yang PERSIS sama dgn PDF/PPTX yang
+// akan diunduh untuk laporan yang sama (lihat pick_visual_style() di report_render_logic.py).
 export async function fetchReportBlocks(
   reportId: number | string,
   token: string | null,
-): Promise<ReportBlock[]> {
+): Promise<ReportBlocksResult> {
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -23,5 +32,8 @@ export async function fetchReportBlocks(
     throw new Error(detail);
   }
   const data = await res.json();
-  return data.blocks || [];
+  return {
+    blocks: data.blocks || [],
+    visualStyle: { ...DEFAULT_VISUAL_STYLE, ...(data.visual_style || {}) },
+  };
 }

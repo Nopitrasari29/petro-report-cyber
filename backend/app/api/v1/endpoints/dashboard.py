@@ -25,11 +25,16 @@ def get_dashboard_stats(
 
     formatted_reports = []
     for rep in recent_reports:
+        # BUG DIPERBAIKI: fallback dulu tanggal statis hardcode "2026-07-01/07-31" - benar
+        # sekarang (bulan berjalan saat ditulis) tapi makin terasa aneh begitu waktu berjalan
+        # lewat periode itu. Fallback ke created_at laporan itu sendiri (selalu relevan,
+        # tidak pernah "expired") kalau period_start/end genuinely kosong.
+        _fallback_date = rep.created_at.strftime("%Y-%m-%d") if rep.created_at else "-"
         formatted_reports.append({
             "id": rep.id,
             "title": rep.title,
             "data_type": rep.data_type,
-            "period": f"{rep.period_start.strftime('%Y-%m-%d') if rep.period_start else '2026-07-01'} - {rep.period_end.strftime('%Y-%m-%d') if rep.period_end else '2026-07-31'}",
+            "period": f"{rep.period_start.strftime('%Y-%m-%d') if rep.period_start else _fallback_date} - {rep.period_end.strftime('%Y-%m-%d') if rep.period_end else _fallback_date}",
             "status": rep.status,
             "created_at": rep.created_at.strftime("%d %b %Y, %H:%M") if rep.created_at else "-",
             "created_by": rep.created_by_name or "SOC Analyst"

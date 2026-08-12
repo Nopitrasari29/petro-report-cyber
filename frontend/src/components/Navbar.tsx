@@ -4,8 +4,10 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { t, getLanguage } from "@/utils/i18n";
-import { API_BASE_URL } from "@/utils/api";
+import { getLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
+import { API_BASE_URL, getToken, authHeaders } from "@/utils/api";
+import { confirmNavAway } from "@/utils/navGuard";
 import NotificationsMenu from "@/components/navbar/NotificationsMenu";
 import { ConfirmModal } from "@/components/ToastModal";
 
@@ -30,12 +32,7 @@ export default function Navbar() {
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [lang, setLang] = useState("English");
 
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  const tx = (key: string, fallback: string) => mounted ? t(key) : fallback;
+  const { mounted, tx } = useTx();
 
   useEffect(() => {
     setLang(getLanguage());
@@ -56,11 +53,10 @@ export default function Navbar() {
   };
 
   const fetchNotifications = async () => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
+    if (!getToken()) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/notifications`, {
-        headers: { "Authorization": `Bearer ${token}` }
+        headers: authHeaders()
       });
       if (res.ok) {
         const data = await res.json();
@@ -83,11 +79,10 @@ export default function Navbar() {
 
   useEffect(() => {
     const fetchUser = async () => {
-      const token = localStorage.getItem("token");
-      if (!token) { router.push("/login"); return; }
+      if (!getToken()) { router.push("/login"); return; }
       try {
         const res = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
-          headers: { "Authorization": `Bearer ${token}` }
+          headers: authHeaders()
         });
         if (!res.ok) throw new Error("Session expired");
         const userData = await res.json();
@@ -103,7 +98,7 @@ export default function Navbar() {
 
         try {
           const settingsRes = await fetch(`${API_BASE_URL}/api/v1/settings/`, {
-            headers: { "Authorization": `Bearer ${token}` }
+            headers: authHeaders()
           });
           if (settingsRes.ok) {
             const settings = await settingsRes.json();
@@ -135,12 +130,11 @@ export default function Navbar() {
   }, [router]);
 
   const handleMarkAllRead = async () => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
+    if (!getToken()) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/notifications/read-all`, {
         method: "PUT",
-        headers: { "Authorization": `Bearer ${token}` }
+        headers: authHeaders()
       });
       if (res.ok) {
         setApiNotifications(prev => prev.map(n => ({ ...n, unread: false })));
@@ -159,6 +153,7 @@ export default function Navbar() {
   }, []);
 
   const handleLogout = () => {
+    if (!confirmNavAway()) return;
     localStorage.removeItem("token");
     router.push("/login");
   };
@@ -253,7 +248,6 @@ export default function Navbar() {
               )}
               <div className="flex flex-col text-left max-w-[120px]">
                 <span className="text-xs font-black text-stone-800 leading-none truncate">{user.full_name || user.username}</span>
-                <span className="text-[9px] text-stone-400 font-bold mt-1.5 truncate uppercase tracking-wider">{user.role || "SOC Analyst"}</span>
               </div>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.8} stroke="currentColor" className={`w-2.5 h-2.5 text-stone-400 transition-transform duration-200 ${showUserMenu ? "rotate-180" : ""}`}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
@@ -271,13 +265,13 @@ export default function Navbar() {
                 <p className="text-[10px] text-stone-400 font-semibold truncate mt-0.5">{user.email}</p>
               </div>
               <div className="py-1">
-                <Link href="/settings?tab=account" onClick={() => setShowUserMenu(false)} className="flex items-center gap-2.5 px-4 py-2.5 text-xs text-stone-700 hover:bg-stone-50 transition-colors duration-150 font-bold text-left">
+                <Link href="/settings?tab=account" onClick={(e) => { if (!confirmNavAway()) { e.preventDefault(); return; } setShowUserMenu(false); }} className="flex items-center gap-2.5 px-4 py-2.5 text-xs text-stone-700 hover:bg-stone-50 transition-colors duration-150 font-bold text-left">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4 text-stone-400">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
                   </svg>
                   {tx("My Profile", "My Profile")}
                 </Link>
-                <Link href="/settings?tab=general" onClick={() => setShowUserMenu(false)} className="flex items-center gap-2.5 px-4 py-2.5 text-xs text-stone-700 hover:bg-stone-50 transition-colors duration-150 font-bold text-left">
+                <Link href="/settings?tab=general" onClick={(e) => { if (!confirmNavAway()) { e.preventDefault(); return; } setShowUserMenu(false); }} className="flex items-center gap-2.5 px-4 py-2.5 text-xs text-stone-700 hover:bg-stone-50 transition-colors duration-150 font-bold text-left">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4 text-stone-400">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.43l-1.003.828c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.43l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.991l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />

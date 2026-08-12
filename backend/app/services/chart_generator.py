@@ -2,12 +2,15 @@ from typing import Any, Dict, List, Optional
 import plotly.express as px
 import plotly.utils
 import json
+import logging
 import os
 import re
 import tempfile
 import pandas as pd
 import concurrent.futures
 from app.services.period_detector import find_date_column
+
+logger = logging.getLogger(__name__)
 
 # CATATAN PENTING SOAL VERSI KALEIDO (dikonfirmasi lewat debugging langsung, termasuk baca
 # chrome_debug.log):
@@ -70,7 +73,7 @@ def _ensure_kaleido_configured() -> None:
     except Exception as cfg_err:
         # Kalau gagal konfigurasi (mis. versi kaleido beda API), jangan hentikan render —
         # biarkan lanjut dengan default bawaan kaleido, cuma catat ke log server.
-        print(f"[KALEIDO WARNING] Gagal mengatur user-data-dir kustom: {cfg_err}")
+        logger.warning(f"[KALEIDO] Gagal mengatur user-data-dir kustom: {cfg_err}")
     _kaleido_configured = True
 
 
@@ -89,16 +92,6 @@ def _find_col(df: pd.DataFrame, keywords: List[str]) -> Optional[str]:
 def _find_numeric_cols(df: pd.DataFrame, exclude: List[str] = None) -> List[str]:
     exclude = [c.lower() for c in (exclude or [])]
     return [col for col in df.columns if col.lower() not in exclude and pd.api.types.is_numeric_dtype(df[col])]
-
-
-def _find_categorical_col(df: pd.DataFrame, exclude: List[str] = None) -> Optional[str]:
-    exclude = [c.lower() for c in (exclude or [])]
-    for col in df.columns:
-        if col.lower() in exclude:
-            continue
-        if pd.api.types.is_string_dtype(df[col]) or pd.api.types.is_object_dtype(df[col]):
-            return col
-    return None
 
 
 _INDO_THOUSANDS_RE = re.compile(r"^-?\d{1,3}(\.\d{3})+(,\d+)?$")
@@ -308,7 +301,13 @@ class ChartGenerator:
             # Fallback jika tidak ada chart khusus yang terbentuk
             if not charts:
                 num_cols = _find_numeric_cols(df, exclude=[date_col] if date_col else [])
-                cat_col = _find_categorical_col(df, exclude=[date_col] if date_col else [])
+                # BUG DIPERBAIKI: dulu pakai _find_categorical_col (versi kasar, cuma ambil
+                # kolom teks PERTAMA tanpa ranking/tanpa filter kolom angka-disimpan-sebagai-
+                # teks) - beda logika dari _rank_categorical_candidates yang dipakai
+                # data_profiler.py, berisiko 2 sistem chart pilih kolom kategori yang beda utk
+                # data yang sama. Disatukan ke satu implementasi (ambil kandidat teratas).
+                _cat_candidates = _rank_categorical_candidates(df, exclude=[date_col] if date_col else [])
+                cat_col = _cat_candidates[0] if _cat_candidates else None
                 if date_col and num_cols:
                     fig_fb = px.line(df, x=date_col, y=num_cols[0], title=f'Visualisasi Tren {data_type.replace("_", " ").title()}')
                 elif cat_col and num_cols:
@@ -430,10 +429,10 @@ class ChartGenerator:
                 f"Render chart timeout setelah {timeout_seconds}s — proses Chrome/Kaleido "
                 "kemungkinan gagal start di mesin ini (cek log server untuk detail)."
             )
-            print(f"[KALEIDO TIMEOUT] {msg}")
+            logger.error(f"[KALEIDO] {msg}")
             raise TimeoutError(msg) from timeout_err
         except Exception as render_err:
-            print(f"[KALEIDO ERROR] Gagal render chart ke PNG: {render_err}")
+            logger.error(f"[KALEIDO] Gagal render chart ke PNG: {render_err}")
             raise
         finally:
             executor.shutdown(wait=False)

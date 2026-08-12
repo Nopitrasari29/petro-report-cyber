@@ -2,15 +2,12 @@
 
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { t, getLanguage } from "@/utils/i18n";
+import { getLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 import { API_BASE_URL } from "@/utils/api";
 
 function AuthLeftPanel() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   const [lang, setLang] = useState("English");
   useEffect(() => {
@@ -68,11 +65,7 @@ function AuthLeftPanel() {
 }
 
 export default function ForgotPasswordPage() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);

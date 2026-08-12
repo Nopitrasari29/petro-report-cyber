@@ -69,6 +69,23 @@ class ReportUpdate(BaseModel):
     included_sections: Optional[Any] = None
     tokens_generated: Optional[int] = None
 
+
+class ReportUserEditableUpdate(BaseModel):
+    """Skema SEMPIT khusus untuk endpoint `PUT /api/v1/analysis/{report_id}` (fitur Preview &
+    Edit, Step 4 di wizard Generate + tab edit di History) — SENGAJA cuma berisi 2 field yang
+    benar-benar dikirim frontend (dicek langsung ke semua caller-nya: generate/page.tsx &
+    history/[id]/page.tsx, tidak ada satu pun yang pernah kirim field lain).
+
+    ReportUpdate (di atas) TIDAK dipakai langsung sebagai tipe body endpoint itu karena field
+    seperti "status"/"ai_confidence"/"sla_met" di dalamnya SEHARUSNYA cuma diisi sistem
+    (hasil analisis AI beneran, lewat update_report() yang dipanggil internal dari
+    _run_analysis_job) — endpoint yang tipenya ReportUpdate langsung menerima input user apa
+    adanya tanpa allowlist, sehingga user bisa memalsukan status="analyzed"/ai_confidence=99.9
+    tanpa laporannya pernah benar-benar dianalisis. Dengan tipe body dipersempit jadi skema
+    ini, field-field itu secara teknis tidak mungkin ke-parse dari request user."""
+    title: Optional[str] = None
+    ai_summary: Optional[Dict[str, Any]] = None
+
 class ReportResponse(ReportBase):
     id: int
     status: str

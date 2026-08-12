@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { useState, useEffect } from "react";
-import { t } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 import GoogleSignInButton from "../../login/components/GoogleSignInButton";
 
 export default function Step1AccountDetails({
@@ -18,15 +17,12 @@ export default function Step1AccountDetails({
   setShowConfirm,
   onNext,
   error,
+
   loading,
   onGoogleSuccess,
   onGoogleError,
 }: any) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   return (
     <div className="w-full max-w-[560px] bg-white rounded-2xl shadow-sm border border-stone-200/80 p-10 sm:p-12">

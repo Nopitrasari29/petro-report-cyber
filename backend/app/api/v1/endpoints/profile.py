@@ -10,9 +10,14 @@ from app.schemas.user import UserResponse
 router = APIRouter()
 
 class ProfileUpdateSchema(BaseModel):
+    # "role" SENGAJA TIDAK ada di sini — field itu tidak dibaca untuk membatasi akses apa pun
+    # di aplikasi ini (lihat settings.py), tapi update_user() menerapkan SEMUA key yang dikirim
+    # tanpa filter. Kalau "role" ada di skema ini, user biasa bisa kirim {"role": "Admin"} dan
+    # kolom role di DB-nya benar-benar berubah — baru terasa dampaknya begitu ada fitur admin
+    # yang mengecek current_user.role nanti. Dibiarkan TIDAK BISA diubah user sampai ada
+    # endpoint admin-only terpisah yang memang dirancang untuk itu.
     full_name: Optional[str] = None
     email: Optional[str] = None
-    role: Optional[str] = None
     department: Optional[str] = None
     avatar_url: Optional[str] = None
     current_password: Optional[str] = None
@@ -62,6 +67,14 @@ def update_profile(
     # tahu), maka current_password TIDAK wajib diisi — ini bukan "ganti password", tapi
     # "nge-set password untuk pertama kali".
     if profile_in.new_password:
+        # BUG DIPERBAIKI: frontend (settings/page.tsx) sudah mengecek panjang minimal 8
+        # karakter, tapi backend tidak pernah menegakkannya sendiri - siapa pun yang panggil
+        # endpoint ini langsung (bukan lewat UI) bisa set password 1 karakter tanpa ditolak.
+        if len(profile_in.new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password baru minimal terdiri dari 8 karakter."
+            )
         if current_user.password_set:
             if not profile_in.current_password:
                 raise HTTPException(

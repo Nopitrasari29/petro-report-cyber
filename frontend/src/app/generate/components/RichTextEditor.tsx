@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
@@ -158,20 +158,30 @@ export default function RichTextEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, editor]);
 
+  // BUG DIPERBAIKI: dulu pakai window.prompt() native bawaan browser - terasa asing di
+  // tengah toolbar custom yang rapi, dan tidak bisa distyle sama sekali. Diganti dialog
+  // kecil sendiri (linkPromptOpen + linkUrlInput di bawah), konsisten dengan pola
+  // ConfirmDialog yang sudah dipakai di tempat lain aplikasi ini.
+  const [linkPromptOpen, setLinkPromptOpen] = useState(false);
+  const [linkUrlInput, setLinkUrlInput] = useState("");
+
   const setLink = useCallback(() => {
     if (!editor) return;
     const previousUrl = editor.getAttributes("link").href;
-    const url = window.prompt(
-      tx("Enter URL", "Enter URL"),
-      previousUrl || "https://",
-    );
-    if (url === null) return;
+    setLinkUrlInput(previousUrl || "https://");
+    setLinkPromptOpen(true);
+  }, [editor]);
+
+  const confirmSetLink = useCallback(() => {
+    if (!editor) return;
+    const url = linkUrlInput.trim();
     if (url === "") {
       editor.chain().focus().extendMarkRange("link").unsetLink().run();
-      return;
+    } else {
+      editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
     }
-    editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
-  }, [editor, tx]);
+    setLinkPromptOpen(false);
+  }, [editor, linkUrlInput]);
 
   const insertTable = useCallback(() => {
     if (!editor) return;
@@ -707,6 +717,54 @@ export default function RichTextEditor({
           padding: 0 1px;
         }
       `}</style>
+
+      {/* Dialog "Masukkan URL" pengganti window.prompt() — lihat catatan di setLink di atas */}
+      {linkPromptOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={tx("Insert link", "Insert link")}
+          className="fixed inset-0 z-100 bg-stone-900/40 flex items-center justify-center p-4"
+          onClick={() => setLinkPromptOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-white rounded-2xl shadow-2xl border border-stone-200/80 p-5 text-left"
+          >
+            <h3 className="font-black text-stone-900 text-sm mb-3">
+              {tx("Enter URL", "Enter URL")}
+            </h3>
+            <input
+              type="text"
+              autoFocus
+              value={linkUrlInput}
+              onChange={(e) => setLinkUrlInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmSetLink();
+                if (e.key === "Escape") setLinkPromptOpen(false);
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-stone-250 text-xs font-semibold text-stone-800 outline-none focus:border-petro-green"
+              placeholder="https://"
+            />
+            <div className="flex justify-end gap-2.5 mt-4">
+              <button
+                type="button"
+                onClick={() => setLinkPromptOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold text-xs shadow-sm transition-colors cursor-pointer"
+              >
+                {tx("Cancel", "Cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={confirmSetLink}
+                className="px-4 py-2 rounded-lg bg-petro-green hover:bg-petro-green-hover text-white font-bold text-xs shadow-sm transition-colors cursor-pointer"
+              >
+                {tx("Confirm", "Confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

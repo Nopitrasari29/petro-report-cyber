@@ -3,15 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { t, getLanguage } from "@/utils/i18n";
+import { getLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 import { API_BASE_URL } from "@/utils/api";
 
 function VerifyEmailContent() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
@@ -246,11 +243,7 @@ function VerifyEmailContent() {
 }
 
 export default function VerifyEmailPage() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-petro-bg-warm p-6">

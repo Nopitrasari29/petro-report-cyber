@@ -5,13 +5,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
-import { t, getLanguage } from "@/utils/i18n";
-import {
-  buildReportPages,
-  getPageTitleFromList,
-  getPageKeyFromList,
-} from "@/utils/reportSections";
-import { API_BASE_URL } from "@/utils/api";
+import { getLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
+import { buildPagesFromBlocks, getPageByNumber } from "@/utils/reportSections";
+import { fetchReportBlocks } from "@/utils/reportBlocksApi";
+import { API_BASE_URL, getToken, authHeaders } from "@/utils/api";
 import { sanitizeFilename, downloadBlobAsFile } from "@/utils/downloadFile";
 import {
   arrayItemsToHtml,
@@ -20,29 +18,8 @@ import {
 import PagesSidebar from "./components/PagesSidebar";
 import CenterPreviewPanel from "./components/CenterPreviewPanel";
 import EditableReportTitle from "@/components/EditableReportTitle";
-
-interface ReportDetails {
-  id: number;
-  title: string;
-  data_type: string;
-  status: string;
-  input_file_name: string;
-  period_start: string;
-  period_end: string;
-  template_type: string;
-  output_format: string;
-  language: string;
-  ai_confidence: number;
-  created_by_name: string;
-  threat_count_critical: number;
-  threat_count_high: number;
-  threat_count_medium: number;
-  threat_count_low: number;
-  total_records_parsed: number;
-  total_file_size_bytes: number | null;
-  created_at: string;
-  ai_summary: Record<string, any>;
-}
+import type { ReportDetails } from "@/types/report";
+import { DEFAULT_VISUAL_STYLE, type ReportBlock, type VisualStyle } from "@/utils/reportTheme";
 
 // Laporan lama (sebelum kolom ini ada) punya total_file_size_bytes = null — tampilkan "-"
 // alih-alih menebak/memalsukan angka.
@@ -59,11 +36,7 @@ export default function ReportDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -95,6 +68,37 @@ export default function ReportDetailPage({
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Blocks yang SAMA PERSIS dipakai backend untuk merender PDF/PPTX (build_report_blocks) —
+  // dipindah ke sini (sebelumnya di-fetch terpisah di CenterPreviewPanel) supaya "pages" di
+  // bawah bisa dihitung dari struktur laporan ASLI, sama seperti di Generate (Step 4).
+  const [blocks, setBlocks] = useState<ReportBlock[]>([]);
+  const [visualStyle, setVisualStyle] = useState<VisualStyle>(DEFAULT_VISUAL_STYLE);
+  const [blocksLoading, setBlocksLoading] = useState(true);
+  const [blocksError, setBlocksError] = useState("");
+
+  useEffect(() => {
+    if (!reportId) return;
+    let cancelled = false;
+    setBlocksLoading(true);
+    setBlocksError("");
+    fetchReportBlocks(reportId, getToken())
+      .then(({ blocks: b, visualStyle: vs }) => {
+        if (!cancelled) {
+          setBlocks(b);
+          setVisualStyle(vs);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setBlocksError(err.message || "Gagal memuat preview.");
+      })
+      .finally(() => {
+        if (!cancelled) setBlocksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reportId]);
+
   // Initialize and check for ?edit=true search param
   useEffect(() => {
     if (searchParams.get("edit") === "true") {
@@ -110,14 +114,8 @@ export default function ReportDetailPage({
       setLoading(true);
       setErrorMsg("");
       try {
-        const token = localStorage.getItem("token");
-        const headers: Record<string, string> = {};
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-
         const res = await fetch(`${API_BASE_URL}/api/v1/history/${reportId}`, {
-          headers,
+          headers: authHeaders(),
         });
 
         if (res.status === 401 || res.status === 403) {
@@ -154,17 +152,19 @@ export default function ReportDetailPage({
     });
   };
 
-  // Sections navigation mapping — 6 halaman lama + section dinamis AI + penjelasan chart,
-  // sama seperti di Generate (Step 4), supaya keduanya tidak diam-diam berbeda lagi.
-  const pages = buildReportPages(editedSummary);
-  const getPageTitle = (page: string) => getPageTitleFromList(pages, page);
-  const getPageContentKey = (page: string) => getPageKeyFromList(pages, page);
+  // Sections navigation mapping — sekarang 1:1 dengan block ASLI laporan (Cover, Latar
+  // Belakang, tiap chart/tabel, dst), sama seperti di Generate (Step 4), supaya keduanya tidak
+  // diam-diam berbeda lagi.
+  const pages = buildPagesFromBlocks(blocks, editedSummary, report?.included_sections);
+  const getPageTitle = (page: string) => getPageByNumber(pages, page)?.title ?? "";
+  const getPageContentKey = (page: string) => getPageByNumber(pages, page)?.key ?? null;
 
   // Get active text — pakai jembatan array<->HTML yang sama dengan Generate (Step 4),
   // supaya "recommendations" (array objek {title, detail}) tidak lagi rusak jadi
   // "[object Object]" saat ditampilkan/disimpan dari tab Edit Text di History.
   const getPageText = (page: string) => {
     const key = getPageContentKey(page);
+    if (!key) return "";
     const placeholder = tx(
       "Content not yet available for this section.",
       "Content not yet available for this section.",
@@ -191,6 +191,7 @@ export default function ReportDetailPage({
 
   const handleTextChange = (newVal: string) => {
     const key = getPageContentKey(activePage);
+    if (!key) return;
 
     if (key.startsWith("section:")) {
       const idx = Number(key.split(":")[1]);
@@ -231,17 +232,9 @@ export default function ReportDetailPage({
     setIsSaving(true);
     setSaveSuccess(false);
     try {
-      const token = localStorage.getItem("token");
-      const authHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (token) {
-        authHeaders["Authorization"] = `Bearer ${token}`;
-      }
-
       const res = await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
         method: "PUT",
-        headers: authHeaders,
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           ai_summary: editedSummary,
         }),
@@ -264,15 +257,9 @@ export default function ReportDetailPage({
     const prevTitle = report?.title;
     setReport((prev) => (prev ? { ...prev, title: newTitle } : prev));
     try {
-      const token = localStorage.getItem("token");
-      const authHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (token) authHeaders["Authorization"] = `Bearer ${token}`;
-
       const res = await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
         method: "PUT",
-        headers: authHeaders,
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ title: newTitle }),
       });
       if (!res.ok) throw new Error("Gagal menyimpan nama laporan.");
@@ -288,9 +275,7 @@ export default function ReportDetailPage({
 
   const handleDownloadFile = async (format: "pdf" | "pptx") => {
     if (!reportId || downloadingFormat) return;
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    if (!token) {
+    if (!getToken()) {
       setErrorMsg("Token akses tidak ditemukan. Silakan login ulang.");
       return;
     }
@@ -298,11 +283,7 @@ export default function ReportDetailPage({
     setDownloadingFormat(format);
     try {
       const url = `${API_BASE_URL}/api/v1/history/${reportId}/${format}`;
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await fetch(url, { headers: authHeaders() });
 
       if (!res.ok) {
         let detail = `Gagal mengunduh file ${format.toUpperCase()}.`;
@@ -633,6 +614,10 @@ export default function ReportDetailPage({
               handleTextChange={handleTextChange}
               handleSaveEdits={handleSaveEdits}
               pages={pages}
+              blocks={blocks}
+              visualStyle={visualStyle}
+              blocksLoading={blocksLoading}
+              blocksError={blocksError}
               isSaving={isSaving}
               saveSuccess={saveSuccess}
             />

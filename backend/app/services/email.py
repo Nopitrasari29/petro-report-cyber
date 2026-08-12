@@ -72,17 +72,13 @@ async def send_verification_email(email: str, token: str):
     """
     Mengirim email verifikasi akun. Jika SMTP kosong, dicetak ke terminal log.
     """
-    link = f"http://localhost:3000/verify-email?token={token}"
+    link = f"{settings.FRONTEND_URL}/verify-email?token={token}"
     mail_config = get_mail_config()
     
     if not mail_config:
-        # Fallback Mode - Cetak ke Terminal dengan gaya yang menonjol
-        print("\n" + "📧 " * 20)
-        print(" [EMAIL MOCK] VERIFIKASI EMAIL PENDAFTARAN")
-        print(f" Ke Penerima : {email}")
-        print(f" Tautan Aktif: {link}")
-        print(" Silakan klik tautan di atas untuk memverifikasi akun Anda secara lokal.")
-        print("📧 " * 20 + "\n")
+        # Mode fallback: SMTP belum dikonfigurasi, tautan verifikasi dicatat ke log
+        # supaya masih bisa diambil manual saat development lokal.
+        logger.info(f"[EMAIL MOCK] Verifikasi email pendaftaran — ke: {email}, tautan: {link}")
         return
         
     html_content = _get_base_email_html(
@@ -107,17 +103,13 @@ async def send_reset_password_email(email: str, token: str):
     """
     Mengirim email reset password. Jika SMTP kosong, dicetak ke terminal log.
     """
-    link = f"http://localhost:3000/reset-password?token={token}"
+    link = f"{settings.FRONTEND_URL}/reset-password?token={token}"
     mail_config = get_mail_config()
     
     if not mail_config:
-        # Fallback Mode
-        print("\n" + "🔑 " * 20)
-        print(" [EMAIL MOCK] PERMINTAAN RESET PASSWORD")
-        print(f" Ke Penerima : {email}")
-        print(f" Tautan Aktif: {link}")
-        print(" Silakan klik tautan di atas untuk mereset sandi Anda secara lokal.")
-        print("🔑 " * 20 + "\n")
+        # Mode fallback: SMTP belum dikonfigurasi, tautan reset dicatat ke log supaya
+        # masih bisa diambil manual saat development lokal.
+        logger.info(f"[EMAIL MOCK] Permintaan reset password — ke: {email}, tautan: {link}")
         return
         
     html_content = _get_base_email_html(

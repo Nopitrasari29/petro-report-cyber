@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { t } from "@/utils/i18n";
+import { useEffect } from "react";
+import { useTx } from "@/hooks/useTx";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -24,11 +24,7 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const { tx } = useTx();
 
   useEffect(() => {
     if (!open) return;

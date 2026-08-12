@@ -1,9 +1,12 @@
 # app/api/v1/endpoints/upload.py
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 import json
+
+logger = logging.getLogger(__name__)
 
 from app.db.session import get_db
 from app.core.config import settings
@@ -26,17 +29,17 @@ _MONTH_NAMES_EN = [
 
 
 _DOMAIN_TITLE_LABELS = {
-    "financial": "Laporan Analisis Eksekutif Keuangan",
-    "keuangan": "Laporan Analisis Eksekutif Keuangan",
-    "kpi_hr": "Laporan Evaluasi Kinerja & KPI",
-    "soc_security": "SOC Executive Summary",
-    "operasional": "Laporan Analisis Eksekutif Operasional",
-    "general": "Laporan Analisis Eksekutif",
-    "procurement": "Laporan Analisis Eksekutif Pengadaan",
+    "financial": ("Laporan Analisis Eksekutif Keuangan", "Financial Executive Analysis Report"),
+    "keuangan": ("Laporan Analisis Eksekutif Keuangan", "Financial Executive Analysis Report"),
+    "kpi_hr": ("Laporan Evaluasi Kinerja & KPI", "KPI & Performance Evaluation Report"),
+    "soc_security": ("SOC Executive Summary", "SOC Executive Summary"),
+    "operasional": ("Laporan Analisis Eksekutif Operasional", "Operational Executive Analysis Report"),
+    "general": ("Laporan Analisis Eksekutif", "Executive Analysis Report"),
+    "procurement": ("Laporan Analisis Eksekutif Pengadaan", "Procurement Executive Analysis Report"),
 }
 
 
-def _default_report_title(template_type: Optional[str], domain_type: Optional[str] = None) -> str:
+def _default_report_title(template_type: Optional[str], domain_type: Optional[str] = None, language: Optional[str] = None) -> str:
     """
     Judul dipakai saat pengguna belum mengisi nama laporan sendiri — supaya laporan tidak
     pernah tersimpan dengan judul kosong. Formatnya "{Nama Dasar} - {Bulan Tahun}", bisa
@@ -47,11 +50,19 @@ def _default_report_title(template_type: Optional[str], domain_type: Optional[st
     ada UI mana pun di wizard yang benar-benar mengisi `template_type` (selalu string kosong),
     sehingga judul default sebelumnya SELALU jatuh ke istilah SOC/generik apa pun domain
     datanya (mis. laporan KPI/keuangan tetap berjudul "SOC Executive Summary").
+
+    `language` (dari pilihan Report Settings, "English"/"Indonesian") — BUG YANG DIPERBAIKI
+    (dilaporkan user): dulu nama dasar judul HARDCODE Bahasa Indonesia terlepas dari bahasa
+    yang diminta, jadi laporan berbahasa Inggris tetap berjudul "Laporan Evaluasi Kinerja &
+    KPI" dkk. Sekarang tiap domain punya 2 varian (id, en), dipilih sesuai `language`.
     """
+    is_en = (language or "").strip().lower() == "english"
     normalized_domain = (domain_type or "").strip().lower()
-    base = _DOMAIN_TITLE_LABELS.get(normalized_domain)
-    if not base:
-        base = (template_type or "Laporan Analisis Eksekutif").split(" (")[0].strip()
+    labels = _DOMAIN_TITLE_LABELS.get(normalized_domain)
+    if labels:
+        base = labels[1] if is_en else labels[0]
+    else:
+        base = (template_type or ("Executive Analysis Report" if is_en else "Laporan Analisis Eksekutif")).split(" (")[0].strip()
     now = datetime.now()
     return f"{base} - {_MONTH_NAMES_EN[now.month - 1]} {now.year}"
 
@@ -138,12 +149,14 @@ def detect_period_from_file(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal membaca berkas untuk deteksi periode: {str(e)}")
+        logger.error(f"Gagal deteksi periode dari berkas '{file.filename}': {e}")
+        raise HTTPException(status_code=500, detail="Gagal membaca berkas untuk deteksi periode. Silakan coba lagi atau hubungi admin.")
 
 
 @router.post("/suggest-sections")
 def suggest_sections_from_file(
     file: UploadFile = File(...),
+    language: Optional[str] = Form(None),
     current_user = Depends(get_current_user),
 ):
     """
@@ -151,11 +164,18 @@ def suggest_sections_from_file(
     section_suggester.py) berdasarkan isi berkas. Dipisah dari /detect-period supaya bagian
     yang cepat (deteksi periode) tidak ikut tertahan menunggu bagian yang lambat (AI) — kedua
     endpoint ini dipanggil BERSAMAAN oleh frontend, bukan berurutan.
+
+    `language` — BUG YANG DIPERBAIKI (dilaporkan user): endpoint ini dipanggil dari Step 1
+    Upload, SEBELUM user membuka Step 2 Settings tempat bahasa laporan sebenarnya dipilih,
+    jadi hasil usulan (Kop Subtitle, judul section) dulu SELALU Bahasa Indonesia. Frontend
+    sekarang mengirim bahasa DEFAULT user saat ini (preferensi profil, lihat useGenerateWizard)
+    supaya usulan awal sudah sesuai — kalau user lalu GANTI pilihan bahasa manual di Step 2
+    setelah usulan ini kembali, itu di luar cakupan perbaikan ini (kasus tepi yang jarang).
     """
     try:
         parsed_data = _parse_uploaded_file_for_preview(file)
         columns = list(parsed_data[0].keys()) if parsed_data and len(parsed_data) > 0 else []
-        suggestions = suggest_sections_for_file(columns=columns, sample_data=parsed_data, file_name=file.filename)
+        suggestions = suggest_sections_for_file(columns=columns, sample_data=parsed_data, file_name=file.filename, language=language)
         return {
             "domain_type": suggestions["domain_type"],
             "domain_label": suggestions["domain_label"],
@@ -168,7 +188,8 @@ def suggest_sections_from_file(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal menyusun usulan section: {str(e)}")
+        logger.error(f"Gagal menyusun usulan section dari berkas '{file.filename}': {e}")
+        raise HTTPException(status_code=500, detail="Gagal menyusun usulan section untuk berkas ini. Silakan coba lagi atau hubungi admin.")
 
 @router.post("/", response_model=ReportResponse)
 def upload_security_file(
@@ -180,8 +201,6 @@ def upload_security_file(
     template_type: Optional[str] = Form("SOC Executive Summary (Monthly)"),
     output_format: Optional[str] = Form("PDF"),
     language: Optional[str] = Form("Indonesian"),
-    include_ai_insights: bool = Form(True),
-    include_raw_data_summary: bool = Form(True),
     included_sections: Optional[str] = Form(None),  # JSON string [{"key": "...", "title": "..."}, ...]
     header_title: Optional[str] = Form("PT PETROKIMIA GRESIK"),
     header_subtitle: Optional[str] = Form("Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"),
@@ -202,7 +221,7 @@ def upload_security_file(
         # supaya tidak pernah tersimpan kosong (bisa diganti belakangan di Preview & Edit/History).
         title = title.strip() if title else ""
         if not title:
-            title = _default_report_title(template_type, domain_type)
+            title = _default_report_title(template_type, domain_type, language)
 
         # Konversi tanggal periode log dengan validasi string kosong (Next.js Form safe)
         p_start = None
@@ -305,8 +324,6 @@ def upload_security_file(
             template_type=template_type,
             output_format=output_format,
             language=language,
-            include_ai_insights=include_ai_insights,
-            include_raw_data_summary=include_raw_data_summary,
             created_by_name=current_user.full_name or current_user.username,
             threat_count_critical=threat_metrics["critical"],
             threat_count_high=threat_metrics["high"],
@@ -346,7 +363,7 @@ def upload_security_file(
             db.refresh(db_report)
         except Exception as fs_err:
             # Jika gagal simpan ke file system, biarkan parsed_data tetap di DB sebagai fallback
-            print(f"[UPLOAD] ⚠️ Gagal simpan parsed_data ke file system, fallback ke DB column: {fs_err}")
+            logger.warning(f"Gagal simpan parsed_data ke file system, fallback ke DB column: {fs_err}")
 
         # Trigger Notifikasi Upload Berhasil
         try:
@@ -363,7 +380,7 @@ def upload_security_file(
                 )
             )
         except Exception as notif_err:
-            print(f"[UPLOAD] Gagal buat notifikasi upload: {notif_err}")
+            logger.warning(f"Gagal buat notifikasi upload: {notif_err}")
 
         # Fix #9: Audit log untuk aksi upload
         try:
@@ -383,4 +400,5 @@ def upload_security_file(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal memproses unggahan log siber: {str(e)}")
+        logger.error(f"Gagal memproses unggahan utk title='{title}': {e}")
+        raise HTTPException(status_code=500, detail="Gagal memproses unggahan berkas. Silakan coba lagi atau hubungi admin.")

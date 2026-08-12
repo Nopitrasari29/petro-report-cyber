@@ -1,783 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
-import ScrollReveal from "@/components/ScrollReveal";
-import { t, getLanguage } from "@/utils/i18n";
-import { API_BASE_URL } from "@/utils/api";
-import {
-  REPORT_SECTIONS,
-  buildReportPages,
-  getPageTitleFromList,
-  getPageKeyFromList,
-} from "@/utils/reportSections";
-import {
-  arrayItemsToHtml,
-  htmlToArrayItems,
-} from "@/utils/richTextArrayBridge";
 import Step0Overview from "./components/Step0Overview";
 import Step1Upload from "./components/Step1Upload";
-import Step2Settings, {
-  type DynamicSectionItem,
-} from "./components/Step2Settings";
+import Step2Settings from "./components/Step2Settings";
 import Step3AIProcessing from "./components/Step3AIProcessing";
-
 import Step4PreviewEdit from "./components/Step4PreviewEdit";
 import Step5Export from "./components/Step5Export";
+import { useGenerateWizard } from "./hooks/useGenerateWizard";
 
-interface UploadedFile {
-  name: string;
-  type: string;
-  size: string;
-  status: "success" | "pending" | "failed";
-}
-
+// Seluruh state & logic wizard (fetch upload/AI/save, dst) ada di useGenerateWizard() —
+// file ini murni menyusun tampilan: header stepper 5-langkah + routing ke komponen Step yang
+// sesuai currentStep. Sebelumnya semuanya (~1200 baris) ada langsung di 1 fungsi komponen ini.
 export default function GenerateReportPage() {
-  const router = useRouter();
-  const [currentStep, setCurrentStep] = useState<0 | 1 | 2 | 3 | 4 | 5>(0); // 0 = Overview, 1 = Upload, 2 = Settings, 3 = AI Processing, 4 = Preview & Edit, 5 = Export
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-  const [reportId, setReportId] = useState<number | null>(null);
-
-  // ==========================================
-  // EFFECT 1: Pengaman Hidrasi (Hydration Guard)
-  // ==========================================
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
-
-  const [lang, setLang] = useState("English");
-  useEffect(() => {
-    setLang(getLanguage());
-    const handleLangChange = () => {
-      setLang(getLanguage());
-    };
-    window.addEventListener("ui_language_changed", handleLangChange);
-    return () => {
-      window.removeEventListener("ui_language_changed", handleLangChange);
-    };
-  }, []);
-
-  // File States (Empty by default, no dummy data)
-  const [files, setFiles] = useState<UploadedFile[]>([]);
-  const [rawFiles, setRawFiles] = useState<File[]>([]);
-
-  // Form States (Step 2)
-  const [title, setTitle] = useState("");
-  const [periodStart, setPeriodStart] = useState("");
-  const [periodEnd, setPeriodEnd] = useState("");
-  const [periodAutoDetected, setPeriodAutoDetected] = useState(false);
-  const [periodDetecting, setPeriodDetecting] = useState(false);
-  const [templateType, setTemplateType] = useState("");
-  const [outputFormat, setOutputFormat] = useState("PDF");
-  const [language, setLanguage] = useState("English");
-  const [includeAI, setIncludeAI] = useState(true);
-  const [includeRaw, setIncludeRaw] = useState(true);
-
-  // Sinkronisasi default bahasa laporan dari preferensi personal user (/settings/profile).
-  // Bukan lagi dari pengaturan global (/settings/), karena field "language" sudah dipindah
-  // ke per-user. Field include_exec_summary/include_charts yang dulu disinkronkan ke sini
-  // sudah dihapus total dari backend (dulu memang cross-wire yang tidak nyambung ke apapun),
-  // jadi includeAI/includeRaw sekarang cukup pakai default bawaan (true) dan diatur manual
-  // oleh user lewat form kalau perlu.
-  useEffect(() => {
-    const fetchFormDefaults = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        const headers: Record<string, string> = {};
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-        const res = await fetch(`${API_BASE_URL}/api/v1/settings/profile`, {
-          headers,
-        });
-        if (res.ok) {
-          const profile = await res.json();
-          if (profile.language) {
-            setLanguage(profile.language);
-          }
-        }
-      } catch (err) {
-        console.error(
-          "Gagal memuat preferensi bahasa default untuk form:",
-          err,
-        );
-      }
-    };
-    fetchFormDefaults();
-  }, []);
-
-  const [headerTitle, setHeaderTitle] = useState("PT PETROKIMIA GRESIK");
-  const [headerSubtitle, setHeaderSubtitle] = useState(
-    "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
-  );
-  const [themeColor, setThemeColor] = useState("green");
-  const [domainType, setDomainType] = useState("general");
-  const [dynamicSections, setDynamicSections] = useState<DynamicSectionItem[]>(
-    [],
-  );
-  const [sectionsLoading, setSectionsLoading] = useState(false);
-
-  const [tone, setTone] = useState("Professional");
-  const [defaultLevel, setDefaultLevel] = useState("Standard");
-  const [sections, setSections] = useState<Record<string, boolean>>(
-    Object.fromEntries(REPORT_SECTIONS.map((s) => [s.key, true])),
-  );
-  const [exportFormats, setExportFormats] = useState<Record<string, boolean>>({
-    pdf: false,
-    pptx: false,
-  });
-
-  // Stepper Status (Step 3)
-  const [aiStatus, setAiStatus] = useState<
-    "pending" | "processing" | "completed"
-  >("pending");
-  // Progress "68%" & checklist yang selalu "Completed" dulu ternyata statis — gak mencerminkan
-  // proses beneran sama sekali. processingStep melacak 3 tahap ASYNC NYATA yang benar-benar
-  // bisa diamati dari frontend (upload+parse, analisis AI, ambil hasil akhir) — bukan 6 langkah
-  // karangan yang gak bisa dibedakan satu sama lain dari sisi frontend.
-  const [processingStep, setProcessingStep] = useState<
-    "idle" | "uploading" | "analyzing" | "fetching" | "done"
-  >("idle");
-  const [processingStartedAt, setProcessingStartedAt] = useState<number | null>(
-    null,
-  );
-  // Estimasi waktu dari RIWAYAT laporan milik user sendiri (rata-rata processing_time_sec
-  // laporan yang sudah pernah selesai) — bukan angka "2-5 menit" yang di-hardcode tanpa
-  // dasar apapun. null berarti belum ada riwayat sama sekali (user belum pernah generate
-  // laporan sebelumnya) — di kondisi ini UI fallback ke pesan generik, bukan angka palsu.
-  const [estimatedSeconds, setEstimatedSeconds] = useState<number | null>(null);
-
-  // Progress token LIVE dari background job Ollama (di-poll dari GET /analysis/{id}/progress
-  // tiap 2 detik selama status="processing") + perkiraan total token dari riwayat laporan user
-  // (rata-rata tokens_generated laporan yang sudah selesai). Dua angka ini dipakai Step3 buat
-  // menghitung kecepatan generate token asli dan sisa waktu yang genuinely bereaksi terhadapnya
-  // — mirip ETA download yang dihitung dari bytes/detik yang benar-benar terukur, bukan animasi.
-  const [tokensGenerated, setTokensGenerated] = useState<number | null>(null);
-  const [expectedTotalTokens, setExpectedTotalTokens] = useState<number | null>(
-    null,
-  );
-
-  // Report details state (Step 4 & 5)
-  const [reportDetails, setReportDetails] = useState<any>(null);
-  const [editedSummary, setEditedSummary] = useState<any>({});
-  const [activeTab, setActiveTab] = useState<"preview" | "edit" | "charts">(
-    "preview",
-  );
-  const [activePage, setActivePage] = useState("01");
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
-
-  // Daftar halaman LENGKAP (6 halaman lama + section dinamis AI + penjelasan chart) —
-  // dihitung ulang tiap kali editedSummary berubah supaya tab "Pages"/"Edit Text" langsung
-  // menyesuaikan begitu report selesai diproses (sections/chart_captions baru terisi).
-  const pages = buildReportPages(editedSummary);
-  const getPageTitle = (page: string) => getPageTitleFromList(pages, page);
-  const getPageContentKey = (page: string) => getPageKeyFromList(pages, page);
-
-  const getPageText = (page: string) => {
-    const key = getPageContentKey(page);
-    const placeholder = tx(
-      "Content not yet available for this section.",
-      "Content not yet available for this section.",
-    );
-
-    if (key.startsWith("section:")) {
-      const idx = Number(key.split(":")[1]);
-      const sec = (editedSummary?.sections || [])[idx];
-      return sec?.content || placeholder;
-    }
-    if (key.startsWith("chart_caption:")) {
-      const idx = Number(key.split(":")[1]);
-      return editedSummary?.chart_captions?.[idx] || placeholder;
-    }
-
-    let text = editedSummary[key];
-    if (Array.isArray(text)) {
-      return arrayItemsToHtml(text);
-    }
-    if (text) return text;
-
-    // Belum ada konten AI untuk section ini (mis. field itu belum di-generate atau report
-    // masih diproses) — tampilkan placeholder jujur, BUKAN narasi karangan yang kelihatan
-    // seperti hasil analisis sungguhan padahal isinya sama untuk semua laporan.
-    return placeholder;
-  };
-
-  const handleTextChange = (newVal: string) => {
-    const key = getPageContentKey(activePage);
-
-    if (key.startsWith("section:")) {
-      const idx = Number(key.split(":")[1]);
-      const sectionsArr = Array.isArray(editedSummary?.sections)
-        ? [...editedSummary.sections]
-        : [];
-      sectionsArr[idx] = { ...(sectionsArr[idx] || {}), content: newVal };
-      setEditedSummary({ ...editedSummary, sections: sectionsArr });
-      return;
-    }
-    if (key.startsWith("chart_caption:")) {
-      const idx = Number(key.split(":")[1]);
-      const captionsArr = Array.isArray(editedSummary?.chart_captions)
-        ? [...editedSummary.chart_captions]
-        : [];
-      captionsArr[idx] = newVal;
-      setEditedSummary({ ...editedSummary, chart_captions: captionsArr });
-      return;
-    }
-
-    const originalVal = editedSummary[key];
-    if (Array.isArray(originalVal)) {
-      setEditedSummary({
-        ...editedSummary,
-        [key]: htmlToArrayItems(newVal, key === "recommendations"),
-      });
-    } else {
-      setEditedSummary({
-        ...editedSummary,
-        [key]: newVal,
-      });
-    }
-  };
-
-  // Memanggil backend untuk mendeteksi otomatis rentang tanggal (period) dari isi file yang
-  // baru diupload. Kalau ketemu kolom tanggal yang valid, field Report Period di Step 2 langsung
-  // terisi otomatis. Kalau tidak ketemu (mis. data cuma punya "bulan" tanpa tahun), field
-  // dibiarkan kosong supaya user isi manual sendiri.
-  //
-  // SENGAJA dipisah dari usulan section AI (suggestSectionsFromFile di bawah) dan ditembak
-  // BERSAMAAN (bukan salah satu menunggu yang lain) — deteksi periode ini murni parsing biasa
-  // (cepat, hitungan detik), sedangkan usulan section AI bisa beberapa menit. Kalau digabung
-  // jadi satu permintaan, field periode yang harusnya sudah bisa terisi duluan ikut tertahan
-  // menunggu AI selesai.
-  const detectPeriodFromFile = async (file: File) => {
-    setPeriodDetecting(true);
-    setPeriodAutoDetected(false);
-    try {
-      const token = localStorage.getItem("token");
-      const authHeaders: Record<string, string> = {};
-      if (token) {
-        authHeaders["Authorization"] = `Bearer ${token}`;
-      }
-
-      const fd = new FormData();
-      fd.append("file", file);
-
-      const res = await fetch(`${API_BASE_URL}/api/v1/upload/detect-period`, {
-        method: "POST",
-        headers: authHeaders,
-        body: fd,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.detected && data.period_start && data.period_end) {
-          setPeriodStart(data.period_start);
-          setPeriodEnd(data.period_end);
-          setPeriodAutoDetected(true);
-        }
-      }
-    } catch (err) {
-      // Deteksi gagal itu bukan error fatal — user tetap bisa isi periode manual di Step 2.
-      console.warn("[PERIOD DETECT] Gagal mendeteksi periode otomatis:", err);
-    } finally {
-      setPeriodDetecting(false);
-    }
-  };
-
-  // Usulan section AI + deteksi domain/kop header — bagian yang LAMBAT (bisa beberapa menit,
-  // lihat section_suggester.py), sengaja dipanggil terpisah dari detectPeriodFromFile di atas.
-  const suggestSectionsFromFile = async (file: File) => {
-    setSectionsLoading(true);
-    try {
-      const token = localStorage.getItem("token");
-      const authHeaders: Record<string, string> = {};
-      if (token) {
-        authHeaders["Authorization"] = `Bearer ${token}`;
-      }
-
-      const fd = new FormData();
-      fd.append("file", file);
-
-      const res = await fetch(`${API_BASE_URL}/api/v1/upload/suggest-sections`, {
-        method: "POST",
-        headers: authHeaders,
-        body: fd,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.header_title) setHeaderTitle(data.header_title);
-        if (data.header_subtitle) setHeaderSubtitle(data.header_subtitle);
-        if (data.domain_type) setDomainType(data.domain_type);
-        if (data.suggested_sections && Array.isArray(data.suggested_sections)) {
-          setDynamicSections(data.suggested_sections);
-        }
-      }
-    } catch (err) {
-      // Gagal itu bukan error fatal — fallback preset section tetap dipakai backend saat generate.
-      console.warn("[SECTION SUGGEST] Gagal menyusun usulan section:", err);
-    } finally {
-      setSectionsLoading(false);
-    }
-  };
-
-  // Handle local file adding — backend sekarang menerima BEBERAPA file sekaligus (digabung
-  // jadi satu daftar data di server), jadi file baru ditambahkan ke daftar, bukan mengganti.
-  const acceptNewFiles = (fileList: FileList) => {
-    const newFiles = Array.from(fileList);
-    if (newFiles.length === 0) return;
-
-    const isFirstBatch = rawFiles.length === 0;
-
-    setRawFiles((prev) => [...prev, ...newFiles]);
-    setFiles((prev) => [
-      ...prev,
-      ...newFiles.map((file) => ({
-        name: file.name,
-        type: file.name.split(".").pop()?.toUpperCase() || "LOG",
-        size: (file.size / (1024 * 1024)).toFixed(2) + " MB",
-        status: "success" as const,
-      })),
-    ]);
-
-    // Auto-deteksi periode cuma dari batch PERTAMA — kalau sudah ada file lain sebelumnya,
-    // membiarkan deteksi otomatis menimpa periode yang mungkin sudah disesuaikan user secara
-    // manual bisa lebih membingungkan daripada membantu. User tetap bisa edit manual di Step 2.
-    if (isFirstBatch) {
-      // Ditembak BERSAMAAN (bukan salah satu menunggu yang lain) — lihat komentar di
-      // masing-masing fungsi kenapa keduanya sengaja dipisah jadi 2 permintaan independen.
-      detectPeriodFromFile(newFiles[0]);
-      suggestSectionsFromFile(newFiles[0]);
-    }
-  };
-
-  const handleRemoveFile = (index: number) => {
-    setRawFiles((prev) => prev.filter((_, i) => i !== index));
-    setFiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      acceptNewFiles(e.dataTransfer.files);
-    }
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      acceptNewFiles(e.target.files);
-    }
-    // Reset supaya user bisa pilih file yang sama lagi kalau perlu (browser tidak nge-trigger
-    // onChange kalau value input tidak berubah dari sebelumnya).
-    e.target.value = "";
-  };
-
-  // Ambil rata-rata processing_time_sec dari laporan-laporan user yang sudah pernah selesai,
-  // buat dasar estimasi waktu yang genuinely berdasar data — bukan tebakan statis. Gagal/tidak
-  // ada riwayat sama sekali dianggap wajar (user baru), bukan error yang perlu ditampilkan.
-  const fetchEstimatedSeconds = async (): Promise<number | null> => {
-    try {
-      const token = localStorage.getItem("token");
-      const authHeaders: Record<string, string> = {};
-      if (token) authHeaders["Authorization"] = `Bearer ${token}`;
-
-      const res = await fetch(
-        `${API_BASE_URL}/api/v1/history/?limit=10&status=analyzed`,
-        { headers: authHeaders },
-      );
-      if (!res.ok) return null;
-
-      const reports = await res.json();
-      const durations: number[] = (Array.isArray(reports) ? reports : [])
-        .map((r: any) => r.processing_time_sec)
-        .filter((v: any) => typeof v === "number" && v > 0);
-
-      if (durations.length === 0) return null;
-      return Math.round(
-        durations.reduce((sum, v) => sum + v, 0) / durations.length,
-      );
-    } catch {
-      return null;
-    }
-  };
-
-  // Poll progress asli tiap 2 detik sampai job selesai (analyzed) atau gagal (failed), lalu
-  // ambil detail hasil akhirnya. Dipisah jadi fungsi sendiri supaya bisa dipanggil ulang oleh
-  // handleRetryAnalysis TANPA mengulang upload file / membuat report baru dari nol.
-  const pollAndFetchResult = async (generatedId: number) => {
-    const token = localStorage.getItem("token");
-    const authHeaders: Record<string, string> = {};
-    if (token) authHeaders["Authorization"] = `Bearer ${token}`;
-
-    let finalStatus = "processing";
-    // Jaring pengaman sisi frontend — dinaikkan dari 15 ke 25 menit karena generation sekarang
-    // bisa lebih lama saat user memilih banyak section dinamis (PART A3 menambah muatan yang
-    // harus ditulis model dalam satu panggilan yang sama).
-    const pollDeadline = Date.now() + 1500 * 1000;
-    while (finalStatus === "processing") {
-      if (Date.now() > pollDeadline) {
-        throw new Error(
-          "Proses analisis AI melebihi batas waktu yang wajar di sisi frontend. Proses TETAP " +
-            'berjalan di server — klik "Coba Lagi" untuk memeriksa status terbaru tanpa mengulang dari awal.',
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      const progRes = await fetch(
-        `${API_BASE_URL}/api/v1/analysis/${generatedId}/progress`,
-        { headers: authHeaders },
-      );
-      if (!progRes.ok) continue; // hiccup jaringan sesaat — coba lagi tick berikutnya
-      const prog = await progRes.json();
-      finalStatus = prog.status;
-      setTokensGenerated(prog.tokens_generated ?? 0);
-      setExpectedTotalTokens(prog.expected_total_tokens ?? null);
-    }
-
-    if (finalStatus === "failed") {
-      throw new Error(
-        "Proses analisis AI gagal karena kesalahan tak terduga di server. Silakan coba lagi.",
-      );
-    }
-
-    setProcessingStep("fetching");
-    const detailRes = await fetch(
-      `${API_BASE_URL}/api/v1/history/${generatedId}`,
-      {
-        headers: authHeaders,
-      },
-    );
-    if (detailRes.ok) {
-      const details = await detailRes.json();
-      setReportDetails(details);
-      setEditedSummary(details.ai_summary || {});
-      if (!title && details.title) {
-        setTitle(details.title);
-      }
-    }
-    setProcessingStep("done");
-    setAiStatus("completed");
-  };
-
-  // Retry setelah timeout/gagal — TIDAK upload ulang file / bikin report baru. Cek dulu status
-  // TERKINI di server (job background sebelumnya tidak ikut dibatalkan saat frontend menyerah,
-  // jadi bisa jadi sudah selesai atau masih berjalan), baru putuskan: langsung tampilkan hasil,
-  // lanjut polling saja, atau trigger analisis baru (kalau memang sudah "failed" di server).
-  const handleRetryAnalysis = async () => {
-    if (!reportId) return;
-    setErrorMsg("");
-    setAiStatus("processing");
-    setProcessingStep("analyzing");
-    setLoading(true);
-
-    const token = localStorage.getItem("token");
-    const authHeaders: Record<string, string> = {};
-    if (token) authHeaders["Authorization"] = `Bearer ${token}`;
-
-    try {
-      const statusRes = await fetch(
-        `${API_BASE_URL}/api/v1/history/${reportId}`,
-        {
-          headers: authHeaders,
-        },
-      );
-      if (statusRes.ok) {
-        const details = await statusRes.json();
-        if (details.status === "analyzed") {
-          setReportDetails(details);
-          setEditedSummary(details.ai_summary || {});
-          if (!title && details.title) {
-            setTitle(details.title);
-          }
-          setProcessingStep("done");
-          setAiStatus("completed");
-          setLoading(false);
-          return;
-        }
-        if (details.status === "processing") {
-          await pollAndFetchResult(reportId);
-          setLoading(false);
-          return;
-        }
-      }
-
-      // Status "failed" (atau tidak diketahui) — trigger ulang analisisnya dari server.
-      const generateRes = await fetch(
-        `${API_BASE_URL}/api/v1/analysis/generate/${reportId}`,
-        { method: "POST", headers: authHeaders },
-      );
-      if (!generateRes.ok) {
-        let detail = "Gagal memicu ulang pemrosesan AI lokal (Ollama).";
-        try {
-          const errData = await generateRes.json();
-          detail = errData.detail || detail;
-        } catch {}
-        throw new Error(detail);
-      }
-      await pollAndFetchResult(reportId);
-      setLoading(false);
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg(err.message || "Terjadi kesalahan tidak terduga.");
-      setAiStatus("pending");
-      setProcessingStep("idle");
-      setLoading(false);
-    }
-  };
-
-  // Submit Settings and Start Upload to Backend
-  const handleStartGeneration = async () => {
-    if (!periodStart || !periodEnd) {
-      setErrorMsg(
-        "Periode laporan belum terisi. Silakan isi Report Period secara manual di Step 2.",
-      );
-      return;
-    }
-
-    const hasExportFormat = exportFormats.pdf || exportFormats.pptx;
-    const hasSection = Object.values(sections).some((val) => val === true);
-
-    if (!hasExportFormat) {
-      alert(
-        tx(
-          "Silakan pilih setidaknya satu format export (PDF atau PowerPoint).",
-          "Silakan pilih setidaknya satu format export (PDF atau PowerPoint).",
-        ),
-      );
-      return;
-    }
-    if (!hasSection) {
-      alert(
-        tx(
-          "Silakan pilih setidaknya satu section laporan untuk dimasukkan.",
-          "Silakan pilih setidaknya satu section laporan untuk dimasukkan.",
-        ),
-      );
-      return;
-    }
-
-    setCurrentStep(3);
-    setLoading(true);
-    setErrorMsg("");
-    setAiStatus("processing");
-    setProcessingStep("uploading");
-    setProcessingStartedAt(Date.now());
-    setEstimatedSeconds(null);
-    setTokensGenerated(null);
-    setExpectedTotalTokens(null);
-    fetchEstimatedSeconds().then(setEstimatedSeconds);
-
-    try {
-      const token = localStorage.getItem("token");
-      const authHeaders: Record<string, string> = {};
-      if (token) {
-        authHeaders["Authorization"] = `Bearer ${token}`;
-      }
-
-      // 1. Kirim berkas log dan preferensi ke backend POST /api/v1/upload/
-      const formData = new FormData();
-      formData.append("title", title);
-
-      // Map domain yang sudah dideteksi AI dari isi file (domainType, diisi oleh
-      // suggestSectionsFromFile) ke data_type yang dipahami backend. `templateType` TIDAK
-      // dipakai lagi di sini — tidak ada UI mana pun di wizard ini yang pernah mengisinya,
-      // jadi sebelumnya data_type selalu jatuh ke default "firewall" untuk SEMUA domain.
-      const domainToDataType: Record<string, string> = {
-        financial: "keuangan",
-        kpi_hr: "kpi_hr",
-        soc_security: "firewall",
-        procurement: "procurement",
-      };
-      const dataType = domainToDataType[domainType] || "operasional";
-
-      formData.append("data_type", dataType);
-      formData.append("period_start", periodStart);
-      formData.append("period_end", periodEnd);
-      formData.append("template_type", templateType);
-      // outputFormat lama selalu "PDF" statis (gak pernah diubah UI manapun) — sekarang
-      // dihitung dari checkbox Export Format yang beneran dipilih user di Report Settings.
-      const selectedFormats = [
-        exportFormats.pdf && "PDF",
-        exportFormats.pptx && "PPTX",
-      ].filter(Boolean);
-      formData.append(
-        "output_format",
-        selectedFormats.length > 0 ? selectedFormats.join("+") : outputFormat,
-      );
-      formData.append("language", language);
-      formData.append("include_ai_insights", String(includeAI));
-      formData.append("include_raw_data_summary", String(includeRaw));
-      formData.append("header_title", headerTitle);
-      formData.append("header_subtitle", headerSubtitle);
-      formData.append("theme_color", themeColor);
-      formData.append("domain_type", domainType);
-      formData.append("tone", tone);
-      formData.append("default_level", defaultLevel);
-
-      if (dynamicSections.length > 0) {
-        // Kirim HANYA section yang dicentang user (bukan seluruh kandidat usulan AI),
-        // beserta urutannya — backend memakai ini utk menyusun ai_summary["sections"].
-        const selectedSections = dynamicSections.filter((s) => s.enabled);
-        formData.append("included_sections", JSON.stringify(selectedSections));
-      } else {
-        formData.append("included_sections", JSON.stringify(sections));
-      }
-
-      // Step1Upload menonaktifkan tombol Next selama belum ada file, jadi ini seharusnya
-      // tidak pernah kejadian lewat alur normal — tapi kalau sampai kejadian (state gak
-      // sinkron dsb.), lebih baik gagal jelas daripada diam-diam kirim data CSV karangan
-      // seolah-olah itu file asli milik user.
-      if (rawFiles.length === 0) {
-        throw new Error(
-          "Tidak ada file yang diupload. Silakan kembali ke Step 1 dan upload file terlebih dahulu.",
-        );
-      }
-      // Kirim SEMUA file (backend menggabungkan datanya jadi satu) — FormData mendukung
-      // banyak entri dengan nama field yang sama, FastAPI mem-parsingnya sebagai List[UploadFile].
-      rawFiles.forEach((file) => formData.append("files", file));
-
-      const uploadRes = await fetch(`${API_BASE_URL}/api/v1/upload/`, {
-        method: "POST",
-        headers: authHeaders,
-        body: formData,
-      });
-
-      if (!uploadRes.ok) {
-        let detail = "Gagal mengunggah konfigurasi laporan siber ke server.";
-        if (uploadRes.status === 401) {
-          detail = "Sesi login Anda telah kedaluwarsa. Silakan login kembali.";
-        } else {
-          try {
-            const errData = await uploadRes.json();
-            detail = errData.detail || detail;
-          } catch {}
-        }
-        throw new Error(detail);
-      }
-
-      const reportData = await uploadRes.json();
-      const generatedId = reportData.id;
-      setReportId(generatedId);
-      setProcessingStep("analyzing");
-
-      // 2. Trigger AI Engine Analysis: POST /api/v1/analysis/generate/{report_id}
-      // Endpoint ini sekarang langsung kembali (job Ollama jalan di background), jadi lanjut
-      // polling progress token-nya secara live di bawah — bukan lagi 1 fetch yang nge-block
-      // browser selama 3-10 menit.
-      const generateRes = await fetch(
-        `${API_BASE_URL}/api/v1/analysis/generate/${generatedId}`,
-        {
-          method: "POST",
-          headers: authHeaders,
-        },
-      );
-
-      if (!generateRes.ok) {
-        let detail = "Gagal memicu pemrosesan AI lokal (Ollama).";
-        try {
-          const errData = await generateRes.json();
-          detail = errData.detail || detail;
-        } catch {}
-        throw new Error(detail);
-      }
-
-      // 2b. Poll progress asli tiap 2 detik sampai job selesai (analyzed) atau gagal (failed) —
-      // tokens_generated & expected_total_tokens dipakai Step3 buat menghitung sisa waktu yang
-      // genuinely bereaksi ke kecepatan generate token — bukan cuma angka tetap dari riwayat.
-      // pollAndFetchResult sendiri sudah men-set aiStatus="completed" & processingStep="done".
-      await pollAndFetchResult(generatedId);
-      setLoading(false);
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg(err.message || "Terjadi kesalahan tidak terduga.");
-      setAiStatus("pending");
-      setProcessingStep("idle");
-      setLoading(false);
-    }
-  };
-
-  const handleNextStep = () => {
-    if (currentStep === 0) setCurrentStep(1);
-    else if (currentStep === 1) setCurrentStep(2);
-    else if (currentStep === 4) setCurrentStep(5);
-  };
-
-  const handleBackStep = () => {
-    if (currentStep === 1) setCurrentStep(0);
-    else if (currentStep === 2) setCurrentStep(1);
-    else if (currentStep === 4) setCurrentStep(2);
-    else if (currentStep === 5) setCurrentStep(4);
-  };
-
-  const handleProceedToEditor = () => {
-    setCurrentStep(4);
-  };
-
-  // Rename inline (pensil di judul, Step 4) — murni simpan nama, tidak memindah step apa pun.
-  const handleRenameTitle = async (newTitle: string) => {
-    const prevTitle = title;
-    setTitle(newTitle);
-    setReportDetails((prev: any) =>
-      prev ? { ...prev, title: newTitle } : prev,
-    );
-    if (!reportId) return;
-    try {
-      const token = localStorage.getItem("token");
-      const authHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (token) authHeaders["Authorization"] = `Bearer ${token}`;
-      const res = await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
-        method: "PUT",
-        headers: authHeaders,
-        body: JSON.stringify({ title: newTitle }),
-      });
-      if (!res.ok) throw new Error("Gagal menyimpan nama laporan.");
-    } catch (e) {
-      console.error(e);
-      setTitle(prevTitle);
-      setReportDetails((prev: any) =>
-        prev ? { ...prev, title: prevTitle } : prev,
-      );
-    }
-  };
-
-  const handleSaveEdits = async () => {
-    if (!reportId) return;
-    setIsSaving(true);
-    setSaveSuccess(false);
-    try {
-      const token = localStorage.getItem("token");
-      const authHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (token) {
-        authHeaders["Authorization"] = `Bearer ${token}`;
-      }
-
-      const res = await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}`, {
-        method: "PUT",
-        headers: authHeaders,
-        body: JSON.stringify({
-          ai_summary: editedSummary,
-        }),
-      });
-      if (res.ok) {
-        setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 2000);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  const w = useGenerateWizard();
+  const { tx, currentStep } = w;
 
   const renderStepCircle = (stepNum: number) => {
     if (currentStep > stepNum) {
@@ -811,130 +49,6 @@ export default function GenerateReportPage() {
       );
     }
   };
-
-  // List Stepper dengan Dukungan Hydration Guard
-  const steps = [
-    {
-      number: 1,
-      title: tx("Upload Data", "Upload Data"),
-      desc: tx(
-        "Upload your security evidence files. Supported formats: PDF, CSV, XLSX",
-        "Upload your security evidence files. Supported formats: PDF, CSV, XLSX",
-      ),
-      icon: (
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.8}
-          stroke="currentColor"
-          className="w-6 h-6 transition-transform duration-300 group-hover:scale-110"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 17.25 4.5H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Z"
-          />
-        </svg>
-      ),
-    },
-    {
-      number: 2,
-      title: tx("Report Settings", "Report Settings"),
-      desc: tx(
-        "Set period, template, format, and other preferences for your report",
-        "Set period, template, format, and other preferences for your report",
-      ),
-      icon: (
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.8}
-          stroke="currentColor"
-          className="w-6 h-6 transition-transform duration-300 group-hover:scale-110"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"
-          />
-        </svg>
-      ),
-    },
-    {
-      number: 3,
-      title: tx("AI Processing", "AI Processing"),
-      desc: tx(
-        "Our AI will analyze the data and generate insights, charts, and summary",
-        "Our AI will analyze the data and generate insights, charts, and summary",
-      ),
-      icon: (
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.8}
-          stroke="currentColor"
-          className="w-6 h-6 transition-transform duration-350 group-hover:rotate-12 group-hover:scale-110"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"
-          />
-        </svg>
-      ),
-    },
-    {
-      number: 4,
-      title: tx("Preview & Edit", "Preview & Edit"),
-      desc: tx(
-        "Review AI generated content and make any necessary edits",
-        "Review AI generated content and make any necessary edits",
-      ),
-      icon: (
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.8}
-          stroke="currentColor"
-          className="w-6 h-6 transition-transform duration-300 group-hover:scale-110"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125"
-          />
-        </svg>
-      ),
-    },
-    {
-      number: 5,
-      title: tx("Export Report", "Export Report"),
-      desc: tx(
-        "Export your report to PDF or PowerPoint format",
-        "Export your report to PDF or PowerPoint format",
-      ),
-      icon: (
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.8}
-          stroke="currentColor"
-          className="w-6 h-6 transition-transform duration-300 group-hover:scale-110"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
-          />
-        </svg>
-      ),
-    },
-  ];
 
   return (
     <div className="min-h-screen bg-petro-bg-warm flex">
@@ -1011,21 +125,31 @@ export default function GenerateReportPage() {
 
           {currentStep > 0 && <hr className="border-stone-200/60 mb-8" />}
 
+          {/* errorMsg sebelumnya cuma dirender di dalam Step3AIProcessing (step 3) - validasi
+              Step 2 (format export/section belum dipilih) yang men-set errorMsg SEBELUM pindah
+              ke step 3 jadi tidak pernah terlihat sama sekali kalau cuma mengandalkan itu.
+              Dirender di sini supaya terlihat di step mana pun errorMsg di-set. */}
+          {w.errorMsg && currentStep !== 3 && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-xs font-semibold text-left mb-6">
+              {w.errorMsg}
+            </div>
+          )}
+
           {/* STEP 0: OVERVIEW / HOW IT WORKS */}
           {currentStep === 0 && (
-            <Step0Overview onStart={() => setCurrentStep(1)} tx={tx} />
+            <Step0Overview onStart={() => w.setCurrentStep(1)} tx={tx} />
           )}
 
           {/* STEP 1: UPLOAD DATA */}
           {currentStep === 1 && (
             <Step1Upload
-              files={files}
-              rawFiles={rawFiles}
-              onFileDrop={handleFileDrop}
-              onFileSelect={handleFileSelect}
-              onFileRemove={handleRemoveFile}
-              onNext={handleNextStep}
-              onBack={handleBackStep}
+              files={w.files}
+              rawFiles={w.rawFiles}
+              onFileDrop={w.handleFileDrop}
+              onFileSelect={w.handleFileSelect}
+              onFileRemove={w.handleRemoveFile}
+              onNext={w.handleNextStep}
+              onBack={w.handleBackStep}
               tx={tx}
             />
           )}
@@ -1033,34 +157,34 @@ export default function GenerateReportPage() {
           {/* STEP 2: REPORT SETTINGS */}
           {currentStep === 2 && (
             <Step2Settings
-              periodStart={periodStart}
-              setPeriodStart={setPeriodStart}
-              periodEnd={periodEnd}
-              setPeriodEnd={setPeriodEnd}
-              periodAutoDetected={periodAutoDetected}
-              periodDetecting={periodDetecting}
-              onPeriodManualEdit={() => setPeriodAutoDetected(false)}
-              language={language}
-              setLanguage={setLanguage}
-              exportFormats={exportFormats}
-              setExportFormats={setExportFormats}
-              sections={sections}
-              setSections={setSections}
-              dynamicSections={dynamicSections}
-              setDynamicSections={setDynamicSections}
-              sectionsLoading={sectionsLoading}
-              headerTitle={headerTitle}
-              setHeaderTitle={setHeaderTitle}
-              headerSubtitle={headerSubtitle}
-              setHeaderSubtitle={setHeaderSubtitle}
-              themeColor={themeColor}
-              setThemeColor={setThemeColor}
-              tone={tone}
-              setTone={setTone}
-              defaultLevel={defaultLevel}
-              setDefaultLevel={setDefaultLevel}
-              onNext={handleStartGeneration}
-              onBack={handleBackStep}
+              periodStart={w.periodStart}
+              setPeriodStart={w.setPeriodStart}
+              periodEnd={w.periodEnd}
+              setPeriodEnd={w.setPeriodEnd}
+              periodAutoDetected={w.periodAutoDetected}
+              periodDetecting={w.periodDetecting}
+              onPeriodManualEdit={() => w.setPeriodAutoDetected(false)}
+              language={w.language}
+              setLanguage={w.setLanguage}
+              exportFormats={w.exportFormats}
+              setExportFormats={w.setExportFormats}
+              sections={w.sections}
+              setSections={w.setSections}
+              dynamicSections={w.dynamicSections}
+              setDynamicSections={w.setDynamicSections}
+              sectionsLoading={w.sectionsLoading}
+              headerTitle={w.headerTitle}
+              setHeaderTitle={w.setHeaderTitle}
+              headerSubtitle={w.headerSubtitle}
+              setHeaderSubtitle={w.setHeaderSubtitle}
+              themeColor={w.themeColor}
+              setThemeColor={w.setThemeColor}
+              tone={w.tone}
+              setTone={w.setTone}
+              defaultLevel={w.defaultLevel}
+              setDefaultLevel={w.setDefaultLevel}
+              onNext={w.handleStartGeneration}
+              onBack={w.handleBackStep}
               tx={tx}
             />
           )}
@@ -1068,18 +192,19 @@ export default function GenerateReportPage() {
           {/* STEP 3: AI PROCESSING */}
           {currentStep === 3 && (
             <Step3AIProcessing
-              aiStatus={aiStatus}
-              processingStep={processingStep}
-              processingStartedAt={processingStartedAt}
-              estimatedSeconds={estimatedSeconds}
-              tokensGenerated={tokensGenerated}
-              expectedTotalTokens={expectedTotalTokens}
-              reportDetails={reportDetails}
-              errorMsg={errorMsg}
-              canRetry={!!reportId}
-              onBack={handleBackStep}
-              onProceed={handleProceedToEditor}
-              onRetry={handleRetryAnalysis}
+              aiStatus={w.aiStatus}
+              processingStep={w.processingStep}
+              processingStartedAt={w.processingStartedAt}
+              estimatedSeconds={w.estimatedSeconds}
+              tokensGenerated={w.tokensGenerated}
+              expectedTotalTokens={w.expectedTotalTokens}
+              reportDetails={w.reportDetails}
+              errorMsg={w.errorMsg}
+              canRetry={!!w.reportId}
+              onBack={w.handleBackStep}
+              onProceed={w.handleProceedToEditor}
+              onRetry={w.handleRetryAnalysis}
+              onCancel={w.handleCancelGeneration}
               tx={tx}
             />
           )}
@@ -1087,29 +212,30 @@ export default function GenerateReportPage() {
           {/* STEP 4: PREVIEW & EDIT */}
           {currentStep === 4 && (
             <Step4PreviewEdit
-              activePage={activePage}
-              setActivePage={setActivePage}
-              activeTab={activeTab}
-              setActiveTab={setActiveTab}
-              isSaving={isSaving}
-              saveSuccess={saveSuccess}
-              language={language}
-              periodStart={periodStart}
-              periodEnd={periodEnd}
-              reportDetails={reportDetails}
-              reportTitle={title}
-              editedSummary={editedSummary}
-              pages={pages}
-              headerTitle={headerTitle}
-              headerSubtitle={headerSubtitle}
-              themeColor={themeColor}
-              getPageText={getPageText}
-              getPageTitle={getPageTitle}
-              handleTextChange={handleTextChange}
-              handleSaveEdits={handleSaveEdits}
-              onBack={handleBackStep}
-              onNext={handleNextStep}
-              onRenameTitle={handleRenameTitle}
+              activePage={w.activePage}
+              setActivePage={w.setActivePage}
+              activeTab={w.activeTab}
+              setActiveTab={w.setActiveTab}
+              isSaving={w.isSaving}
+              saveSuccess={w.saveSuccess}
+              language={w.language}
+              periodStart={w.periodStart}
+              periodEnd={w.periodEnd}
+              reportDetails={w.reportDetails}
+              reportTitle={w.title}
+              editedSummary={w.editedSummary}
+              pages={w.pages}
+              blocks={w.blocks}
+              visualStyle={w.visualStyle}
+              blocksLoading={w.blocksLoading}
+              blocksError={w.blocksError}
+              getPageText={w.getPageText}
+              getPageTitle={w.getPageTitle}
+              handleTextChange={w.handleTextChange}
+              handleSaveEdits={w.handleSaveEdits}
+              onBack={w.handleBackStep}
+              onNext={w.handleNextStep}
+              onRenameTitle={w.handleRenameTitle}
               tx={tx}
             />
           )}
@@ -1117,41 +243,11 @@ export default function GenerateReportPage() {
           {/* STEP 5: EXPORT */}
           {currentStep === 5 && (
             <Step5Export
-              reportId={reportId}
-              reportTitle={title}
-              exportFormats={exportFormats}
-              onReset={() => {
-                setCurrentStep(0);
-                setReportId(null);
-                setReportDetails(null);
-                setEditedSummary({});
-                setAiStatus("pending");
-                setProcessingStep("idle");
-                setProcessingStartedAt(null);
-                setFiles([]);
-                setRawFiles([]);
-                setPeriodStart("");
-                setPeriodEnd("");
-                setPeriodAutoDetected(false);
-                setTemplateType("");
-                setLanguage("English");
-                setIncludeAI(true);
-                setIncludeRaw(true);
-                setDynamicSections([]);
-                setSectionsLoading(false);
-                setHeaderTitle("PT PETROKIMIA GRESIK");
-                setHeaderSubtitle(
-                  "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
-                );
-                setThemeColor("green");
-                setDomainType("general");
-                setTone("Professional");
-                setDefaultLevel("Standard");
-                setSections(
-                  Object.fromEntries(REPORT_SECTIONS.map((s) => [s.key, true])),
-                );
-                setExportFormats({ pdf: false, pptx: false });
-              }}
+              reportId={w.reportId}
+              reportTitle={w.title}
+              exportFormats={w.exportFormats}
+              onReset={w.resetWizard}
+              onBack={w.handleBackStep}
               tx={tx}
             />
           )}

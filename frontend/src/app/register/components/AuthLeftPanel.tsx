@@ -1,18 +1,11 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { t, getLanguage } from "@/utils/i18n";
+import { getLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 
 export default function AuthLeftPanel() {
-  // Pengaman Hidrasi (Hydration Guard) — pola yang sama dipakai di Login/Register/Generate page.
-  // t() baca localStorage secara sinkron, jadi render pertama di client (yang punya localStorage)
-  // bisa beda sama render pertama di server (yang gapunya) kalau langsung dipanggil mentah-mentah.
-  // Dengan guard ini, render pertama di client SAMA PERSIS kayak di server (pakai fallback),
-  // baru abis mount betulan React ganti ke bahasa yang sebenarnya lewat re-render normal.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  // Pengaman Hidrasi (Hydration Guard) — lihat hooks/useTx.ts
+  const { tx } = useTx();
 
   const [lang, setLang] = useState("English");
   useEffect(() => {

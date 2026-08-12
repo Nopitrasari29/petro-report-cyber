@@ -33,8 +33,9 @@ def get_validation_summary(
         created_at=db_report.created_at
     )
 
-    result["period"] = f"{db_report.period_start.strftime('%Y-%m-%d') if db_report.period_start else '2026-07-01'} - {db_report.period_end.strftime('%Y-%m-%d') if db_report.period_end else '2026-07-31'}"
-    result["validation_issues_details"] = result.pop("validation_issues")
-    result["sample_data_preview"] = result.pop("sample_preview")
+    # Fallback ke created_at (selalu relevan) alih-alih tanggal statis hardcode yang makin
+    # terasa aneh begitu waktu berjalan lewat periode yang di-hardcode itu.
+    _fallback_date = db_report.created_at.strftime("%Y-%m-%d") if db_report.created_at else "-"
+    result["period"] = f"{db_report.period_start.strftime('%Y-%m-%d') if db_report.period_start else _fallback_date} - {db_report.period_end.strftime('%Y-%m-%d') if db_report.period_end else _fallback_date}"
 
     return result

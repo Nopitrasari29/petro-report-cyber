@@ -14,11 +14,14 @@ terdeteksi).
 """
 import html
 import io
-import os
-import random
+import logging
+import math
+from dataclasses import dataclass
 
 from app.models.report import Report
-from app.services.report_render_logic import build_report_blocks, is_english
+from app.services.report_render_logic import build_report_blocks, is_english, find_logo_path, get_visual_style
+
+logger = logging.getLogger(__name__)
 
 try:
     from weasyprint import HTML
@@ -72,16 +75,14 @@ SEVERITY_COLOR = {
 
 
 def _resolve_logo_b64() -> str | None:
-    base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public"))
-    for name in ("LOGO_PETRO_DANANTARA.png", "LOGO_PETRO.png"):
-        p = os.path.join(base, name)
-        if os.path.exists(p):
-            try:
-                with open(p, "rb") as f:
-                    return base64_encode(f.read())
-            except Exception:
-                return None
-    return None
+    p = find_logo_path()
+    if not p:
+        return None
+    try:
+        with open(p, "rb") as f:
+            return base64_encode(f.read())
+    except Exception:
+        return None
 
 
 def base64_encode(data: bytes) -> str:
@@ -115,17 +116,15 @@ def _badge_row(number, title, detail, color=GREEN_MAIN, on_dark=False) -> str:
     # xhtml2pdf (fallback engine kalau WeasyPrint tak tersedia) TIDAK support flexbox —
     # dipakai <table> supaya badge+teks sejajar konsisten di kedua engine.
     #
-    # height eksplisit di <table> ini WAJIB (lihat catatan panjang di _card_grid) — kalau
-    # tidak, xhtml2pdf meregangkan badge row ini (bahkan saat ditumpuk sebagai beberapa
-    # <table> terpisah, sudah diuji langsung) supaya total tumpukannya penuh ke sisa tinggi
-    # halaman, membuat jarak antar baris jadi puluhan kali lipat dari margin-bottom aslinya.
-    # Nilai height digenerosikan (bukan pas-pasan) karena detail bisa wrap ke 2 baris.
-    row_h = "42pt" if detail else "24pt"
-    title_color = "#fff" if on_dark else TEXT_DARK
+    # RANCANG ULANG (target WeasyPrint, lihat catatan di _ivory_panel): height eksplisit
+    # dihapus — baris sepadat kontennya (detail panjang wrap bebas tanpa risiko kepotong/
+    # numpuk), jarak antar baris dinaikkan sedikit (14px) supaya senapas dengan spacing
+    # generous di panel-panel lain.
+    title_color = WHITE if on_dark else TEXT_DARK
     detail_color = GOLD_LIGHT if on_dark else GRAY_TEXT
-    detail_html = f'<div style="font-size:9.5pt;color:{detail_color};margin-top:2px;">{_esc(detail)}</div>' if detail else ""
+    detail_html = f'<div style="font-size:9.5pt;color:{detail_color};margin-top:3px;">{_esc(detail)}</div>' if detail else ""
     return (
-        f'<table style="width:100%;height:{row_h};border-collapse:collapse;margin-bottom:8px;" cellpadding="0" cellspacing="0"><tr style="height:{row_h};">'
+        f'<table style="width:100%;border-collapse:collapse;margin-bottom:14px;" cellpadding="0" cellspacing="0"><tr>'
         f'<td style="width:34px;vertical-align:top;padding:0 12px 0 0;">{_badge(number, color)}</td>'
         f'<td style="vertical-align:top;padding:0;">'
         f'<div style="font-weight:700;font-size:11.5pt;color:{title_color};">{_esc(title)}</div>{detail_html}'
@@ -150,19 +149,13 @@ def _bar_chart_html(categories, values, colors=None) -> str:
     # PENTING: fill memakai <table width="{pct}%"> SATU KOLOM (bukan 2 kolom fill+filler)
     # sebab xhtml2pdf memberi rightPadding default non-nol ke kolom filler yang lebarnya
     # nyaris 0 (saat pct=100), menyebabkan availWidth negatif dan crash reportlab.
-    # height eksplisit di <table> DAN tiap <tr> (lihat catatan panjang di _card_grid) — tanpanya
-    # xhtml2pdf meregangkan tiap baris bar chart supaya penuh ke sisa tinggi halaman, membuat
-    # jarak antar bar jadi ratusan pt padahal cuma dirancang ~32pt per baris.
     #
-    # BUG BESAR YANG DIPERBAIKI: `<td>` di sini SEBELUMNYA memakai CSS `padding` (properti,
-    # bukan atribut cellpadding) untuk jarak antar baris ("padding:0 0 8px 0"). Terbukti lewat
-    # isolasi render+sampling: kombinasi CSS `padding` PLUS `height` eksplisit pada baris yang
-    # sama membuat xhtml2pdf membungkus sel itu dalam KeepInFrame mode="shrink" (perilaku
-    # default reportlab utk SEMUA <td>, lihat xhtml2pdf/tables.py) yang MENGECILKAN FONT
-    # drastis (9.5pt jadi ~2-3pt, sampel nyata) supaya konten "muat" — padahal tanpa padding
-    # sama sekali kontennya sudah muat pas di row_h yang sama. Jarak antar baris sekarang
-    # datang dari row_h itu sendiri (baris dilebarkan sedikit, BUKAN dari padding tambahan).
-    row_h = 30
+    # RANCANG ULANG (target WeasyPrint, lihat catatan di _ivory_panel): height eksplisit &
+    # larangan padding vertikal DIHAPUS — WeasyPrint mengukur tinggi baris dari konten asli,
+    # jadi padding di sini AMAN dipakai lagi (dan malah dibutuhkan supaya jarak antar bar
+    # lapang, bukan mepet). Kolom label dilebarkan 100px -> 150px supaya label 2 kata umum
+    # (mis. "Pengadaan Langsung") muat 1 baris — SEBELUMNYA wrap jadi 2 baris & bikin baris
+    # antar-bar terlihat tidak sejajar/rapi.
     max_val = max(values) if values else 1
     rows = []
     for i, (cat, val) in enumerate(zip(categories, values)):
@@ -171,112 +164,157 @@ def _bar_chart_html(categories, values, colors=None) -> str:
         color = colors[i] if colors else GREEN_MAIN
         fill_html = (
             f'<table style="width:{pct}%;" cellpadding="0" cellspacing="0"><tr>'
-            f'<td style="background:{color};height:16px;border-radius:4px;font-size:1px;line-height:16px;">&nbsp;</td>'
+            f'<td style="background:{color};height:18px;border-radius:4px;font-size:1px;line-height:18px;">&nbsp;</td>'
             f'</tr></table>'
             if pct else ""
         )
         rows.append(
-            f'<tr style="height:{row_h}pt;">'
-            f'<td style="width:100px;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;padding:0 8px 0 0;">{_esc(cat)}</td>'
-            f'<td style="vertical-align:middle;padding:0 8px 0 0;">'
+            f'<tr>'
+            f'<td style="width:150px;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;padding:7pt 10pt 7pt 0;">{_esc(cat)}</td>'
+            f'<td style="vertical-align:middle;padding:7pt 10pt 7pt 0;">'
             f'<div style="background:#EEEEEE;border-radius:4px;">{fill_html}</div>'
             f'</td>'
-            f'<td style="width:36px;text-align:right;font-weight:700;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;">{val:g}</td>'
+            f'<td style="width:36px;text-align:right;font-weight:700;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;padding:7pt 0;">{val:g}</td>'
             f'</tr>'
         )
-    total_h = row_h * len(rows)
-    return f'<table style="width:100%;height:{total_h}pt;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
+    return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
 
 
-def _ivory_panel(icon_text, title_text, rows_html, footnote=None, content_rows=0) -> str:
-    # panel_height dihitung dari jumlah baris konten (content_rows, diisi pemanggil) — WAJIB
-    # eksplisit (lihat catatan panjang di _card_grid) karena panel ini <div> BERBACKGROUND
-    # yang dibungkus di dalam halaman ber-height eksplisit penuh 1 halaman; tanpa height
-    # sendiri, div ini (dan baris-baris di dalamnya) diregangkan xhtml2pdf mengisi sisa
-    # tinggi halaman, meninggalkan celah kosong raksasa antar baris.
-    #
-    # BUG BESAR YANG DIPERBAIKI: panel ini membungkus `rows_html` — yang SENDIRI sudah berupa
-    # <table height=X> penuh (dari _ivory_kv_rows/_legend_rows) — di dalam <td> yang JUGA
-    # punya height eksplisit sendiri (panel_h), plus atribut `cellpadding="16"` di level yang
-    # sama. Tabel-di-dalam-tabel yang MASING-MASING punya height eksplisit sendiri TERBUKTI
-    # (isolasi render+sampling) memicu auto-shrink font xhtml2pdf berjenjang (makin banyak
-    # level nesting, makin parah), bahkan ketika total tinggi yang dianggarkan literally lebih
-    # dari cukup di atas kertas. `cellpadding` atribut pada level pembungkus JUGA ikut menambah
-    # shrink (bukan cuma CSS `padding`) — diganti margin pada <div> pembungkus di dalam <td>
-    # (margin pada div terbukti jauh lebih ringan dampaknya). panel_h juga dilonggarkan dengan
-    # margin aman ekstra supaya sisa shrink yang masih terjadi (bawaan reportlab utk tabel
-    # bersarang, tidak bisa dihilangkan 100%) tetap menyisakan ukuran font yang terbaca.
+def _stacked_proportion_bar_html(values, colors=None, height_px=46) -> str:
+    """Alternatif visual KETIGA (selain _bar_chart_html/_donut_chart_svg) — satu batang
+    penuh dibagi proporsional per kategori (gaya "100% stacked bar"), dipasangkan dengan
+    panel legend eksternal (sama seperti pola donut, lihat pemanggilnya) — titik variasi
+    tampilan tambahan supaya laporan tidak melulu bar-per-baris atau donut. Segmen dibangun
+    dari <table style="width:{pct}%"> BERJAJAR SATU BARIS (trik lebar-persen yang sama
+    dengan _bar_chart_html — BUKAN flexbox, yang belum pernah dites di file ini)."""
+    total = sum(values) or 1
+    cells = []
+    for i, val in enumerate(values):
+        pct = (val / total * 100) if total else 0
+        color = colors[i] if colors else CATEGORY_COLOR_RAMP[i % len(CATEGORY_COLOR_RAMP)]
+        if pct > 0:
+            cells.append(
+                f'<td style="width:{pct:.3f}%;background:{color};height:{height_px}px;'
+                f'font-size:1px;line-height:1px;">&nbsp;</td>'
+            )
+    bar_html = (
+        f'<div style="border-radius:10px;overflow:hidden;">'
+        f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">'
+        f'<tr>{"".join(cells)}</tr></table></div>'
+    )
+    return f'<div style="padding:14pt 0;">{bar_html}</div>'
+
+
+def _donut_chart_svg(values, colors=None, size=210, stroke_w=36) -> str:
+    """Alternatif visual utk distribusi kategori (selain _bar_chart_html) — titik variasi
+    tampilan antar generate (lihat `category_style` di generate_pdf_report), BUKAN
+    penggantian permanen. Donut cincin dibangun dari beberapa <circle> bertumpuk dengan
+    stroke-dasharray/-dashoffset (trik SVG standar), bukan wedge/pie asli — lebih sederhana &
+    hasilnya tetap rapi utk kategori sampai ~6 nilai. SVG dirender native oleh WeasyPrint,
+    tidak perlu library chart eksternal (Kaleido/Plotly SENGAJA tidak dipakai lagi di file
+    ini, lihat docstring atas)."""
+    total = sum(values) or 1
+    r = (size - stroke_w) / 2
+    cx = cy = size / 2
+    circumference = 2 * math.pi * r
+    segments = []
+    offset = 0.0
+    for i, val in enumerate(values):
+        frac = val / total if total else 0
+        dash = frac * circumference
+        color = colors[i] if colors else CATEGORY_COLOR_RAMP[i % len(CATEGORY_COLOR_RAMP)]
+        if dash > 0:
+            segments.append(
+                f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="{color}" '
+                f'stroke-width="{stroke_w}" stroke-dasharray="{dash:.2f} {circumference - dash:.2f}" '
+                f'stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 {cx} {cy})" />'
+            )
+        offset += dash
+    labels = (
+        f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" font-size="28" font-weight="700" '
+        f'fill="{TEXT_DARK}" font-family="{BODY_FONT}">{total:g}</text>'
+        f'<text x="{cx}" y="{cy + 18}" text-anchor="middle" font-size="10.5" fill="{GRAY_TEXT}" '
+        f'font-family="{BODY_FONT}">Total</text>'
+    )
+    svg = (
+        f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" '
+        f'xmlns="http://www.w3.org/2000/svg">{"".join(segments)}{labels}</svg>'
+    )
+    return f'<div style="text-align:center;padding:14pt 0;">{svg}</div>'
+
+
+def _ivory_panel(icon_text, title_text, rows_html, footnote=None) -> str:
+    # RANCANG ULANG (target WeasyPrint, engine utama sejak WeasyPrint aktif — lihat
+    # FONT_ATTR_QUOTE_BUG_NOTE di atas untuk riwayat kenapa file ini tadinya penuh workaround
+    # height eksplisit): dikonfirmasi lewat isolasi render+sampling bahwa WeasyPrint (BEDA dari
+    # xhtml2pdf) menangani tabel bersarang TANPA height eksplisit dengan BENAR — tiap baris
+    # tingginya mengikuti konten aslinya (baris pendek tetap pendek, baris dengan value panjang
+    # wrap otomatis jadi lebih tinggi), dan TIDAK diregangkan mengisi sisa halaman. Jadi seluruh
+    # height eksplisit/row_budget dihapus di sini — panel jadi SEPADAT kontennya sendiri (bukan
+    # dipaksa setinggi anggaran terburuk), sekaligus menghindari kelas bug shrink xhtml2pdf sama
+    # sekali karena tidak ada lagi kombinasi padding+height eksplisit di mana pun dalam fungsi ini.
     footnote_html = ""
-    footnote_h = 0
     if footnote:
-        footnote_h = 36
         footnote_html = (
             f'<div style="border-top:1px solid {PANEL_BORDER};margin-top:12px;padding-top:10px;'
             f'font-size:8.5pt;font-style:italic;color:{GRAY_TEXT};">{_esc(footnote)}</div>'
         )
     header_html = (
-        f'<table style="width:100%;height:24pt;margin-bottom:10px;" cellpadding="0" cellspacing="0"><tr style="height:24pt;">'
+        f'<table style="width:100%;margin-bottom:10px;" cellpadding="0" cellspacing="0"><tr>'
         f'<td style="width:30px;vertical-align:middle;">{_badge(icon_text, GOLD_MAIN, size="22px", font_size="9pt")}</td>'
         f'<td style="vertical-align:middle;padding:0 0 0 6px;">'
         f'<span style="font-weight:700;font-size:10.5pt;color:{GREEN_MAIN};text-transform:uppercase;">{_esc(title_text)}</span>'
         f'</td></tr></table>'
     )
-    row_budget = 36
-    panel_h = 30 + max(content_rows, 1) * row_budget + footnote_h + 34
+    # BUG BESAR YANG DIPERBAIKI: atribut HTML `cellpadding` TERBUKTI (isolasi render+sampling,
+    # ekstraksi posisi teks aktual dari PDF) TIDAK dihormati WeasyPrint di sini — konten panel
+    # menempel rata ke tepi border/rounded-corner (inset 0), bukan diberi jarak 16px seperti
+    # diminta. Diganti CSS `padding` langsung pada <td> (didukung penuh & terverifikasi benar).
     return (
-        f'<table style="width:100%;height:{panel_h}pt;background:{IVORY};border:1px solid {PANEL_BORDER};border-radius:10px;">'
-        f'<tr style="height:{panel_h}pt;"><td style="vertical-align:top;">'
-        f'<div style="margin:12pt;">{header_html}{rows_html}{footnote_html}</div></td></tr></table>'
+        f'<table style="width:100%;background:{IVORY};border:1px solid {PANEL_BORDER};border-radius:10px;">'
+        f'<tr><td style="vertical-align:top;padding:16pt;">{header_html}{rows_html}{footnote_html}</td></tr></table>'
     )
 
 
 def _ivory_kv_rows(rows) -> str:
-    # BUG BESAR YANG DIPERBAIKI (sama seperti _bar_chart_html di atas): `<td>` di sini SEBELUMNYA
-    # memakai CSS `padding:0 0 10px 0` sebagai jarak antar baris — dikombinasikan dengan `height`
-    # eksplisit pada `<tr>`, ini men-trigger auto-shrink KeepInFrame xhtml2pdf (font 9.5pt yang
-    # diminta kode dirender ~1.8pt di PDF sungguhan, dibuktikan lewat ekstraksi ukuran font
-    # aktual dari PDF hasil render, BUKAN cuma dugaan). Padding DIHAPUS total; jarak antar baris
-    # sekarang murni dari row_h (dinaikkan ke 36pt — lebih longgar dari perkiraan wajar 32pt —
-    # supaya menyisakan margin aman terhadap sisa auto-shrink bawaan reportlab utk tabel
-    # bersarang di dalam _ivory_panel, yang tidak bisa dihilangkan 100% walau padding sudah nol.
-    # HARUS tetap SAMA dengan row_budget di _ivory_panel supaya panel_h yang dihitung di sana
-    # benar-benar sepadan dengan tinggi rows_html sungguhan yang dibangun di sini).
-    row_h = 36
+    # RANCANG ULANG: SEBELUMNYA label & value ditumpuk 2 baris per row (judul tebal, lalu value
+    # di baris baru) — makan 2x tinggi vertikal dibanding perlu, dan bikin panel terlihat lebih
+    # kosong/boros dibanding referensi. Sekarang label & value SEJAJAR dalam SATU baris (kolom
+    # label lebar tetap, kolom value mengisi sisa lebar & wrap alami kalau panjang) — pola
+    # "spec sheet" yang jauh lebih padat & rapi, sekaligus otomatis lebih pendek utk value
+    # singkat (mis. "42 data") tanpa perlu tinggi baris tetap yang boros.
     trs = "".join(
-        f'<tr style="height:{row_h}pt;"><td style="vertical-align:top;">'
-        f'<div style="font-size:9.5pt;font-weight:700;color:{GREEN_MAIN};">{_esc(label)}</div>'
-        f'<div style="font-size:9.5pt;color:{GRAY_TEXT};">{_esc(value)}</div></td></tr>'
+        f'<tr>'
+        f'<td style="width:118px;vertical-align:top;padding:5pt 10pt 5pt 0;font-size:9.5pt;font-weight:700;color:{GREEN_MAIN};">{_esc(label)}</td>'
+        f'<td style="vertical-align:top;padding:5pt 0;font-size:9.5pt;color:{GRAY_TEXT};">{_esc(value)}</td>'
+        f'</tr>'
         for label, value in rows
     )
-    total_h = row_h * len(rows)
-    return f'<table style="width:100%;height:{total_h}pt;border-collapse:collapse;" cellpadding="0" cellspacing="0">{trs}</table>'
+    return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{trs}</table>'
 
 
 def _legend_rows(rows) -> str:
-    # Padding vertikal DIHAPUS (lihat catatan panjang di _ivory_kv_rows — kombinasi CSS padding
-    # + height eksplisit memicu auto-shrink font xhtml2pdf); row_h dinaikkan sebagai gantinya
-    # (dan sebagai margin aman thd shrink residual dari nesting di dalam _ivory_panel). HARUS
-    # sama dengan row_budget di _ivory_panel (lihat catatan di _ivory_kv_rows).
-    row_h = 36
     parts = []
     for color, label, pct in rows:
         parts.append(
-            f'<tr style="height:{row_h}pt;">'
-            f'<td style="width:16px;vertical-align:middle;">'
+            f'<tr>'
+            f'<td style="width:16px;vertical-align:middle;padding:6pt 0;">'
             f'<table cellpadding="0" cellspacing="0"><tr><td style="width:12px;height:12px;background:{color};font-size:1px;line-height:1px;">&nbsp;</td></tr></table>'
             f'</td>'
-            f'<td style="padding:0 8px 0 8px;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;">{_esc(label)}</td>'
-            f'<td style="text-align:right;font-weight:700;font-size:9.5pt;color:{GREEN_MAIN};vertical-align:middle;">{_esc(pct)}</td>'
+            f'<td style="padding:6pt 8pt;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;">{_esc(label)}</td>'
+            f'<td style="text-align:right;font-weight:700;font-size:9.5pt;color:{GREEN_MAIN};vertical-align:middle;padding:6pt 0;">{_esc(pct)}</td>'
             f'</tr>'
         )
-    total_h = row_h * len(rows)
-    return f'<table style="width:100%;height:{total_h}pt;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(parts)}</table>'
+    return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(parts)}</table>'
 
 
-def _dark_panel(inner_html, panel_h, w="100%") -> str:
+def _dark_panel(inner_html, w="100%") -> str:
+    # RANCANG ULANG (target WeasyPrint) — height eksplisit dihapus, panel sepadat kontennya.
+    # cellpadding (atribut HTML) diganti CSS `padding` langsung — lihat catatan di _ivory_panel
+    # soal cellpadding TERBUKTI tidak dihormati WeasyPrint (konten menempel ke border).
     return (
-        f'<table style="width:{w};height:{panel_h}pt;background:{GREEN_BG};border:1px solid {GOLD_MAIN};border-radius:10px;" cellpadding="18">'
-        f'<tr style="height:{panel_h}pt;"><td style="vertical-align:top;">{inner_html}</td></tr></table>'
+        f'<table style="width:{w};background:{GREEN_BG};border:1px solid {GOLD_MAIN};border-radius:10px;">'
+        f'<tr><td style="vertical-align:top;padding:18pt;">{inner_html}</td></tr></table>'
     )
 
 
@@ -287,8 +325,7 @@ def _critical_highlight_panel(pct_text, sub_text, detail_text=None) -> str:
         f'<div style="text-align:center;font-size:10.5pt;color:#fff;margin-top:6px;">{_esc(sub_text)}</div>'
         f'{detail_html}'
     )
-    panel_h = 140 if detail_text else 90
-    return _dark_panel(inner, panel_h)
+    return _dark_panel(inner)
 
 
 def _ai_insight_strip(text) -> str:
@@ -299,38 +336,23 @@ def _ai_insight_strip(text) -> str:
 
 
 def _priority_panel(title_text, items) -> str:
-    # padding vertikal DIHAPUS dari <td> teks (lihat catatan panjang di _ivory_kv_rows) —
-    # jarak baris murni dari row_h, vertical-align:middle menyejajarkan badge & teks.
-    #
-    # BUG BESAR YANG DIPERBAIKI: panel ini SEBELUMNYA dibangun lewat `_dark_panel()` yang
-    # memakai atribut `cellpadding="18"` pada <table> pembungkus PLUS `rows_table` di dalamnya
-    # (tabel bersarang) yang JUGA punya height eksplisit sendiri — kombinasi tabel-di-dalam-
-    # tabel + cellpadding inilah yang membuat teks prioritas tampil sangat kecil & saling
-    # tumpang tindih di PDF sebelumnya (dibuktikan lewat isolasi render+sampling, sama seperti
-    # _ivory_panel). TIDAK memakai `_dark_panel()`/cellpadding di sini — inset panel sekarang
-    # dari margin pada <div> pembungkus (jauh lebih ringan dampaknya thd auto-shrink), dan
-    # row_h dilonggarkan sebagai margin aman tambahan thd shrink residual bawaan reportlab
-    # utk tabel bersarang yang tidak bisa dihilangkan 100%.
-    row_h = 44
+    # RANCANG ULANG (target WeasyPrint, lihat catatan di _ivory_panel) — height eksplisit
+    # dihapus di semua level, padding antar baris dipakai langsung (aman sekarang karena tidak
+    # ada lagi height eksplisit yang bisa dikombinasikan jadi trigger shrink xhtml2pdf), dan
+    # panel dibangun lewat `_dark_panel()` yang sama dipakai panel gelap lain (konsisten).
     rows = "".join(
-        f'<tr style="height:{row_h}pt;">'
-        f'<td style="width:32px;vertical-align:middle;">{_badge(letter, GOLD_MAIN, size="24px", font_size="10pt")}</td>'
-        f'<td style="vertical-align:middle;padding:0 0 0 10px;font-size:10.5pt;color:#fff;">{_esc(text)}</td>'
+        f'<tr>'
+        f'<td style="width:32px;vertical-align:top;padding:9pt 0;">{_badge(letter, GOLD_MAIN, size="24px", font_size="10pt")}</td>'
+        f'<td style="vertical-align:top;padding:9pt 0 9pt 10px;font-size:10.5pt;color:#fff;">{_esc(text)}</td>'
         f'</tr>'
         for letter, text in items
     )
-    rows_h_total = row_h * max(len(items), 1)
-    rows_table = f'<table style="width:100%;height:{rows_h_total}pt;border-collapse:collapse;" cellpadding="0" cellspacing="0">{rows}</table>'
-    title_h = 30
+    rows_table = f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{rows}</table>'
     inner = (
         f'<div style="font-size:9.5pt;font-weight:700;letter-spacing:1px;text-transform:uppercase;'
-        f'color:{GOLD_MAIN};margin-bottom:14px;">{_esc(title_text)}</div>{rows_table}'
+        f'color:{GOLD_MAIN};margin-bottom:6px;">{_esc(title_text)}</div>{rows_table}'
     )
-    panel_h = 32 + title_h + max(len(items), 1) * row_h
-    return (
-        f'<table style="width:100%;height:{panel_h}pt;background:{GREEN_BG};border:1px solid {GOLD_MAIN};border-radius:10px;">'
-        f'<tr style="height:{panel_h}pt;"><td style="vertical-align:top;"><div style="margin:16pt;">{inner}</div></td></tr></table>'
-    )
+    return _dark_panel(inner)
 
 
 def _pill(text) -> str:
@@ -341,80 +363,52 @@ def _pill(text) -> str:
     )
 
 
-def _pt(value: str) -> float:
-    """Konversi string ukuran CSS ("1.3in", "24pt", "12px") ke float point — dipakai supaya
-    height TOTAL sebuah <table> bisa dihitung dari height PER-BARIS yang mungkin ditulis dalam
-    satuan apa pun oleh pemanggil, tanpa mengasumsikan semuanya sudah dalam pt."""
-    value = value.strip()
-    if value.endswith("in"):
-        return float(value[:-2]) * 72
-    if value.endswith("px"):
-        return float(value[:-2]) * 0.75
-    if value.endswith("pt"):
-        return float(value[:-2])
-    return float(value)
-
-
-def _card_grid(cell_inner_htmls: list, cols: int, row_height: str | None = None) -> str:
+def _card_grid(cell_inner_htmls: list, cols: int) -> str:
     """Susun daftar HTML kartu jadi grid N kolom pakai <table> (bukan flexbox/grid CSS —
     tidak didukung xhtml2pdf, fallback engine kalau WeasyPrint tak tersedia).
 
-    `row_height` (kalau diisi) diterapkan sebagai height EKSPLISIT pada <td> pembungkus tiap
-    kartu — WAJIB kalau grid ini dipakai di dalam halaman yang latarnya di-cat lewat <td
-    height="..."> penuh 1 halaman (lihat _page()): xhtml2pdf TERBUKTI (diuji langsung, isolasi
-    render+sampling) meregangkan <table> BERSARANG tanpa height eksplisit supaya penuh ke
-    seluruh ruang vertikal ANCESTOR yang punya height eksplisit gede, walau kontennya cuma
-    2-3 baris — height eksplisit di sini (dan di <table> kartu itu sendiri) MEMATAHKAN
-    peregangan itu, kartu kembali sepadat kontennya.
-
-    BUG BESAR YANG DIPERBAIKI: <td> pembungkus SEBELUMNYA memakai CSS `padding:6px` (termasuk
-    atas/bawah) bersamaan dengan height eksplisit — kombinasi ini men-trigger auto-shrink font
-    xhtml2pdf yang sama seperti di _ivory_kv_rows/_bar_chart_html (dibuktikan lewat isolasi
-    render+sampling). Padding vertikal dihapus (cuma sisakan horizontal utk jarak antar kolom);
-    jarak antar BARIS kartu sekarang datang dari gap eksplisit yang ditambahkan ke row_height
-    per baris. Table & <tr> LUAR di sini SEBELUMNYA juga tidak punya height eksplisit sama
-    sekali (cuma <td> di dalamnya) — itu sendiri bug terpisah: tanpa height pada <tr>/<table>
-    di level INI, xhtml2pdf meregangkan BARIS GRID (bukan cuma kartunya) mengisi sisa tinggi
-    halaman, meninggalkan celah kosong raksasa di bawah grid (mis. antara kartu KPI Ringkasan
-    Eksekutif & caption di bawahnya) — sekarang total height dihitung & diterapkan eksplisit
-    di <table> DAN tiap <tr> juga, konsisten dengan pola aman yang dipakai di seluruh file ini.
+    RANCANG ULANG (target WeasyPrint, lihat catatan di _ivory_panel): height eksplisit &
+    workaround gap-lewat-row_height DIHAPUS — cukup andalkan perilaku standar tabel HTML:
+    tiap baris otomatis setinggi kartu TERTINGGI di baris itu (bukan tinggi tetap sepihak),
+    dan kartu-kartu dengan konten pendek TIDAK LAGI dipaksa setinggi kartu dengan konten
+    terpanjang yang mungkin pernah ada — mengurangi ruang kosong raksasa dalam kartu jauh
+    lebih baik daripada budget height tetap manapun. Jarak antar baris dari margin-bottom
+    pada kartu itu sendiri (lihat _stat_card_grid/_asset_card_row), bukan dari grid ini.
     """
-    col_w = round(100 / cols, 3)
-    row_gap_pt = 12
-    cell_h_pt = _pt(row_height) + row_gap_pt if row_height else None
-    height_style = f"height:{cell_h_pt}pt;" if cell_h_pt else ""
-    cells = [f'<td style="width:{col_w}%;padding:0 6px;vertical-align:top;{height_style}">{inner}</td>' for inner in cell_inner_htmls]
+    # BUG DIPERBAIKI: kartu dengan jumlah item < cols (mis. tepat 1 rekomendasi/1 stat) dulu
+    # tetap dihitung sebagai 1-dari-N kolom (mis. 33% lebar utk grid 3-kolom), menyisakan
+    # sel kosong di sampingnya — kartu jadi sempit di tengah ruang lebar yang tidak terisi.
+    # effective_cols dihitung dari jumlah item SEBENARNYA (dibatasi max `cols`) supaya kartu
+    # melebar mengisi ruang yang tersedia kalau totalnya lebih sedikit dari kolom yang diminta.
+    effective_cols = min(cols, len(cell_inner_htmls)) or cols
+    col_w = round(100 / effective_cols, 3)
+    cells = [f'<td style="width:{col_w}%;padding:0 6px;vertical-align:top;">{inner}</td>' for inner in cell_inner_htmls]
     rows = []
-    for i in range(0, len(cells), cols):
-        row_cells = cells[i:i + cols]
-        while len(row_cells) < cols:
+    for i in range(0, len(cells), effective_cols):
+        row_cells = cells[i:i + effective_cols]
+        while len(row_cells) < effective_cols:
             row_cells.append(f'<td style="width:{col_w}%;"></td>')
-        row_style = f' style="height:{cell_h_pt}pt;"' if cell_h_pt else ""
-        rows.append(f'<tr{row_style}>{"".join(row_cells)}</tr>')
-    n_rows = -(-len(cell_inner_htmls) // cols)  # ceil division
-    table_h_style = f"height:{cell_h_pt * n_rows}pt;" if cell_h_pt else ""
-    return f'<table style="width:100%;{table_h_style}border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
+        rows.append(f'<tr>{"".join(row_cells)}</tr>')
+    return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
 
 
 def _stat_card_grid(items, cols=3, dark=True) -> str:
     bg = GREEN_MAIN if dark else IVORY
-    label_color = "#fff" if dark else TEXT_DARK
-    card_height = "1.3in"
+    label_color = WHITE if dark else TEXT_DARK
     cell_htmls = [
-        f'<table style="width:100%;height:{card_height};background:{bg};border:1px solid {GOLD_MAIN};border-radius:10px;" cellpadding="14"><tr><td style="text-align:center;vertical-align:middle;">'
+        f'<table style="width:100%;min-height:1.15in;margin-bottom:12pt;background:{bg};border:1px solid {GOLD_MAIN};border-radius:10px;"><tr><td style="text-align:center;vertical-align:middle;padding:14pt;">'
         f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:22pt;color:{GOLD_MAIN};">{_esc(value)}</div>'
         f'<div style="font-size:9pt;color:{label_color};margin-top:6px;">{_esc(label)}</div>'
         f'</td></tr></table>'
         for value, label in items
     ]
-    return _card_grid(cell_htmls, cols, row_height=card_height)
+    return _card_grid(cell_htmls, cols)
 
 
 def _asset_card_row(items) -> str:
     n = len(items) or 1
-    card_height = "2.6in"
     cell_htmls = [
-        f'<table style="width:100%;height:{card_height};background:{GREEN_MAIN};border:1px solid {GOLD_MAIN};border-radius:10px;" cellpadding="16"><tr><td style="vertical-align:top;">'
+        f'<table style="width:100%;background:{GREEN_MAIN};border:1px solid {GOLD_MAIN};border-radius:10px;"><tr><td style="vertical-align:top;padding:18pt;">'
         f'{_badge(num, GOLD_MAIN, size="34px", font_size="13pt")}'
         f'<div style="font-weight:700;font-size:12.5pt;color:#fff;margin-top:12px;">{_esc(title)}</div>'
         f'<div style="font-weight:700;font-size:10.5pt;color:{GOLD_MAIN};margin-top:4px;">{_esc(stat)}</div>'
@@ -422,59 +416,188 @@ def _asset_card_row(items) -> str:
         f'</td></tr></table>'
         for num, title, stat, desc in items
     ]
-    return _card_grid(cell_htmls, n, row_height=card_height)
+    return _card_grid(cell_htmls, n)
 
 
-def _two_col(left_html, right_html, left_pct=58, h=370) -> str:
+def _asset_ranked_bars_html(items) -> str:
+    """Alternatif visual KETIGA (selain _asset_card_row/_podium_row) — daftar entitas
+    berperingkat dengan batang proporsional horizontal per item (badge nomor + nama + batang
+    + angka), BUKAN kartu kotak atau podium — titik variasi tampilan tambahan utk asset_cards
+    (lihat `asset_style`). Dipakai utk jumlah item BERAPA PUN (podium hanya cocok tepat 3)."""
+    max_count = max((it.get("count") or 0) for it in items) or 1
+    rows = []
+    for it in items:
+        pct = round((it.get("count") or 0) / max_count * 100, 1)
+        pct = max(pct, 4)
+        rows.append(
+            f'<tr><td style="padding:12pt 0;">'
+            f'<table style="width:100%;" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="width:40px;vertical-align:middle;">{_badge(it["num"], GOLD_MAIN, size="32px", font_size="12pt")}</td>'
+            f'<td style="vertical-align:middle;padding:0 14pt;">'
+            f'<div style="font-weight:700;font-size:12pt;color:#fff;margin-bottom:8px;">{_esc(it["name"])}</div>'
+            f'<table style="width:100%;background:{GREEN_CHART};border-radius:5px;" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="width:{pct}%;">'
+            f'<table style="width:100%;" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="background:{GOLD_MAIN};height:12px;border-radius:5px;font-size:1px;line-height:1px;">&nbsp;</td>'
+            f'</tr></table></td>'
+            f'<td></td>'
+            f'</tr></table>'
+            f'</td>'
+            f'<td style="width:95px;text-align:right;vertical-align:middle;font-weight:700;font-size:12pt;color:{GOLD_MAIN};">{_esc(it["stat"])}</td>'
+            f'</tr></table>'
+            f'</td></tr>'
+        )
+    return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
+
+
+def _podium_row(items) -> str:
+    """Alternatif visual utk top-3 entitas (asset_cards) — titik variasi tampilan (lihat
+    `asset_style` di generate_pdf_report), BUKAN penggantian permanen. items: list of dict
+    {"num","name","stat"} — dirender sebagai podium (rank 1 di tengah & paling tinggi, gaya
+    "sorotan performa" mirip laporan KPI/produksi), bukan 3 kartu sejajar sama besar."""
+    ranked = sorted(items, key=lambda it: int(it["num"]))[:3]
+    if len(ranked) == 3:
+        ranked = [ranked[1], ranked[0], ranked[2]]  # tampil: 2, 1, 3 (podium)
+    heights_pt = {"1": 130, "2": 95, "3": 72}
+    colors = {"1": GOLD_MAIN, "2": GREEN_MAIN, "3": GREEN_CHART}
+    col_pct = round(100 / max(len(ranked), 1), 3)
+    cells = []
+    for it in ranked:
+        h = heights_pt.get(it["num"], 80)
+        color = colors.get(it["num"], GREEN_MAIN)
+        cells.append(
+            f'<td style="width:{col_pct}%;vertical-align:bottom;text-align:center;padding:0 10pt;">'
+            f'<div style="font-weight:700;font-size:12pt;color:{TEXT_DARK};">{_esc(it["name"])}</div>'
+            f'<div style="font-weight:700;font-size:13pt;color:{GREEN_MAIN};margin-bottom:12pt;">{_esc(it["stat"])}</div>'
+            f'<div style="background:{color};border-radius:8pt 8pt 0 0;height:{h}pt;">'
+            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;'
+            f'text-align:center;line-height:{h}pt;">{_esc(it["num"])}</div>'
+            f'</div></td>'
+        )
+    return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0"><tr>{"".join(cells)}</tr></table>'
+
+
+def _timeline_html(items, container_h_pt=230) -> str:
+    """Alternatif visual utk daftar rekomendasi (kartu grid) — titik variasi tampilan (lihat
+    `recommendation_style` di generate_pdf_report). items: list of dict {"num","title",
+    "detail"}, dirender sebagai roadmap horizontal: garis + node bulat bernomor, label
+    berselang-seling di atas/bawah garis (gaya "tindak lanjut" laporan eksekutif). Posisi
+    dihitung via CSS transform:translate (dikonfirmasi didukung WeasyPrint lewat isolasi
+    render+sampling), BUKAN <table> — perlu node yang duduk TEPAT di tengah satu garis
+    horizontal kontinu, sesuatu yang tidak bisa dicapai rapi dengan tabel kolom."""
+    n = len(items) or 1
+    line_y = container_h_pt / 2
+    parts = [f'<div style="position:relative;height:{container_h_pt}pt;margin-top:10pt;">']
+    parts.append(
+        f'<div style="position:absolute;left:3%;right:3%;top:{line_y}pt;height:2pt;background:{GOLD_MAIN};"></div>'
+    )
+    col_w_pct = 100 / n
+    for i, it in enumerate(items):
+        cx_pct = round((i + 0.5) / n * 100, 3)
+        above = (i % 2 == 0)
+        node_color = GOLD_MAIN if i == 0 else GREEN_MAIN
+        parts.append(
+            f'<div style="position:absolute;left:{cx_pct}%;top:{line_y}pt;transform:translate(-50%,-50%);'
+            f'width:24pt;height:24pt;border-radius:50%;background:{node_color};color:#fff;text-align:center;'
+            f'line-height:24pt;font-weight:700;font-size:10.5pt;">{_esc(it["num"])}</div>'
+        )
+        detail_html = f'<div style="font-size:8.5pt;color:{GRAY_TEXT};margin-top:3pt;">{_esc(it["detail"])}</div>' if it.get("detail") else ""
+        content_html = f'<div style="font-weight:700;font-size:10pt;color:{TEXT_DARK};">{_esc(it["title"])}</div>{detail_html}'
+        stem_h = 20
+        if above:
+            parts.append(
+                f'<div style="position:absolute;left:{cx_pct}%;top:{line_y - stem_h}pt;height:{stem_h}pt;'
+                f'width:1pt;background:{PANEL_BORDER};transform:translateX(-50%);"></div>'
+            )
+            parts.append(
+                f'<div style="position:absolute;left:{cx_pct}%;top:0;width:{col_w_pct}%;height:{line_y - stem_h - 4}pt;'
+                f'transform:translateX(-50%);text-align:center;display:table;">'
+                f'<div style="display:table-cell;vertical-align:bottom;">{content_html}</div></div>'
+            )
+        else:
+            parts.append(
+                f'<div style="position:absolute;left:{cx_pct}%;top:{line_y}pt;height:{stem_h}pt;'
+                f'width:1pt;background:{PANEL_BORDER};transform:translateX(-50%);"></div>'
+            )
+            parts.append(
+                f'<div style="position:absolute;left:{cx_pct}%;top:{line_y + stem_h + 4}pt;width:{col_w_pct}%;'
+                f'transform:translateX(-50%);text-align:center;">{content_html}</div>'
+            )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _recommendation_banner_list_html(items) -> str:
+    """Alternatif visual KETIGA (selain grid kartu/_timeline_html) — daftar rekomendasi
+    sebagai banner selebar halaman bertumpuk vertikal (badge nomor + judul + detail),
+    berselang-seling warna latar tipis — titik variasi tampilan tambahan utk recommendations
+    (lihat `recommendation_style`), dipakai utk jumlah item BERAPA PUN (timeline dibatasi 2-6)."""
+    rows = []
+    for idx, it in enumerate(items):
+        bg = IVORY if idx % 2 == 0 else WHITE
+        detail_html = (
+            f'<div style="font-size:10pt;color:{GRAY_TEXT};margin-top:4px;">{_esc(it["detail"])}</div>'
+            if it.get("detail") else ""
+        )
+        rows.append(
+            f'<table style="width:100%;background:{bg};border-left:4px solid {GOLD_MAIN};margin-bottom:10pt;" cellpadding="0" cellspacing="0">'
+            f'<tr><td style="width:52px;vertical-align:top;padding:14pt 0 14pt 16pt;">{_badge(it["num"], GREEN_MAIN, size="32px", font_size="12pt")}</td>'
+            f'<td style="vertical-align:top;padding:14pt 16pt 14pt 12pt;">'
+            f'<div style="font-weight:700;font-size:12.5pt;color:{TEXT_DARK};">{_esc(it["title"])}</div>'
+            f'{detail_html}'
+            f'</td></tr></table>'
+        )
+    return "".join(rows)
+
+
+def _two_col(left_html, right_html, left_pct=58) -> str:
     """Layout 2-kolom pakai <table> (bukan flexbox — tidak didukung xhtml2pdf).
 
-    BUG BESAR YANG DIPERBAIKI: <table> ini SEBELUMNYA tidak punya height eksplisit sama
-    sekali. Terbukti lewat isolasi render+sampling: <td> TANPA height eksplisit yang dipakai
-    utk layout 2 kolom di dalam halaman ber-height eksplisit (_page()) TETAP memicu auto-
-    shrink font xhtml2pdf pada isi kedua kolom (bukan cuma "meregang", seperti dugaan awal) —
-    kolom kiri & kanan yang sama sekali TIDAK dinaikkan/diubah rendernya jadi ~90% ukuran
-    normal begitu dibungkus _two_col TANPA height, dan ANJLOK lebih jauh lagi kalau salah satu
-    kolom sendiri berisi tabel bersarang (mis. panel ivory). Memberi height eksplisit yang
-    longgar (430pt, mendekati tinggi konten maksimum yang tersedia di halaman 7.5in setelah
-    margin+kicker+judul) MENGHILANGKAN shrink ini di kasus normal."""
+    RANCANG ULANG (target WeasyPrint, lihat catatan di _ivory_panel): height eksplisit
+    dihapus — dulu WAJIB karena xhtml2pdf men-shrink isi kolom tanpa height eksplisit di sini
+    (dibuktikan lewat isolasi render+sampling), tapi WeasyPrint mengukur tinggi baris tabel
+    dari konten kedua kolom secara normal (tanpa shrink/stretch), jadi kolom sekarang setinggi
+    kontennya sendiri — kalau salah satu kolom lebih pendek (mis. panel ivory vs bar chart
+    panjang), itu wajar & lebih rapi daripada dipaksa sama tinggi dengan ruang kosong."""
     right_pct = 100 - left_pct
     return (
-        f'<table style="width:100%;height:{h}pt;border-collapse:collapse;" cellpadding="0" cellspacing="0"><tr style="height:{h}pt;">'
+        f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0"><tr>'
         f'<td style="width:{left_pct}%;vertical-align:top;padding-right:16px;">{left_html}</td>'
         f'<td style="width:{right_pct}%;vertical-align:top;">{right_html}</td>'
         f'</tr></table>'
     )
 
 
+def _main_panel_pair(main_html, panel_html, main_pct, side) -> str:
+    """Susun pasangan (konten utama, panel pendamping) lewat _two_col — `side` menentukan
+    panel ada di kiri atau kanan halaman (titik variasi tampilan antar generate, lihat
+    `panel_side` di generate_pdf_report). Dipakai supaya urutan kiri/kanan bisa ditukar tanpa
+    tiap pemanggil menghitung ulang persentase kolom sendiri-sendiri."""
+    if side == "left":
+        return _two_col(panel_html, main_html, left_pct=100 - main_pct)
+    return _two_col(main_html, panel_html, left_pct=main_pct)
+
+
 def _critical_table(headers, rows, highlight_idx) -> str:
-    # height eksplisit di <table>, <tr> header, DAN tiap <tr> baris data — lihat catatan di
-    # _card_grid soal kenapa ini WAJIB di dalam halaman yang latarnya dipaksa penuh 1 halaman
-    # (_page()): tanpanya xhtml2pdf meregangkan SETIAP baris tabel supaya total tabel penuh
-    # ke sisa tinggi halaman, walau isi barisnya cuma 1 baris teks pendek.
-    #
-    # BUG BESAR YANG DIPERBAIKI: th/td SEBELUMNYA memakai CSS `padding:7px 9px` (termasuk
-    # atas/bawah) — kombinasi padding vertikal + height eksplisit ini men-trigger auto-shrink
-    # font xhtml2pdf (lihat catatan panjang di _ivory_kv_rows). Padding vertikal dihapus,
-    # diganti vertical-align:middle + row_h yang sedikit lebih tinggi.
-    row_h = 30
-    header_h = 28
-    total_h = header_h + row_h * len(rows)
-    thead = "".join(f'<th style="background:{GREEN_BG};color:#fff;padding:0 9px;text-align:left;font-size:9pt;vertical-align:middle;">{_esc(h)}</th>' for h in headers)
+    # RANCANG ULANG (target WeasyPrint, lihat catatan di _ivory_panel) — height eksplisit
+    # dihapus di semua level, padding vertikal dipakai langsung (aman sekarang, lihat catatan
+    # di _ivory_kv_rows) untuk baris yang lebih lapang & natural.
+    thead = "".join(f'<th style="background:{GREEN_BG};color:#fff;padding:9px;text-align:left;font-size:9pt;vertical-align:middle;">{_esc(h)}</th>' for h in headers)
     trows = []
     for i, row_vals in enumerate(rows):
         is_open = i in highlight_idx
-        row_bg = RED_CRIT_BG if is_open else (IVORY if i % 2 == 0 else "#FFFFFF")
+        row_bg = RED_CRIT_BG if is_open else (IVORY if i % 2 == 0 else WHITE)
         cells = []
         for c, val in enumerate(row_vals):
             is_status_col = c == len(row_vals) - 1
-            style = "padding:0 9px;font-size:9pt;vertical-align:middle;"
+            style = "padding:9px;font-size:9pt;vertical-align:middle;"
             if is_open and is_status_col:
                 style += f"color:{RED_CRIT};font-weight:700;"
             cells.append(f'<td style="{style}">{_esc(val)}</td>')
-        trows.append(f'<tr style="background:{row_bg};height:{row_h}pt;">{"".join(cells)}</tr>')
+        trows.append(f'<tr style="background:{row_bg};">{"".join(cells)}</tr>')
     return (
-        f'<table style="width:100%;height:{total_h}pt;border-collapse:collapse;font-family:{BODY_FONT};" cellpadding="0" cellspacing="0">'
-        f'<thead><tr style="height:{header_h}pt;">{thead}</tr></thead><tbody>{"".join(trows)}</tbody></table>'
+        f'<table style="width:100%;border-collapse:collapse;font-family:{BODY_FONT};" cellpadding="0" cellspacing="0">'
+        f'<thead><tr>{thead}</tr></thead><tbody>{"".join(trows)}</tbody></table>'
     )
 
 
@@ -489,16 +612,113 @@ def _flourish_html(corner="bottom_right") -> str:
         f'border-radius:50%;border:1px solid {GOLD_MAIN};"></div>'
         for i in range(4)
     )
-    return f'<div style="position:absolute;inset:0;overflow:hidden;pointer-events:none;">{circles}</div>'
+    # BUG BESAR YANG DIPERBAIKI: dulu pakai shorthand CSS `inset:0` — TERBUKTI (isolasi
+    # render+sampling) TIDAK didukung WeasyPrint, div pembungkus jadi collapse ke ukuran 0x0
+    # dan `overflow:hidden` memotong SEMUA lingkaran ornamen di dalamnya (flourish sama sekali
+    # tidak pernah muncul di PDF manapun sebelumnya). Diganti top/right/bottom/left:0 eksplisit
+    # (didukung penuh) — hasilnya identik secara CSS, cuma lebih verbose.
+    return f'<div style="position:absolute;top:0;right:0;bottom:0;left:0;overflow:hidden;pointer-events:none;">{circles}</div>'
 
 
-def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None, logo_b64=None, last=False) -> str:
-    bg = GREEN_BG if dark else "#FFFFFF"
-    color = "#fff" if dark else TEXT_DARK
+def _split_cover_td(block, flourish_corner) -> str:
+    """Varian cover 2-kolom warna penuh (emas kiri + hijau kanan, angka hero besar di kolom
+    emas) — titik variasi tampilan (lihat `cover_style` di generate_pdf_report), alternatif
+    dari cover 1-warna standar. Dikembalikan sebagai dua <td> LENGKAP (dipakai lewat
+    `_page(..., raw=True)`, lihat catatan di sana) karena masing-masing kolom perlu warna
+    latar SENDIRI penuh 1 halaman — tidak bisa dicapai dengan satu <td> background tunggal
+    seperti pola cover biasa."""
+    value, label = block.get("hero_stat") or (str(block.get("total_records", "")), "Total Data")
+    hero_kicker = block.get("hero_stat_kicker", "CAPAIAN")
+    left_w_pct = 37
+    # BUG BESAR YANG DIPERBAIKI: `position:absolute` dgn `top` PERSENTASE atau `bottom` bukan-
+    # nol TERBUKTI (isolasi render+sampling) salah dihitung WeasyPrint kalau leluhur
+    # `position:relative`-nya LANGSUNG sebuah <td> — elemen malah muncul di urutan flow biasa
+    # (offset diabaikan), BUKAN di posisi yang diminta (nyata: angka hero "menimpa" footer di
+    # pojok kiri-atas, bukan di tengah & bawah seperti seharusnya). Pola aman TERBUKTI: bungkus
+    # SATU <div style="position:relative;height:...;"> eksplisit di dalam <td> (BUKAN taruh
+    # position:relative langsung di <td>-nya) — offset absolute di dalamnya baru dihitung benar.
+    left_td = (
+        f'<td style="width:{left_w_pct}%;background:{GOLD_MAIN};color:{TEXT_DARK};'
+        f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};">'
+        f'<div style="position:relative;height:7.5in;">'
+        f'<div style="margin:0.5in 0.45in;">'
+        f'<div style="font-size:9pt;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">{_esc(hero_kicker)}</div>'
+        f'</div>'
+        f'<div style="position:absolute;left:0.45in;right:0.3in;top:3.15in;">'
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:58pt;color:{GREEN_BG};line-height:1;">{_esc(value)}</div>'
+        f'<div style="font-size:11pt;margin-top:10px;">{_esc(label)}</div>'
+        f'</div>'
+        # BUG WEASYPRINT LAIN: `position:absolute;bottom:...` (bukan `top:...`) di dalam <td>
+        # yang punya saudara kandung block-normal-flow (kicker) + absolute lain (hero stat)
+        # TERBUKTI (isolasi render+sampling) bikin elemennya HILANG TOTAL dari output — bukan
+        # cuma salah posisi (footer "PT PETROKIMIA GRESIK" lenyap tanpa error). Pola `top:...`
+        # eksplisit di sebelahnya justru konsisten & linear di struktur yang sama, jadi footer
+        # ditaruh pakai `top` (dihitung dari tinggi halaman 7.5in) alih-alih `bottom`.
+        f'<div style="position:absolute;left:0.45in;top:6.6in;font-size:9pt;font-weight:700;">{_esc(block["header_title"])}</div>'
+        f'</div></td>'
+    )
+    title_text = block["title"]
+    title_size_pt = 26 if len(title_text) > 55 else 32 if len(title_text) > 40 else 38 if len(title_text) > 28 else 44
+    right_td = (
+        f'<td style="width:{100 - left_w_pct}%;background:{GREEN_BG};color:#fff;position:relative;'
+        f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};overflow:hidden;">'
+        f'{_flourish_html(flourish_corner)}'
+        f'<div style="position:relative;margin:0.5in;">'
+        f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
+        f'{_kicker(block["kicker"], GOLD_MAIN)}'
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:{title_size_pt}pt;color:#fff;margin-bottom:10px;">{_esc(title_text)}</div>'
+        f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(block["subtitle"])}</div>'
+        f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
+        f'<div style="font-size:10.5pt;color:{GOLD_LIGHT};margin-top:6px;">{_esc(block["info_line"])}</div>'
+        f'</div></td>'
+    )
+    return left_td + right_td
+
+
+def _split_closing_td(block, flourish_corner="bottom_right") -> str:
+    """Varian penutup berpasangan dgn _split_cover_td — angka hero yang SAMA ditampilkan lagi
+    di kolom emas kiri (mengulang temuan utama di penutup, gaya "bookend" laporan
+    eksekutif), kolom kanan tetap "Terima Kasih" seperti biasa."""
+    value, label = block.get("hero_stat") or ("", "")
+    left_w_pct = 37
+    # Lihat catatan panjang di _split_cover_td soal kenapa position:relative TIDAK boleh
+    # langsung di <td> kalau ada anak position:absolute beroffset non-nol/persentase.
+    left_td = (
+        f'<td style="width:{left_w_pct}%;background:{GOLD_MAIN};color:{TEXT_DARK};'
+        f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};">'
+        f'<div style="position:relative;height:7.5in;">'
+        f'<div style="position:absolute;left:0.45in;right:0.3in;top:3.15in;">'
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:46pt;color:{GREEN_BG};line-height:1;">{_esc(value)}</div>'
+        f'<div style="font-size:10.5pt;margin-top:8px;">{_esc(label)}</div>'
+        f'</div></div></td>'
+    )
+    right_td = (
+        f'<td style="width:{100 - left_w_pct}%;background:{GREEN_BG};color:#fff;position:relative;'
+        f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};overflow:hidden;">'
+        f'{_flourish_html(flourish_corner)}'
+        f'<div style="position:relative;margin:0.5in;">'
+        f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;margin-bottom:10px;">{_esc(block["thank_you"])}</div>'
+        f'<div style="font-size:12pt;color:#fff;margin-bottom:8px;">{_esc(block["title"])}</div>'
+        f'<div style="font-size:10.5pt;font-style:italic;color:{GOLD_LIGHT};">{_esc(block["note"])}</div>'
+        f'</div></td>'
+    )
+    return left_td + right_td
+
+
+def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None, logo_b64=None, last=False, raw=False) -> str:
     break_style = "" if last else "page-break-after:always;"
+    if raw:
+        # `raw=True`: `inner_html` SUDAH berupa satu/lebih <td> lengkap (mis. cover/penutup
+        # varian split-warna, 2 kolom background beda) — dipakai sebagai isi <tr> APA ADANYA,
+        # tanpa background/margin-inset/flourish tunggal standar di bawah ini (pemanggil yang
+        # bertanggung jawab penuh atas seluruh isi <tr>, termasuk warnanya sendiri).
+        return f'<table style="width:13.333in;{break_style}" cellpadding="0" cellspacing="0"><tr>{inner_html}</tr></table>'
+    bg = GREEN_BG if dark else WHITE
+    color = WHITE if dark else TEXT_DARK
     flourish_html = _flourish_html(flourish) if flourish else ""
     logo_html = (
-        f'<img src="data:image/png;base64,{logo_b64}" style="position:absolute;top:0.3in;right:0.3in;height:34px;" />'
+        f'<img src="data:image/png;base64,{logo_b64}" style="position:absolute;top:0.3in;right:0.3in;height:40px;" />'
         if logo_b64 else ""
     )
     footer_html = ""
@@ -533,6 +753,338 @@ def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None
     )
 
 
+@dataclass
+class _PdfBlockContext:
+    """Kumpulan variabel variasi tampilan (dipilih SEKALI per generate, lihat
+    generate_pdf_report) + report itu sendiri, yang dibutuhkan LEBIH DARI SATU builder block
+    di bawah — dioper ke tiap builder supaya signature-nya seragam (block, ctx) alih-alih
+    daftar parameter berbeda-beda per jenis block. Sebelumnya semua builder ini adalah
+    cabang if/elif di dalam SATU fungsi generate_pdf_report sepanjang ~300 baris — dipecah
+    jadi fungsi terpisah (murni supaya lebih mudah dibaca/diubah 1 jenis block tanpa perlu
+    scroll baca semuanya), TIDAK ada perubahan HASIL AKHIR sama sekali (diverifikasi PDF
+    yang dihasilkan identik sebelum & sesudah pemecahan ini).
+
+    cover_hero_stat DIISI oleh _build_cover_block, DIBACA oleh _build_closing_block (bookend
+    angka hero yang sama di cover & penutup saat cover_style="split") — satu-satunya state
+    yang mengalir ANTAR pemanggilan builder, makanya ctx harus objek yang sama dioper ke
+    semua builder dalam 1 kali generate, bukan dibuat ulang tiap block.
+    """
+    report: Report
+    stat_cols: int
+    card_cols: int
+    flourish_corner: str
+    panel_side: str
+    accent_bar_color: str
+    category_style: str
+    status_style: str
+    cover_style: str
+    asset_style: str
+    recommendation_style: str
+    kicker_ringkasan: str
+    kicker_analisis: str
+    cover_hero_stat: dict | None = None
+
+
+def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    ctx.cover_hero_stat = block.get("hero_stat")  # dipakai lagi di "closing" (bookend)
+    if ctx.cover_style == "split":
+        # Varian 2-kolom warna penuh (lihat _split_cover_td) — dipakai via
+        # _page(..., raw=True) karena tiap kolom butuh background sendiri penuh
+        # 1 halaman, bukan satu warna latar tunggal seperti varian "solid".
+        return (_split_cover_td(block, ctx.flourish_corner), True, None, False, True)
+    else:
+        # BUG BESAR YANG DIPERBAIKI: `margin-top` pada <div> PEMBUNGKUS (bukan pada
+        # dirinya sendiri) terbukti (isolasi render+sampling) TIDAK diterapkan ke child
+        # PERTAMA di dalamnya — child pertama malah dirender di y negatif (KEPOTONG DI
+        # LUAR halaman, terlihat nyata di slide Penutup "Terima Kasih" yang judulnya
+        # hilang separuh ke atas), sedangkan child KEDUA dst tetap memakai posisi
+        # seolah margin-top itu diterapkan (makanya subtitle terlihat "benar" tapi
+        # judul di atasnya hilang). Diganti <div> SPACER berheight eksplisit sebagai
+        # SIBLING (bukan parent) sebelum kicker — height eksplisit pada div sendiri
+        # (bukan margin pada parent) terbukti aman di posisi manapun dalam alur.
+        inner = (
+            f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
+            f'{_kicker(block["kicker"], GOLD_MAIN)}'
+            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:#fff;margin-bottom:10px;">{_esc(block["title"])}</div>'
+            f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(block["subtitle"])}</div>'
+            f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
+            f'<div style="font-size:10.5pt;color:{GOLD_LIGHT};margin-top:6px;">{_esc(block["info_line"])}</div>'
+            f'<div style="position:absolute;bottom:0;left:0;font-size:9pt;font-weight:700;color:#fff;">{_esc(block["header_title"])}</div>'
+        )
+        return (inner, True, ctx.flourish_corner, False)
+
+
+def _build_intro_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    objectives_html = "".join([
+        _badge_row(o["num"], o["title"], o["detail"], GREEN_MAIN) for o in block["objectives"]
+    ])
+    scope = block["scope"]
+    scope_rows = _ivory_kv_rows([
+        (scope["period_label"], scope["period_text"]),
+        (scope["total_event_label"], scope["total_records_text"]),
+        (scope["source_file_label"], scope["input_file_name"]),
+        (scope["data_type_label_label"], scope["data_type_label"]),
+    ])
+    scope_panel = _ivory_panel("i", scope["panel_title"], scope_rows, footnote=scope["footnote"])
+    bg_left = f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:18px;">{block["purpose_text"]}</div>{objectives_html}'
+    inner = (
+        _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) +
+        _main_panel_pair(bg_left, scope_panel, 58, ctx.panel_side)
+    )
+    return (inner, False, None, False)
+
+
+def _build_executive_summary_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    inner = (
+        _kicker(ctx.kicker_ringkasan, GOLD_MAIN) +
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:18px;">{_esc(block["heading"])}</div>' +
+        _stat_card_grid(block["stat_items"], cols=ctx.stat_cols, dark=True) +
+        # max-width dibatasi ~9.5in (bukan full CONTENT_W ~12.3in) — paragraf
+        # selebar halaman penuh di kertas widescreen 13.333in menghasilkan baris
+        # >150 karakter, jauh melebihi lebar baca nyaman (~75-90 karakter); versi
+        # referensi selalu membatasi teks naratif ke lebar yang lebih wajar.
+        f'<div style="font-size:10.5pt;font-style:italic;color:{GOLD_LIGHT};margin-top:18px;max-width:9.5in;">{_esc(block["caption"])}</div>'
+    )
+    return (inner, True, None, False)
+
+
+def _build_dynamic_section_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    text_html = f'<div style="font-size:11.5pt;color:{GRAY_TEXT};max-width:9.5in;">{_esc(block["text"])}</div>'
+    if block.get("aux_stat"):
+        value, label = block["aux_stat"]
+        panel_html = _critical_highlight_panel(value, label)
+        body = _main_panel_pair(text_html, panel_html, 62, ctx.panel_side)
+    elif block.get("aux_list"):
+        rows_html = _ivory_kv_rows([(it["label"], it["value"]) for it in block["aux_list"]])
+        panel_title = "Data Highlight" if is_english(ctx.report) else "Sorotan Data"
+        panel_html = _ivory_panel("i", panel_title, rows_html)
+        body = _main_panel_pair(text_html, panel_html, 62, ctx.panel_side)
+    else:
+        body = text_html
+    inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + body
+    return (inner, False, None, False)
+
+
+def _build_category_distribution_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    legend = _legend_rows([
+        (CATEGORY_COLOR_RAMP[l["color_index"]], l["name"], f"{l['pct']}%") for l in block["legend"]
+    ])
+    legend_panel = _ivory_panel("%", block["legend_panel_title"], legend, footnote=block["footnote"])
+    # Titik variasi tampilan: bar horizontal (warna accent hijau/emas gantian per
+    # generate), donut ring multi-warna, ATAU batang proporsi 100% bersegmen (lihat
+    # category_style/accent_bar_color di generate_pdf_report) — datanya identik,
+    # cuma cara visualnya beda tiap generate.
+    if ctx.category_style == "donut":
+        chart_html = _donut_chart_svg(block["values"])
+    elif ctx.category_style == "stacked":
+        seg_colors = [CATEGORY_COLOR_RAMP[l["color_index"]] for l in block["legend"]]
+        chart_html = _stacked_proportion_bar_html(block["values"], colors=seg_colors)
+    else:
+        chart_html = _bar_chart_html(block["categories"], block["values"], colors=[ctx.accent_bar_color] * len(block["values"]))
+    caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
+    # "stacked" DITUMPUK VERTIKAL (batang lebar penuh, lalu panel legend penuh di
+    # bawahnya) — BUKAN dipasangkan 2-kolom seperti bar/donut. Batang proporsi cuma
+    # setinggi ~46px, kalau dipaksa sejajar dgn panel legend yang jauh lebih tinggi
+    # (side-by-side) bakal menyisakan ruang kosong besar di sampingnya — persis kelas
+    # masalah "ruang kosong tidak proporsional" yang sudah diperbaiki di bagian lain.
+    if ctx.category_style == "stacked":
+        body = chart_html + legend_panel
+    else:
+        body = _main_panel_pair(chart_html, legend_panel, 58, ctx.panel_side)
+    inner = (
+        _kicker(ctx.kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
+        f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;max-width:9.5in;">{_esc(block["intro"])}</div>' +
+        body + caption_html
+    )
+    return (inner, False, None, False)
+
+
+def _build_severity_distribution_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    sev_colors = [SEVERITY_COLOR[k] for k in block["severity_keys"]]
+    chart_html = _bar_chart_html(block["categories"], block["values"], colors=sev_colors)
+    panel = _critical_highlight_panel(f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"])
+    caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
+    inner = (
+        _kicker(ctx.kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
+        f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;max-width:9.5in;">{_esc(block["intro"])}</div>' +
+        _main_panel_pair(chart_html, panel, 62, ctx.panel_side) + caption_html
+    )
+    return (inner, False, None, False)
+
+
+def _build_status_distribution_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
+    intro_html = f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;max-width:9.5in;">{_esc(block["intro"])}</div>'
+    # Titik variasi tampilan (independen dari category_style — lihat status_style di
+    # generate_pdf_report): donut butuh panel legend berdampingan (warna donut tidak
+    # ber-label sendiri, beda dari bar chart yang sumbu kategorinya sudah jadi label),
+    # jadi strukturnya digeser ke pola _main_panel_pair yang sama dgn category_distribution.
+    if ctx.status_style in ("donut", "stacked"):
+        status_total = sum(block["values"]) or 1
+        status_colors = [CATEGORY_COLOR_RAMP[i % len(CATEGORY_COLOR_RAMP)] for i in range(len(block["values"]))]
+        legend_rows_html = _legend_rows([
+            (status_colors[i], name, f"{round(val / status_total * 100, 1)}%")
+            for i, (name, val) in enumerate(zip(block["categories"], block["values"]))
+        ])
+        legend_title = "Status Proportion" if is_english(ctx.report) else "Proporsi Status"
+        legend_panel = _ivory_panel("%", legend_title, legend_rows_html)
+        if ctx.status_style == "donut":
+            chart_html = _donut_chart_svg(block["values"], colors=status_colors)
+            body = _main_panel_pair(chart_html, legend_panel, 58, ctx.panel_side)
+        else:
+            # "stacked" ditumpuk vertikal (bukan berdampingan) — lihat catatan sama
+            # di category_distribution soal kenapa batang pendek tidak dipasangkan
+            # sejajar dengan panel legend yang jauh lebih tinggi.
+            chart_html = _stacked_proportion_bar_html(block["values"], colors=status_colors)
+            body = chart_html + legend_panel
+    else:
+        body = _bar_chart_html(block["categories"], block["values"], colors=[ctx.accent_bar_color] * len(block["values"]))
+    inner = (
+        _kicker(ctx.kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
+        intro_html + body + caption_html
+    )
+    return (inner, False, None, False)
+
+
+def _build_critical_table_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    table_html = _critical_table(block["headers"], block["rows"], set(block["highlight_idx"]))
+    caption_html = ""
+    if block["caption"]:
+        caption_html = (
+            f'<div style="font-size:9.5pt;font-style:italic;color:{GRAY_TEXT};margin-top:12px;">'
+            f'{_esc(block["caption"])}</div>'
+        )
+    kicker_color = RED_CRIT if block["kicker_is_critical"] else GREEN_MAIN
+    inner = (
+        _kicker(block["kicker"], kicker_color) + _title(block["title"]) +
+        table_html + caption_html
+    )
+    return (inner, False, None, False)
+
+
+def _build_asset_cards_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # Podium (lihat _podium_row) BUTUH tepat 3 entitas & latar terang (blok podium
+    # berwarna dirancang menonjol di atas putih, seperti referensi "Sorotan
+    # Performa") — kartu sejajar biasa tetap dipakai kalau bukan 3 atau kalau
+    # asset_style="cards" kepilih.
+    if ctx.asset_style == "podium" and len(block["items"]) == 3:
+        podium_items = [{"num": it["num"], "name": it["name"], "stat": it["stat"]} for it in block["items"]]
+        inner = (
+            _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) +
+            f'<div style="margin-top:20pt;">{_podium_row(podium_items)}</div>'
+        )
+        return (inner, False, None, False)
+    elif ctx.asset_style == "bars":
+        bar_items = [
+            {"num": it["num"], "name": it["name"], "stat": it["stat"], "count": it.get("count", 0)}
+            for it in block["items"]
+        ]
+        inner = (
+            _kicker(block["kicker"], GOLD_MAIN) +
+            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:14px;">{_esc(block["title"])}</div>' +
+            f'<div style="margin-top:8pt;">{_asset_ranked_bars_html(bar_items)}</div>'
+        )
+        return (inner, True, None, False)
+    else:
+        card_items = [(it["num"], it["name"], it["stat"], it["detail"]) for it in block["items"]]
+        inner = (
+            _kicker(block["kicker"], GOLD_MAIN) +
+            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:18px;">{_esc(block["title"])}</div>' +
+            _asset_card_row(card_items)
+        )
+        return (inner, True, None, False)
+
+
+def _build_key_findings_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    findings_html_parts = [
+        _badge_row(it["num"], it["title"], it["detail"], RED_CRIT if it["is_critical"] else GREEN_MAIN)
+        for it in block["items"]
+    ]
+    inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + "".join(findings_html_parts)
+    return (inner, False, None, False)
+
+
+def _build_recommendations_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # Timeline (lihat _timeline_html) cocok utk jumlah item sedang (2-6) — kalau
+    # lebih banyak, node/label jadi terlalu sempit & kartu grid tetap lebih rapi.
+    if ctx.recommendation_style == "timeline" and 2 <= len(block["items"]) <= 6:
+        inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + _timeline_html(block["items"])
+    elif ctx.recommendation_style == "banners":
+        inner = (
+            _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) +
+            f'<div style="margin-top:8pt;">{_recommendation_banner_list_html(block["items"])}</div>'
+        )
+    else:
+        # Height eksplisit dihapus (lihat catatan di _card_grid) — kartu sepadat
+        # kontennya, baris otomatis setinggi kartu terpanjang di baris itu saja.
+        cell_htmls = []
+        for it in block["items"]:
+            detail_html = f'<div style="font-size:9.5pt;color:{GRAY_TEXT};margin-top:6px;">{_esc(it["detail"])}</div>' if it["detail"] else ""
+            cell_htmls.append(
+                f'<table style="width:100%;margin-bottom:12pt;background:{IVORY};border:1px solid {PANEL_BORDER};border-radius:10px;"><tr><td style="vertical-align:top;padding:14pt;">'
+                f'{_badge(it["num"], GOLD_MAIN, size="28px")}'
+                f'<div style="font-weight:700;font-size:11pt;color:{TEXT_DARK};margin-top:10px;">{_esc(it["title"])}</div>'
+                f'{detail_html}</td></tr></table>'
+            )
+        inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + _card_grid(cell_htmls, ctx.card_cols)
+    return (inner, False, None, False)
+
+
+def _build_conclusion_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    pills_html = "".join(_pill(p) for p in block["pills"])
+    priority_items = [(p["letter"], p["text"]) for p in block["priority_items"]]
+    priority_html = _priority_panel(block["priority_panel_title"], priority_items) if priority_items else ""
+    concl_left = (
+        f'<div style="font-size:11pt;color:#E8ECE6;margin-bottom:18px;">{_esc(block["text"])}</div>'
+        f'{pills_html}'
+    )
+    # panel_side cuma dipakai kalau priority_html benar-benar ada isinya — kalau
+    # kosong (tidak ada rekomendasi), swap ke "left" akan menyisakan kolom kiri
+    # kosong & teks Kesimpulan malah ke kanan, lebih buruk dari layout defaultnya.
+    concl_side = ctx.panel_side if priority_html else "right"
+    inner = (
+        _kicker(block["kicker"], GOLD_MAIN) +
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:16px;">{_esc(block["title"])}</div>' +
+        _main_panel_pair(concl_left, priority_html, 58, concl_side)
+    )
+    return (inner, True, None, False)
+
+
+def _build_closing_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    if ctx.cover_style == "split":
+        # Bookend dgn cover: panel kiri warna emas mengulang angka hero yang sama.
+        closing_block = {**block, "hero_stat": ctx.cover_hero_stat}
+        return (_split_closing_td(closing_block, ctx.flourish_corner), True, None, True, True)
+    else:
+        # Spacer sibling, bukan margin-top pada div pembungkus — lihat catatan panjang
+        # di slide "cover" di atas (bug yang sama persis, ini slide yang jadi bukti
+        # nyatanya: judul "Terima Kasih" hilang kepotong ke atas halaman sebelum fix).
+        inner = (
+            f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
+            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;margin-bottom:10px;">{_esc(block["thank_you"])}</div>'
+            f'<div style="font-size:12pt;color:#fff;margin-bottom:8px;">{_esc(block["title"])}</div>'
+            f'<div style="font-size:10.5pt;font-style:italic;color:{GOLD_LIGHT};">{_esc(block["note"])}</div>'
+        )
+        return (inner, True, ctx.flourish_corner, True)
+
+
+_PDF_BLOCK_BUILDERS = {
+    "cover": _build_cover_block,
+    "intro": _build_intro_block,
+    "executive_summary": _build_executive_summary_block,
+    "dynamic_section": _build_dynamic_section_block,
+    "category_distribution": _build_category_distribution_block,
+    "severity_distribution": _build_severity_distribution_block,
+    "status_distribution": _build_status_distribution_block,
+    "critical_table": _build_critical_table_block,
+    "asset_cards": _build_asset_cards_block,
+    "key_findings": _build_key_findings_block,
+    "recommendations": _build_recommendations_block,
+    "conclusion": _build_conclusion_block,
+    "closing": _build_closing_block,
+}
+
+
 class PDFExporter:
     @classmethod
     def generate_pdf_report(cls, report: Report) -> bytes:
@@ -545,203 +1097,63 @@ class PDFExporter:
         logo_b64 = _resolve_logo_b64()
         blocks = build_report_blocks(report)
 
-        rnd = random.Random()
-        stat_cols = rnd.choice([2, 3])
-        card_cols = rnd.choice([2, 3])
-        flourish_corner = rnd.choice(["bottom_right", "top_right", "bottom_left"])
-        if is_english(report):
-            kicker_ringkasan = rnd.choice(["EXECUTIVE SUMMARY", "KEY SNAPSHOT", "EXECUTIVE OVERVIEW"])
-            kicker_analisis = rnd.choice(["DATA ANALYSIS", "DATA REVIEW", "FINDINGS ANALYSIS"])
-        else:
-            kicker_ringkasan = rnd.choice(["RINGKASAN EKSEKUTIF", "SNAPSHOT UTAMA", "IKHTISAR EKSEKUTIF"])
-            kicker_analisis = rnd.choice(["ANALISIS DATA", "TINJAUAN DATA", "ANALISIS TEMUAN"])
+        # Varian tampilan (cover_style, category_style, dst) DIBACA dari report.visual_style,
+        # BUKAN di-random di sini lagi — lihat catatan sama di export_ppt.py generate_ppt_report
+        # (dan pick_visual_style() di report_render_logic.py) utk alasan lengkapnya: dulu tiap
+        # export dapat kombinasi acak baru, sekarang preview web & PDF/PPTX yang diunduh
+        # SAMA-SAMA baca kombinasi yang SUDAH DIKUNCI sekali sewaktu analisis AI berhasil, jadi
+        # dijamin identik utk 1 laporan yang sama.
+        vs = get_visual_style(report)
+        flourish_corner = vs["flourish_corner"]
+        stat_cols = vs["stat_cols"]
+        card_cols = vs["card_cols"]
+        panel_side = vs["panel_side"]
+        accent_bar_color = GOLD_MAIN if vs["accent_bar_color"] == "gold" else GREEN_MAIN
+        category_style = vs["category_style"]
+        status_style = vs["status_style"]
+        cover_style = vs["cover_style"]
+        asset_style = vs["asset_style"]
+        recommendation_style = vs["recommendation_style"]
+        # Teks kicker TETAP (bukan bagian dari visual_style — cuma variasi kata, bukan bentuk)
+        kicker_ringkasan = "Executive Summary" if is_english(report) else "Ringkasan Eksekutif"
+        kicker_analisis = "DATA ANALYSIS" if is_english(report) else "ANALISIS DATA"
 
         pages = []  # list of (html, dark, flourish, is_last)
 
+        ctx = _PdfBlockContext(
+            report=report,
+            stat_cols=stat_cols,
+            card_cols=card_cols,
+            flourish_corner=flourish_corner,
+            panel_side=panel_side,
+            accent_bar_color=accent_bar_color,
+            category_style=category_style,
+            status_style=status_style,
+            cover_style=cover_style,
+            asset_style=asset_style,
+            recommendation_style=recommendation_style,
+            kicker_ringkasan=kicker_ringkasan,
+            kicker_analisis=kicker_analisis,
+        )
+
         for block in blocks:
-            kind = block["kind"]
-
-            if kind == "cover":
-                # BUG BESAR YANG DIPERBAIKI: `margin-top` pada <div> PEMBUNGKUS (bukan pada
-                # dirinya sendiri) terbukti (isolasi render+sampling) TIDAK diterapkan ke child
-                # PERTAMA di dalamnya — child pertama malah dirender di y negatif (KEPOTONG DI
-                # LUAR halaman, terlihat nyata di slide Penutup "Terima Kasih" yang judulnya
-                # hilang separuh ke atas), sedangkan child KEDUA dst tetap memakai posisi
-                # seolah margin-top itu diterapkan (makanya subtitle terlihat "benar" tapi
-                # judul di atasnya hilang). Diganti <div> SPACER berheight eksplisit sebagai
-                # SIBLING (bukan parent) sebelum kicker — height eksplisit pada div sendiri
-                # (bukan margin pada parent) terbukti aman di posisi manapun dalam alur.
-                inner = (
-                    f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
-                    f'{_kicker(block["kicker"], GOLD_MAIN)}'
-                    f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:#fff;margin-bottom:10px;">{_esc(block["title"])}</div>'
-                    f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(block["subtitle"])}</div>'
-                    f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
-                    f'<div style="font-size:10.5pt;color:{GOLD_LIGHT};margin-top:6px;">{_esc(block["info_line"])}</div>'
-                    f'<div style="position:absolute;bottom:0;left:0;font-size:9pt;font-weight:700;color:#fff;">{_esc(block["header_title"])}</div>'
-                )
-                pages.append((inner, True, flourish_corner, False))
-
-            elif kind == "intro":
-                objectives_html = "".join([
-                    _badge_row(o["num"], o["title"], o["detail"], GREEN_MAIN) for o in block["objectives"]
-                ])
-                scope = block["scope"]
-                scope_rows = _ivory_kv_rows([
-                    (scope["period_label"], scope["period_text"]),
-                    (scope["total_event_label"], scope["total_records_text"]),
-                    (scope["source_file_label"], scope["input_file_name"]),
-                    (scope["data_type_label_label"], scope["data_type_label"]),
-                ])
-                scope_panel = _ivory_panel("i", scope["panel_title"], scope_rows, footnote=scope["footnote"], content_rows=4)
-                bg_left = f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:18px;">{block["purpose_text"]}</div>{objectives_html}'
-                inner = (
-                    _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) +
-                    _two_col(bg_left, scope_panel, left_pct=58, h=370)
-                )
-                pages.append((inner, False, None, False))
-
-            elif kind == "executive_summary":
-                inner = (
-                    _kicker(kicker_ringkasan, GOLD_MAIN) +
-                    f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:18px;">{_esc(block["heading"])}</div>' +
-                    _stat_card_grid(block["stat_items"], cols=stat_cols, dark=True) +
-                    f'<div style="font-size:10.5pt;font-style:italic;color:{GOLD_LIGHT};margin-top:18px;">{_esc(block["caption"])}</div>'
-                )
-                pages.append((inner, True, None, False))
-
-            elif kind == "dynamic_section":
-                text_html = f'<div style="font-size:11.5pt;color:{GRAY_TEXT};">{_esc(block["text"])}</div>'
-                if block.get("aux_stat"):
-                    value, label = block["aux_stat"]
-                    panel_html = _critical_highlight_panel(value, label)
-                    body = _two_col(text_html, panel_html, left_pct=62, h=370)
-                elif block.get("aux_list"):
-                    rows_html = _ivory_kv_rows([(it["label"], it["value"]) for it in block["aux_list"]])
-                    panel_title = "Data Highlight" if is_english(report) else "Sorotan Data"
-                    panel_html = _ivory_panel("i", panel_title, rows_html, content_rows=len(block["aux_list"]))
-                    body = _two_col(text_html, panel_html, left_pct=62, h=370)
-                else:
-                    body = text_html
-                inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + body
-                pages.append((inner, False, None, False))
-
-            elif kind == "category_distribution":
-                legend = _legend_rows([
-                    (CATEGORY_COLOR_RAMP[l["color_index"]], l["name"], f"{l['pct']}%") for l in block["legend"]
-                ])
-                legend_panel = _ivory_panel("%", block["legend_panel_title"], legend, footnote=block["footnote"], content_rows=len(block["legend"]))
-                chart_html = _bar_chart_html(block["categories"], block["values"])
-                caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
-                inner = (
-                    _kicker(kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
-                    f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;">{_esc(block["intro"])}</div>' +
-                    _two_col(chart_html, legend_panel, left_pct=58, h=310) + caption_html
-                )
-                pages.append((inner, False, None, False))
-
-            elif kind == "severity_distribution":
-                sev_colors = [SEVERITY_COLOR[k] for k in block["severity_keys"]]
-                chart_html = _bar_chart_html(block["categories"], block["values"], colors=sev_colors)
-                panel = _critical_highlight_panel(f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"])
-                caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
-                inner = (
-                    _kicker(kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
-                    f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;">{_esc(block["intro"])}</div>' +
-                    _two_col(chart_html, panel, left_pct=62, h=310) + caption_html
-                )
-                pages.append((inner, False, None, False))
-
-            elif kind == "status_distribution":
-                chart_html = _bar_chart_html(block["categories"], block["values"])
-                caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
-                inner = (
-                    _kicker(kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
-                    f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;">{_esc(block["intro"])}</div>' + chart_html + caption_html
-                )
-                pages.append((inner, False, None, False))
-
-            elif kind == "critical_table":
-                table_html = _critical_table(block["headers"], block["rows"], set(block["highlight_idx"]))
-                caption_html = ""
-                if block["caption"]:
-                    caption_html = (
-                        f'<div style="font-size:9.5pt;font-style:italic;color:{GRAY_TEXT};margin-top:12px;">'
-                        f'{_esc(block["caption"])}</div>'
-                    )
-                kicker_color = RED_CRIT if block["kicker_is_critical"] else GREEN_MAIN
-                inner = (
-                    _kicker(block["kicker"], kicker_color) + _title(block["title"]) +
-                    table_html + caption_html
-                )
-                pages.append((inner, False, None, False))
-
-            elif kind == "asset_cards":
-                card_items = [(it["num"], it["name"], it["stat"], it["detail"]) for it in block["items"]]
-                inner = (
-                    _kicker(block["kicker"], GOLD_MAIN) +
-                    f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:18px;">{_esc(block["title"])}</div>' +
-                    _asset_card_row(card_items)
-                )
-                pages.append((inner, True, None, False))
-
-            elif kind == "key_findings":
-                findings_html_parts = [
-                    _badge_row(it["num"], it["title"], it["detail"], RED_CRIT if it["is_critical"] else GREEN_MAIN)
-                    for it in block["items"]
-                ]
-                inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + "".join(findings_html_parts)
-                pages.append((inner, False, None, False))
-
-            elif kind == "recommendations":
-                # height eksplisit WAJIB di sini juga (lihat docstring _card_grid) — tanpanya
-                # xhtml2pdf meregangkan kartu rekomendasi penuh 1 halaman walau isinya cuma
-                # judul+2 baris detail.
-                rec_card_height = "2.4in"
-                cell_htmls = []
-                for it in block["items"]:
-                    detail_html = f'<div style="font-size:9.5pt;color:{GRAY_TEXT};margin-top:6px;">{_esc(it["detail"])}</div>' if it["detail"] else ""
-                    cell_htmls.append(
-                        f'<table style="width:100%;height:{rec_card_height};background:{IVORY};border:1px solid {PANEL_BORDER};border-radius:10px;" cellpadding="14"><tr><td style="vertical-align:top;">'
-                        f'{_badge(it["num"], GOLD_MAIN, size="28px")}'
-                        f'<div style="font-weight:700;font-size:11pt;color:{TEXT_DARK};margin-top:10px;">{_esc(it["title"])}</div>'
-                        f'{detail_html}</td></tr></table>'
-                    )
-                inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + _card_grid(cell_htmls, card_cols, row_height=rec_card_height)
-                pages.append((inner, False, None, False))
-
-            elif kind == "conclusion":
-                pills_html = "".join(_pill(p) for p in block["pills"])
-                priority_items = [(p["letter"], p["text"]) for p in block["priority_items"]]
-                priority_html = _priority_panel(block["priority_panel_title"], priority_items) if priority_items else ""
-                concl_left = (
-                    f'<div style="font-size:11pt;color:#E8ECE6;margin-bottom:18px;">{_esc(block["text"])}</div>'
-                    f'{pills_html}'
-                )
-                inner = (
-                    _kicker(block["kicker"], GOLD_MAIN) +
-                    f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:16px;">{_esc(block["title"])}</div>' +
-                    _two_col(concl_left, priority_html, left_pct=58, h=370)
-                )
-                pages.append((inner, True, None, False))
-
-            elif kind == "closing":
-                # Spacer sibling, bukan margin-top pada div pembungkus — lihat catatan panjang
-                # di slide "cover" di atas (bug yang sama persis, ini slide yang jadi bukti
-                # nyatanya: judul "Terima Kasih" hilang kepotong ke atas halaman sebelum fix).
-                inner = (
-                    f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
-                    f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;margin-bottom:10px;">{_esc(block["thank_you"])}</div>'
-                    f'<div style="font-size:12pt;color:#fff;margin-bottom:8px;">{_esc(block["title"])}</div>'
-                    f'<div style="font-size:10.5pt;font-style:italic;color:{GOLD_LIGHT};">{_esc(block["note"])}</div>'
-                )
-                pages.append((inner, True, flourish_corner, True))
+            builder = _PDF_BLOCK_BUILDERS.get(block["kind"])
+            if builder:
+                pages.append(builder(block, ctx))
 
         # ---------------- Rakit halaman jadi 1 dokumen HTML ----------------
         total_pages = len(pages) - 2  # tidak termasuk cover & penutup di penomoran
         page_html_parts = []
         content_idx = 0
-        for i, (inner, dark, flourish, is_last) in enumerate(pages):
+        for i, page_tuple in enumerate(pages):
+            # 5-tuple (dgn `raw=True`) dipakai cover/penutup varian split-warna (lihat
+            # _split_cover_td/_split_closing_td) — <td> lengkap sudah dibangun sendiri,
+            # _page() cuma membungkusnya tanpa background/margin-inset standar.
+            if len(page_tuple) == 5:
+                inner, dark, flourish, is_last, raw = page_tuple
+            else:
+                inner, dark, flourish, is_last = page_tuple
+                raw = False
             is_cover_or_closing = i == 0 or i == len(pages) - 1
             page_num = None
             if not is_cover_or_closing:
@@ -751,7 +1163,7 @@ class PDFExporter:
                 inner, dark=dark, flourish=flourish,
                 page_num=page_num, total_pages=total_pages,
                 logo_b64=(logo_b64 if not is_cover_or_closing else None),
-                last=is_last,
+                last=is_last, raw=raw,
             ))
 
         html_content = f"""
@@ -776,7 +1188,7 @@ class PDFExporter:
             try:
                 return HTML(string=html_content).write_pdf()
             except Exception as weasy_err:
-                print(f"[PDF WARNING] WeasyPrint gagal merender: {weasy_err}. Menggunakan fallback xhtml2pdf.")
+                logger.warning(f"WeasyPrint gagal merender: {weasy_err}. Menggunakan fallback xhtml2pdf.")
                 if not XHTML2PDF_AVAILABLE:
                     raise weasy_err
 

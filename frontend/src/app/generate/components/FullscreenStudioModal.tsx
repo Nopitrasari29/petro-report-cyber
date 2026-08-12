@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-import type { ReportPage } from "@/utils/reportSections";
-import type { ReportBlock } from "@/utils/reportTheme";
+import { getPageByNumber, type ReportPage } from "@/utils/reportSections";
+import type { ReportBlock, VisualStyle } from "@/utils/reportTheme";
 import RichTextEditor from "./RichTextEditor";
 import ChartNarasiLayout from "./ChartNarasiLayout";
 import ReportBlockRenderer from "@/components/ReportBlockRenderer";
@@ -16,8 +16,6 @@ interface FullscreenStudioModalProps {
   setActivePage: (page: string) => void;
   activeTab: "preview" | "edit" | "charts";
   setActiveTab: (tab: "preview" | "edit" | "charts") => void;
-  previewFormat: "pdf" | "pptx";
-  setPreviewFormat: (format: "pdf" | "pptx") => void;
   zoomLevel: number;
   setZoomLevel: (zoom: number) => void;
   getPageTitle: (page: string) => string;
@@ -28,13 +26,10 @@ interface FullscreenStudioModalProps {
   saveSuccess: boolean;
   pages: ReportPage[];
   blocks: ReportBlock[];
+  visualStyle?: VisualStyle;
   blocksLoading: boolean;
   blocksError: string;
-  headerTitle?: string;
-  headerSubtitle?: string;
-  themeColor?: string;
   inputFile?: string;
-  createdAt?: string;
   tx: (key: string, fallback: string) => string;
 }
 
@@ -47,8 +42,6 @@ export default function FullscreenStudioModal({
   setActivePage,
   activeTab,
   setActiveTab,
-  previewFormat,
-  setPreviewFormat,
   zoomLevel,
   setZoomLevel,
   getPageTitle,
@@ -59,17 +52,18 @@ export default function FullscreenStudioModal({
   saveSuccess,
   pages,
   blocks,
+  visualStyle,
   blocksLoading,
   blocksError,
-  headerTitle = "PT PETROKIMIA GRESIK",
-  headerSubtitle = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
-  themeColor = "green",
   inputFile = "-",
-  createdAt,
   tx,
 }: FullscreenStudioModalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const LAST_PAGE = pages.length > 0 ? pages[pages.length - 1].page : "01";
+  const isActivePageEditable = getPageByNumber(pages, activePage)?.editable ?? false;
+  // Preview cuma render 1 block aktif (bukan seluruh dokumen ditumpuk) — pages 1:1 urutan
+  // dengan blocks (lihat buildPagesFromBlocks), jadi indexnya tinggal activePage - 1.
+  const activeBlock = blocks[Number(activePage) - 1];
 
   // Fallback keydown listener for Escape — dipakai kalau browser TIDAK mendukung Fullscreen
   // API (requestFullscreen di bawah gagal/tidak tersedia), jadi modal ini masih bisa ditutup.
@@ -118,6 +112,9 @@ export default function FullscreenStudioModal({
   return (
     <div
       ref={containerRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={tx("Report Studio", "Report Studio")}
       className="fixed inset-0 z-50 bg-stone-950 text-stone-100 flex flex-col animate-fadeIn overflow-hidden font-sans select-none"
     >
       {/* Top Header Bar - Studio Style */}
@@ -160,34 +157,6 @@ export default function FullscreenStudioModal({
 
         {/* Right Action Tools: Save + Zoom + Close */}
         <div className="flex items-center gap-3">
-          {/* Format Switcher if Preview */}
-          {activeTab === "preview" && (
-            <div className="hidden md:inline-flex p-1 bg-stone-950 rounded-xl border border-stone-800 gap-1">
-              <button
-                onClick={() => setPreviewFormat("pdf")}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                  previewFormat === "pdf"
-                    ? "bg-stone-800 text-white shadow-sm"
-                    : "text-stone-400 hover:text-white"
-                }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-red-500" />
-                PDF
-              </button>
-              <button
-                onClick={() => setPreviewFormat("pptx")}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                  previewFormat === "pptx"
-                    ? "bg-stone-800 text-white shadow-sm"
-                    : "text-stone-400 hover:text-white"
-                }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-amber-500" />
-                PPTX
-              </button>
-            </div>
-          )}
-
           {/* Save Button */}
           {activeTab === "edit" && (
             <button
@@ -376,26 +345,31 @@ export default function FullscreenStudioModal({
                   </div>
                 )}
 
-                {/* PDF Document Canvas — tumpukan halaman */}
-                {!blocksLoading && !blocksError && previewFormat === "pdf" && (
-                  <div className="max-w-3xl mx-auto space-y-4">
-                    {blocks.map((block, i) => (
-                      <ReportBlockRenderer key={i} block={block} />
-                    ))}
+                {/* Cuma 1 halaman aktif yang ditampilkan (bukan seluruh dokumen ditumpuk) —
+                    dibungkus rasio 16:9 (ukuran slide asli, 13.333x7.5in — PDF & PPTX SAMA-SAMA
+                    dirender sebagai "slide" berukuran identik, lihat _page() di export_pdf.py
+                    dan SLIDE_W/SLIDE_H di export_ppt.py). Toggle PDF/PPTX sebelumnya di sini
+                    dihapus — preview-nya 1 komponen yang sama utk kedua format, tidak pernah
+                    benar-benar meniru file yang diunduh secara berbeda. */}
+                {!blocksLoading && !blocksError && activeBlock && (
+                  <div className="max-w-3xl mx-auto">
+                    {/* BUG DIPERBAIKI (dilaporkan user): `h-auto` (kotak tumbuh melebihi 16:9
+                        kalau konten butuh) dibalik lagi — itu bikin rasio kotak berubah-ubah
+                        antar halaman, padahal file PPT/PDF sungguhan SELALU 16:9 tetap (lihat
+                        catatan di atas). `aspect-video` tanpa `h-auto` = tinggi kotak SELALU
+                        persis 16:9; `overflow-y-auto` di kotak INI SENDIRI (bukan cuma di
+                        <main> pembungkus) supaya konten yang kepanjangan untuk 16:9 di-scroll
+                        di dalam kotaknya, bukan meluber keluar bentuk kotak atau bikin kotaknya
+                        melar. Kotak berukuran tetap (16:9 dalam max-w-3xl) jadi scroll ganda
+                        dgn <main> nyaris tidak pernah kejadian dalam praktiknya. */}
+                    <div className="aspect-video overflow-y-auto bg-white border border-stone-800 shadow-2xl shadow-black/80">
+                      <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} />
+                    </div>
                   </div>
                 )}
-
-                {/* PPTX Widescreen Slide Canvas — tiap block jadi 1 slide 16:9 */}
-                {!blocksLoading && !blocksError && previewFormat === "pptx" && (
-                  <div className="max-w-4xl mx-auto space-y-6">
-                    {blocks.map((block, i) => (
-                      <div
-                        key={i}
-                        className="aspect-video rounded-2xl border-2 border-stone-800 shadow-2xl shadow-black/80 overflow-y-auto"
-                      >
-                        <ReportBlockRenderer block={block} />
-                      </div>
-                    ))}
+                {!blocksLoading && !blocksError && !activeBlock && (
+                  <div className="max-w-lg mx-auto text-center text-stone-500 text-xs font-bold py-16">
+                    {tx("No page selected.", "Tidak ada halaman yang dipilih.")}
                   </div>
                 )}
               </div>
@@ -426,13 +400,22 @@ export default function FullscreenStudioModal({
                 </div>
 
                 {/* Expanded Rich Text Editor Canvas */}
-                <div className="min-h-[420px] text-stone-900">
-                  <RichTextEditor
-                    value={textVal}
-                    onChange={handleTextChange}
-                    tx={tx}
-                  />
-                </div>
+                {isActivePageEditable ? (
+                  <div className="min-h-[420px] text-stone-900">
+                    <RichTextEditor
+                      value={textVal}
+                      onChange={handleTextChange}
+                      tx={tx}
+                    />
+                  </div>
+                ) : (
+                  <div className="bg-stone-50 border border-stone-200 text-stone-500 text-xs font-medium p-6 rounded-xl text-center">
+                    {tx(
+                      "This section is generated automatically from your data — there's no free-form text to edit here.",
+                      "Bagian ini dibuat otomatis dari data laporan — tidak ada teks bebas untuk diedit di sini.",
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -462,6 +445,7 @@ export default function FullscreenStudioModal({
                 <div className="bg-white p-6 rounded-3xl shadow-2xl border border-stone-800">
                   <ChartNarasiLayout
                     blocks={blocks}
+                    visualStyle={visualStyle}
                     blocksLoading={blocksLoading}
                     blocksError={blocksError}
                     tx={tx}

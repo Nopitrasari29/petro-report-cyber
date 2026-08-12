@@ -102,7 +102,7 @@ export default function Step2Settings({
 
   return (
     <ScrollReveal animation="fadeInUp" className="space-y-6">
-      <div className="text-left">
+      <div className="text-left -mt-4 mb-3">
         <h2 className="text-2xl font-extrabold text-stone-900">
           {tx("Report Settings", "Report Settings")}
         </h2>
@@ -370,7 +370,7 @@ export default function Step2Settings({
       </div>
 
       {/* Bottom Wide Card: Export Formats & Preferences */}
-      <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm text-left premium-card-hover transition-colors">
+      <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm text-left premium-card-hover transition-colors mt-5">
         <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2 mb-4">
           {tx(
             "Export Format & Output Options",

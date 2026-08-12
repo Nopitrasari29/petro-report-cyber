@@ -1,4 +1,5 @@
 # backend/app/api/v1/endpoints/chart.py
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -7,6 +8,7 @@ from app.crud.report import get_owned_report, update_report, get_parsed_data
 from app.schemas.report import ReportUpdate
 from app.services.chart_generator import ChartGenerator
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/ping")
@@ -34,9 +36,13 @@ def get_report_chart(
     try:
         chart_config = ChartGenerator.generate_chart_config(db_report.data_type, parsed_data)
     except Exception as e:
+        # BUG DIPERBAIKI: dulu meneruskan detail exception Python mentah (bisa berisi path
+        # file server/nama internal) langsung ke client - log lengkap di server, client cukup
+        # dapat pesan generik yang aman.
+        logger.error(f"Gagal merender grafik utk report {report_id} ({db_report.data_type}): {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Gagal merender grafik Plotly untuk data '{db_report.data_type}': {str(e)}"
+            detail="Gagal membuat grafik otomatis untuk laporan ini. Silakan coba lagi atau hubungi admin."
         )
 
     if not chart_config or chart_config.get("error") or "data" not in chart_config:
@@ -46,6 +52,6 @@ def get_report_chart(
         )
 
     if not db_report.chart_data:
-        update_report(db, report_id, ReportUpdate(chart_data=chart_config))
+        update_report(db, report_id, ReportUpdate(chart_data=chart_config), user_id=current_user.id)
 
     return chart_config

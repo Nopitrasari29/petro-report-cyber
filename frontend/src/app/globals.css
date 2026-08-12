@@ -22,6 +22,12 @@
   --foreground: #1a1a1a;
 }
 
+.dark {
+  --background: #16150f;
+  --foreground: #f0efe9;
+  color-scheme: dark;
+}
+
 body {
   background-color: var(--background);
   color: var(--foreground);
@@ -30,6 +36,77 @@ body {
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* ── DARK MODE — OVERRIDE SISTEMATIS ──────────────────────────────────
+   SEBELUMNYA aplikasi ini 100% ditulis dgn kelas warna Tailwind langsung di setiap
+   komponen (bg-white, text-stone-700, dst) tanpa satu pun varian dark: — menulis ulang
+   className di puluhan file satu-satu terlalu lambat & rawan kelewatan. Pendekatan di sini:
+   timpa DEFINISI warna kelas yang paling sering dipakai (dicek langsung: bg-white 129x,
+   border-stone-200 155x, dst) lewat selector ".dark .kelas-asli" - begitu class .dark aktif
+   di <html> (lihat utils/theme.ts), SELURUH pemakaian kelas itu di manapun otomatis ikut
+   berubah, tanpa perlu edit tiap file komponen.
+
+   SENGAJA TIDAK di-override: bg-stone-800/900/950, border-stone-700/800, text-white,
+   text-stone-100/200/300 - warna itu dipakai utk elemen yang MEMANG didesain gelap dalam
+   konteks apa pun (mis. Focus Studio editor, kartu highlight gelap bertema Petro) - kalau
+   dibalik jadi terang, elemen itu malah jadi tidak konsisten dgn desain aslinya sendiri. */
+.dark .bg-white { background-color: #1c1a17; }
+.dark .bg-stone-50 { background-color: #201e1a; }
+.dark .bg-stone-100 { background-color: #27241f; }
+.dark .bg-stone-150 { background-color: #2b2823; }
+.dark .bg-stone-200 { background-color: #302c26; }
+.dark .bg-petro-bg-warm { background-color: #16150f; }
+.dark .bg-petro-bg-card { background-color: #1c1a17; }
+/* Warna hex arbitrer (bg-[#...]) yang dipakai sbg latar terang - tidak ke-cover otomatis oleh
+   nama kelas Tailwind standar di atas, ditimpa manual per nilai yang ditemukan. */
+.dark .bg-\[\#f2f4f0\] { background-color: #16150f !important; }
+.dark .bg-\[\#EFECE5\] { background-color: #16150f !important; }
+.dark .bg-\[\#EFECE5\]\/60 { background-color: #16150f !important; }
+.dark .bg-white\/70 { background-color: #1c1a17e6 !important; }
+.dark .bg-white\/95 { background-color: #1c1a17e6 !important; }
+
+.dark .text-stone-900,
+.dark .text-stone-880,
+.dark .text-stone-855,
+.dark .text-stone-850 { color: #f2f0ea; }
+.dark .text-stone-800,
+.dark .text-stone-755,
+.dark .text-stone-750 { color: #e2ded5; }
+.dark .text-stone-700,
+.dark .text-stone-650,
+.dark .text-stone-600 { color: #c7c1b5; }
+.dark .text-stone-500,
+.dark .text-stone-455,
+.dark .text-stone-450 { color: #9c9587; }
+.dark .text-stone-400,
+.dark .text-stone-300 { color: #7d7669; }
+.dark .text-petro-text-dark { color: #f2f0ea; }
+.dark .text-petro-text-light { color: #9c9587; }
+
+.dark .border-stone-100,
+.dark .border-stone-150,
+.dark .border-stone-200,
+.dark .border-stone-250,
+.dark .border-stone-300 { border-color: #3a352d; }
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(217, 167, 0, 0.18);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(217, 167, 0, 0.4);
+}
+.dark ::selection {
+  background: rgba(217, 167, 0, 0.25);
+  color: #f2f0ea;
+}
+.dark .toggle-track {
+  background-color: #45403a;
+}
+.dark .skeleton {
+  background: linear-gradient(90deg, #201e1a 25%, #2b2823 50%, #201e1a 75%);
+  background-size: 600px 100%;
 }
 
 /* ── Custom Scrollbar (Ambient Mode) ──────────────────── */

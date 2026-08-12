@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react";
-import { t } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 import type { ReportPage } from "@/utils/reportSections";
 
 interface PagesSidebarProps {
@@ -16,12 +15,8 @@ export default function PagesSidebar({
   pages,
 }: PagesSidebarProps) {
   const TOTAL_PAGES = pages.length;
-  const LAST_PAGE = pages[TOTAL_PAGES - 1].page;
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const tx = (key: string, fallback: string) => (mounted ? t(key) : fallback);
+  const LAST_PAGE = TOTAL_PAGES > 0 ? pages[TOTAL_PAGES - 1].page : "01";
+  const { tx } = useTx();
 
   return (
     <div className="lg:col-span-3 bg-white border border-stone-200/85 rounded-2xl p-4 shadow-sm flex flex-col justify-between h-auto lg:h-[520px]">
@@ -41,6 +36,13 @@ export default function PagesSidebar({
             />
           </svg>
         </h3>
+
+        {TOTAL_PAGES === 0 && (
+          <div className="mt-4 flex items-center gap-2 text-stone-400 text-xs font-bold py-4">
+            <div className="w-3.5 h-3.5 border-2 border-stone-300 border-t-petro-green rounded-full animate-spin" />
+            {tx("Memuat halaman...", "Memuat halaman...")}
+          </div>
+        )}
 
         <div className="mt-4 space-y-2">
           {pages.map((sec) => (
