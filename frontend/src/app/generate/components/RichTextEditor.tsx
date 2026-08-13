@@ -73,6 +73,13 @@ const TABLE_BORDER_COLORS = [
   "#2563eb",
 ];
 
+const ALIGN_LABELS: Record<"left" | "center" | "right" | "justify", [string, string]> = {
+  left: ["Align left", "Rata Kiri"],
+  center: ["Align center", "Rata Tengah"],
+  right: ["Align right", "Rata Kanan"],
+  justify: ["Align justify", "Rata Kiri-Kanan"],
+};
+
 // Extend TableCell/TableHeader dengan attribute borderColor kustom (disimpan sebagai inline
 // style di HTML, jadi ikut kesave/kebaca lewat editor.getHTML() seperti attribute bawaan lain).
 const TableCellWithBorder = TableCell.extend({
@@ -319,7 +326,7 @@ export default function RichTextEditor({
           type="button"
           onClick={() => editor.chain().focus().toggleBold().run()}
           className={btnClass(editor.isActive("bold"))}
-          title="Bold"
+          title={tx("Bold", "Tebal")}
         >
           <span className="font-black">B</span>
         </button>
@@ -327,7 +334,7 @@ export default function RichTextEditor({
           type="button"
           onClick={() => editor.chain().focus().toggleItalic().run()}
           className={btnClass(editor.isActive("italic"))}
-          title="Italic"
+          title={tx("Italic", "Miring")}
         >
           <span className="italic">I</span>
         </button>
@@ -335,7 +342,7 @@ export default function RichTextEditor({
           type="button"
           onClick={() => editor.chain().focus().toggleUnderline().run()}
           className={btnClass(editor.isActive("underline"))}
-          title="Underline"
+          title={tx("Underline", "Garis Bawah")}
         >
           <span className="underline">U</span>
         </button>
@@ -445,7 +452,7 @@ export default function RichTextEditor({
             type="button"
             onClick={() => editor.chain().focus().setTextAlign(align).run()}
             className={btnClass(editor.isActive({ textAlign: align }))}
-            title={tx(`Align ${align}`, `Align ${align}`)}
+            title={tx(...ALIGN_LABELS[align])}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"

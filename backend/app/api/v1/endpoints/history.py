@@ -17,7 +17,7 @@ from app.schemas.report import ReportResponse
 from app.models.report import Report
 from app.services.export_pdf import PDFExporter
 from app.services.export_ppt import PPTXExporter
-from app.services.report_render_logic import build_report_blocks, get_visual_style
+from app.services.report_render_logic import build_report_blocks, get_visual_style, resolve_theme_color
 
 from datetime import datetime, date
 
@@ -141,7 +141,17 @@ def get_report_preview_blocks(
     # baca 1 objek kecil ini utk tahu varian mana yg harus dirender (cover solid/split, chart
     # bar/donut/stacked, dst) — lihat pick_visual_style() di report_render_logic.py utk kenapa
     # ini WAJIB persis sama dgn yg dipakai export_pdf.py/export_ppt.py saat laporan ini diunduh.
-    return {"blocks": blocks, "visual_style": get_visual_style(db_report)}
+    # theme_color juga dikirim terpisah (bukan bagian visual_style) — dipakai frontend utk
+    # resolveThemeColors() supaya warna aksen preview sama dgn PDF/PPTX yang diunduh. SELALU
+    # nilai TERRESOLVE (resolve_theme_color, bukan db_report.theme_color mentah) — kalau user
+    # pilih "auto", kolom itu sendiri berisi literal "auto", bukan warna sungguhan; frontend
+    # butuh warna yang SUDAH DIKUNCI acakannya (lihat resolved_theme_color di pick_visual_style)
+    # supaya preview tidak diam-diam selalu jatuh ke hijau utk laporan yang temanya diacak.
+    return {
+        "blocks": blocks,
+        "visual_style": get_visual_style(db_report),
+        "theme_color": resolve_theme_color(db_report),
+    }
 
 @router.delete("/{report_id}")
 def remove_report(

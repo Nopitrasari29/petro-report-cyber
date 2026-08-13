@@ -29,6 +29,7 @@ interface Step4PreviewEditProps {
   pages: ReportPage[];
   blocks: ReportBlock[];
   visualStyle?: VisualStyle;
+  themeColor?: string;
   blocksLoading: boolean;
   blocksError: string;
   getPageText: (page: string) => string;
@@ -57,6 +58,7 @@ export default function Step4PreviewEdit({
   pages,
   blocks,
   visualStyle,
+  themeColor,
   blocksLoading,
   blocksError,
   getPageText,
@@ -127,7 +129,7 @@ export default function Step4PreviewEdit({
 
   return (
     <ScrollReveal animation="fadeInUp" className="space-y-6">
-      <div className="text-left">
+      <div className="text-left -mt-2 mb-3">
         <EditableReportTitle
           title={
             reportTitle ||
@@ -154,7 +156,7 @@ export default function Step4PreviewEdit({
             kalau daftar Pages lebih panjang — lihat catatan panjang di deklarasi
             previewCardHeight). Pagination di-mt-auto supaya tetap di dasar kartu. */}
         <div
-          className="lg:col-span-3 bg-white rounded-2xl border border-stone-200/80 p-5 shadow-sm premium-card-hover transition-colors flex flex-col min-h-0"
+          className="lg:col-span-3 bg-white rounded-2xl border border-stone-200/80 p-6 shadow-sm premium-card-hover transition-colors flex flex-col min-h-0"
           style={previewCardHeight ? { height: previewCardHeight } : undefined}
         >
           <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2 mb-4">
@@ -243,7 +245,11 @@ export default function Step4PreviewEdit({
                       : "bg-stone-50 text-stone-500 hover:bg-stone-100"
                   }`}
                 >
-                  {tab === "edit" ? tx("Edit Text", "Edit Text") : tx(tab, tab)}
+                  {tab === "edit"
+                    ? tx("Edit Text", "Edit Text")
+                    : tab === "preview"
+                      ? tx("Preview", "Pratinjau")
+                      : tx("Charts", "Grafik")}
                 </button>
               ))}
             </div>
@@ -395,7 +401,7 @@ export default function Step4PreviewEdit({
                 {!blocksLoading && !blocksError && activeBlock && (
                   <div className="w-full">
                     <div className="aspect-video overflow-y-auto bg-white border border-stone-300 shadow-sm">
-                      <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} />
+                      <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} themeColor={themeColor} />
                     </div>
                   </div>
                 )}
@@ -449,6 +455,7 @@ export default function Step4PreviewEdit({
                 <ChartNarasiLayout
                   blocks={blocks}
                   visualStyle={visualStyle}
+                  themeColor={themeColor}
                   blocksLoading={blocksLoading}
                   blocksError={blocksError}
                   tx={tx}
@@ -528,6 +535,7 @@ export default function Step4PreviewEdit({
         pages={pages}
         blocks={blocks}
         visualStyle={visualStyle}
+        themeColor={themeColor}
         blocksLoading={blocksLoading}
         blocksError={blocksError}
         inputFile={reportDetails?.input_file_name || "-"}

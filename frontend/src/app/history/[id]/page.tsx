@@ -73,6 +73,7 @@ export default function ReportDetailPage({
   // bawah bisa dihitung dari struktur laporan ASLI, sama seperti di Generate (Step 4).
   const [blocks, setBlocks] = useState<ReportBlock[]>([]);
   const [visualStyle, setVisualStyle] = useState<VisualStyle>(DEFAULT_VISUAL_STYLE);
+  const [themeColor, setThemeColor] = useState("green");
   const [blocksLoading, setBlocksLoading] = useState(true);
   const [blocksError, setBlocksError] = useState("");
 
@@ -82,10 +83,11 @@ export default function ReportDetailPage({
     setBlocksLoading(true);
     setBlocksError("");
     fetchReportBlocks(reportId, getToken())
-      .then(({ blocks: b, visualStyle: vs }) => {
+      .then(({ blocks: b, visualStyle: vs, themeColor: tc }) => {
         if (!cancelled) {
           setBlocks(b);
           setVisualStyle(vs);
+          setThemeColor(tc);
         }
       })
       .catch((err) => {
@@ -616,6 +618,7 @@ export default function ReportDetailPage({
               pages={pages}
               blocks={blocks}
               visualStyle={visualStyle}
+              themeColor={themeColor}
               blocksLoading={blocksLoading}
               blocksError={blocksError}
               isSaving={isSaving}

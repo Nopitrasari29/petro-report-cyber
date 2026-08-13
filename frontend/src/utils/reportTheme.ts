@@ -31,6 +31,32 @@ export const SEVERITY_COLOR: Record<string, string> = {
   informational: REPORT_COLORS.grayText,
 };
 
+// ── TEMA WARNA (report.theme_color) — HARUS identik dengan THEME_PALETTES di export_pdf.py/
+// export_ppt.py. Dipakai HANYA di elemen BRAND/struktural (cover, kicker, badge, border panel,
+// header tabel, chart "bar" utama) — SEVERITY_COLOR & CATEGORY_COLOR_RAMP di atas TIDAK ikut
+// tema, itu warna semantik/default hijau yang tetap (severity TIDAK boleh berubah oleh tema).
+export type ThemeColorKey = "green" | "navy" | "dark" | "gold";
+
+export interface ThemeColors {
+  main: string;
+  bg: string;
+  chart: string;
+  light: string;
+  soft: string;
+}
+
+export const THEME_PALETTES: Record<ThemeColorKey, ThemeColors> = {
+  green: { main: "#1B5E3C", bg: "#0E3B26", chart: "#2F7A52", light: "#C9A227", soft: "#E7C766" },
+  navy: { main: "#1E3A5F", bg: "#0F172A", chart: "#3B6EA5", light: "#C9A227", soft: "#E7C766" },
+  dark: { main: "#1F2937", bg: "#111827", chart: "#3F4B5C", light: "#C9A227", soft: "#E7C766" },
+  gold: { main: "#8A6A16", bg: "#4A3908", chart: "#C9A227", light: "#F3E3AE", soft: "#FBF3DC" },
+};
+
+export function resolveThemeColors(themeColor?: string | null): ThemeColors {
+  const key = (themeColor || "green").toLowerCase() as ThemeColorKey;
+  return THEME_PALETTES[key] || THEME_PALETTES.green;
+}
+
 export const TITLE_FONT = '"Bookman Old Style", Georgia, serif';
 export const BODY_FONT = 'Calibri, "Segoe UI", sans-serif';
 

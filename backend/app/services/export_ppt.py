@@ -34,7 +34,7 @@ from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
 
 from app.models.report import Report
-from app.services.report_render_logic import build_report_blocks, is_english, find_logo_path, get_visual_style
+from app.services.report_render_logic import build_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
 
 # ============================================================================
 # Palet & font — persis sesuai brief, dipakai di SETIAP elemen (termasuk chart/tabel)
@@ -53,6 +53,29 @@ RED_CRIT_BG = RGBColor(0xF8, 0xE2, 0xDE)
 PANEL_BORDER = RGBColor(0xE2, 0xE5, 0xDE)
 TITLE_FONT = "Bookman Old Style"
 BODY_FONT = "Calibri"
+
+# ── TEMA WARNA (report.theme_color) ─────────────────────────────────────────
+# Sama persis dengan export_pdf.py — GREEN_MAIN/BG/CHART & GOLD_MAIN/LIGHT di atas TETAP
+# dipakai langsung oleh SEVERITY_COLOR di bawah (warna severity TIDAK ikut tema apa pun).
+# THEME_PALETTES murni untuk elemen BRAND/struktural (cover, kicker, badge, border panel,
+# header tabel, chart "bar" utama) — nilai HEX identik dengan export_pdf.py/reportTheme.ts.
+NAVY_MAIN = RGBColor(0x1E, 0x3A, 0x5F)
+NAVY_BG = RGBColor(0x0F, 0x17, 0x2A)
+NAVY_CHART = RGBColor(0x3B, 0x6E, 0xA5)
+DARK_MAIN = RGBColor(0x1F, 0x29, 0x37)
+DARK_BG = RGBColor(0x11, 0x18, 0x27)
+DARK_CHART = RGBColor(0x3F, 0x4B, 0x5C)
+GOLD_BRONZE_MAIN = RGBColor(0x8A, 0x6A, 0x16)
+GOLD_BRONZE_BG = RGBColor(0x4A, 0x39, 0x08)
+GOLD_CREAM_LIGHT = RGBColor(0xF3, 0xE3, 0xAE)
+GOLD_CREAM_SOFT = RGBColor(0xFB, 0xF3, 0xDC)
+
+THEME_PALETTES: dict[str, dict[str, RGBColor]] = {
+    "green": {"main": GREEN_MAIN, "bg": GREEN_BG, "chart": GREEN_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
+    "navy": {"main": NAVY_MAIN, "bg": NAVY_BG, "chart": NAVY_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
+    "dark": {"main": DARK_MAIN, "bg": DARK_BG, "chart": DARK_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
+    "gold": {"main": GOLD_BRONZE_MAIN, "bg": GOLD_BRONZE_BG, "chart": GOLD_MAIN, "light": GOLD_CREAM_LIGHT, "soft": GOLD_CREAM_SOFT},
+}
 
 SLIDE_W = Inches(13.33)
 SLIDE_H = Inches(7.5)
@@ -138,10 +161,11 @@ def _send_to_back(slide, shape):
     spTree.insert(2, sp)
 
 
-def add_dark_bg(slide):
+def add_dark_bg(slide, theme: dict | None = None):
+    t = theme or THEME_PALETTES["green"]
     rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, SLIDE_W, SLIDE_H)
     rect.fill.solid()
-    rect.fill.fore_color.rgb = GREEN_BG
+    rect.fill.fore_color.rgb = t["bg"]
     rect.line.fill.background()
     _no_shadow(rect)
     _send_to_back(slide, rect)
@@ -161,7 +185,7 @@ def _fill_rect_bg(slide, x, y, w, h, color):
     return rect
 
 
-def add_corner_flourish(slide, corner: str = "bottom_right", area_x=0, area_y=0, area_w=None, area_h=None):
+def add_corner_flourish(slide, corner: str = "bottom_right", area_x=0, area_y=0, area_w=None, area_h=None, theme: dict | None = None):
     """Ornamen lengkung emas tipis (beberapa lingkaran konsentris tanpa isi, diposisikan
     menjorok keluar sudut) — dipakai HANYA di cover & penutup, mendekati motif referensi.
 
@@ -169,6 +193,7 @@ def add_corner_flourish(slide, corner: str = "bottom_right", area_x=0, area_y=0,
     acuan — dibutuhkan utk cover/penutup varian split-warna (`cover_style="split"`), di mana
     flourish HARUS tetap berada di dalam kolom hijau saja (bukan di sudut fisik slide penuh,
     yang sebagian jatuh di kolom emas kalau corner="bottom_left")."""
+    t = theme or THEME_PALETTES["green"]
     area_w = SLIDE_W if area_w is None else area_w
     area_h = SLIDE_H if area_h is None else area_h
     # Radius & inset dikecilkan dari versi awal (dulu sampai 3.25in, base offset 0.8/0.6in) —
@@ -185,7 +210,7 @@ def add_corner_flourish(slide, corner: str = "bottom_right", area_x=0, area_y=0,
     for r in (Inches(1.3), Inches(1.75), Inches(2.2), Inches(2.65)):
         oval = slide.shapes.add_shape(MSO_SHAPE.OVAL, base_x - r, base_y - r, r * 2, r * 2)
         oval.fill.background()
-        oval.line.color.rgb = GOLD_MAIN
+        oval.line.color.rgb = t["light"]
         oval.line.width = Pt(0.75)
         _no_shadow(oval)
 
@@ -366,8 +391,9 @@ def add_badge_list(slide, x, y, w, items, badge_color=GREEN_MAIN, row_h=Inches(0
     return cur_y
 
 
-def add_stat_card_grid(slide, x, y, w, h, items, cols=3, dark=True):
+def add_stat_card_grid(slide, x, y, w, h, items, cols=3, dark=True, theme: dict | None = None):
     """items: list of (value_str, label_str)."""
+    t = theme or THEME_PALETTES["green"]
     if not items:
         return y
     rows = math.ceil(len(items) / cols)
@@ -399,8 +425,8 @@ def add_stat_card_grid(slide, x, y, w, h, items, cols=3, dark=True):
         cy = y + r * (card_h + gap)
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, cy, card_w, card_h)
         card.fill.solid()
-        card.fill.fore_color.rgb = GREEN_MAIN if dark else IVORY
-        card.line.color.rgb = GOLD_MAIN
+        card.fill.fore_color.rgb = t["main"] if dark else IVORY
+        card.line.color.rgb = t["light"]
         card.line.width = Pt(0.75)
         _no_shadow(card)
         _modest_corner(card)
@@ -410,7 +436,7 @@ def add_stat_card_grid(slide, x, y, w, h, items, cols=3, dark=True):
         p1 = tf.paragraphs[0]
         p1.text = str(value)
         p1.alignment = PP_ALIGN.CENTER
-        _set_font(p1, TITLE_FONT, Pt(value_pt), bold=True, color=GOLD_MAIN if dark else GREEN_MAIN)
+        _set_font(p1, TITLE_FONT, Pt(value_pt), bold=True, color=t["light"] if dark else t["main"])
         p2 = tf.add_paragraph()
         p2.text = label
         p2.alignment = PP_ALIGN.CENTER
@@ -419,8 +445,9 @@ def add_stat_card_grid(slide, x, y, w, h, items, cols=3, dark=True):
     return y + rows * card_h + (rows - 1) * gap
 
 
-def add_ivory_panel(slide, x, y, w, h, icon_text, title_text, rows, mode="kv", footnote=None):
+def add_ivory_panel(slide, x, y, w, h, icon_text, title_text, rows, mode="kv", footnote=None, theme: dict | None = None):
     """mode="kv": rows = [(label, value), ...]. mode="legend": rows = [(color, label, pct), ...]."""
+    t = theme or THEME_PALETTES["green"]
     panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h)
     panel.fill.solid()
     panel.fill.fore_color.rgb = IVORY
@@ -434,11 +461,11 @@ def add_ivory_panel(slide, x, y, w, h, icon_text, title_text, rows, mode="kv", f
     inner_w = w - pad * 2
     cur_y = y + Inches(0.26)
 
-    add_badge_circle(slide, inner_x, cur_y, Inches(0.32), icon_text, GOLD_MAIN, font_size=Pt(11))
+    add_badge_circle(slide, inner_x, cur_y, Inches(0.32), icon_text, t["light"], font_size=Pt(11))
     title_box = slide.shapes.add_textbox(inner_x + Inches(0.45), cur_y + Inches(0.02), inner_w - Inches(0.45), Inches(0.32))
     tp = title_box.text_frame.paragraphs[0]
     tp.text = title_text.upper()
-    _set_font(tp, BODY_FONT, Pt(11.5), bold=True, color=GREEN_MAIN)
+    _set_font(tp, BODY_FONT, Pt(11.5), bold=True, color=t["main"])
     cur_y += Inches(0.55)
 
     # BUG YANG DIPERBAIKI: dulu tidak ada pengecekan terhadap `h` (tinggi panel tetap dari
@@ -471,7 +498,7 @@ def add_ivory_panel(slide, x, y, w, h, icon_text, title_text, rows, mode="kv", f
             lp = lbl_box.text_frame.paragraphs[0]
             lp.text = label
             lp.alignment = PP_ALIGN.LEFT
-            _set_font(lp, BODY_FONT, Pt(label_pt), bold=True, color=GREEN_MAIN)
+            _set_font(lp, BODY_FONT, Pt(label_pt), bold=True, color=t["main"])
             val_box = slide.shapes.add_textbox(inner_x, cur_y + Inches(0.22 * scale), inner_w, Inches(0.42))
             vtf = val_box.text_frame
             vtf.word_wrap = True
@@ -498,7 +525,7 @@ def add_ivory_panel(slide, x, y, w, h, icon_text, title_text, rows, mode="kv", f
             vp = val_box.text_frame.paragraphs[0]
             vp.text = pct
             vp.alignment = PP_ALIGN.RIGHT
-            _set_font(vp, BODY_FONT, Pt(label_pt), bold=True, color=GREEN_MAIN)
+            _set_font(vp, BODY_FONT, Pt(label_pt), bold=True, color=t["main"])
             label_height_in = _estimate_wrapped_height_in(label, label_pt, label_w_in)
             cur_y += Inches(max(0.34 * scale, (label_height_in + 0.06) * scale))
 
@@ -519,25 +546,27 @@ def add_ivory_panel(slide, x, y, w, h, icon_text, title_text, rows, mode="kv", f
     return panel
 
 
-def add_dark_panel(slide, x, y, w, h):
+def add_dark_panel(slide, x, y, w, h, theme: dict | None = None):
+    t = theme or THEME_PALETTES["green"]
     panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h)
     panel.fill.solid()
-    panel.fill.fore_color.rgb = GREEN_BG
-    panel.line.color.rgb = GOLD_MAIN
+    panel.fill.fore_color.rgb = t["bg"]
+    panel.line.color.rgb = t["light"]
     panel.line.width = Pt(1)
     _no_shadow(panel)
     _modest_corner(panel)
     return panel
 
 
-def add_critical_highlight_panel(slide, x, y, w, h, pct_text, sub_text, detail_text=None):
-    add_dark_panel(slide, x, y, w, h)
+def add_critical_highlight_panel(slide, x, y, w, h, pct_text, sub_text, detail_text=None, theme: dict | None = None):
+    t = theme or THEME_PALETTES["green"]
+    add_dark_panel(slide, x, y, w, h, theme=t)
     pad = Inches(0.3)
     big_box = slide.shapes.add_textbox(x + pad, y + Inches(0.35), w - pad * 2, Inches(1.0))
     bp = big_box.text_frame.paragraphs[0]
     bp.text = pct_text
     bp.alignment = PP_ALIGN.CENTER
-    _set_font(bp, TITLE_FONT, Pt(42), bold=True, color=GOLD_MAIN)
+    _set_font(bp, TITLE_FONT, Pt(42), bold=True, color=t["light"])
 
     sub_top_in = 1.35
     sub_box = slide.shapes.add_textbox(x + pad, y + Inches(sub_top_in), w - pad * 2, Inches(0.7))
@@ -560,17 +589,18 @@ def add_critical_highlight_panel(slide, x, y, w, h, pct_text, sub_text, detail_t
         dtf.word_wrap = True
         dp = dtf.paragraphs[0]
         dp.text = detail_text
-        _set_font(dp, BODY_FONT, Pt(10.5), color=GOLD_LIGHT)
+        _set_font(dp, BODY_FONT, Pt(10.5), color=t["soft"])
 
 
-def add_priority_panel(slide, x, y, w, h, title_text, items):
+def add_priority_panel(slide, x, y, w, h, title_text, items, theme: dict | None = None):
     """items: list of (letter, text)."""
-    add_dark_panel(slide, x, y, w, h)
+    t = theme or THEME_PALETTES["green"]
+    add_dark_panel(slide, x, y, w, h, theme=t)
     pad = Inches(0.28)
     title_box = slide.shapes.add_textbox(x + pad, y + Inches(0.22), w - pad * 2, Inches(0.32))
     tp = title_box.text_frame.paragraphs[0]
     tp.text = title_text.upper()
-    _set_font(tp, BODY_FONT, Pt(11.5), bold=True, color=GOLD_MAIN)
+    _set_font(tp, BODY_FONT, Pt(11.5), bold=True, color=t["light"])
     if not items:
         return
     content_start_y_in = Emu(y).inches + 0.7
@@ -591,7 +621,7 @@ def add_priority_panel(slide, x, y, w, h, title_text, items):
     row_min_in = 0.62 * scale
     cur_y = Inches(content_start_y_in)
     for letter, text in items:
-        add_badge_circle(slide, x + pad, cur_y, badge_d, letter, GOLD_MAIN, font_size=Pt(13 * scale))
+        add_badge_circle(slide, x + pad, cur_y, badge_d, letter, t["light"], font_size=Pt(13 * scale))
         box = slide.shapes.add_textbox(x + pad + Inches(0.5), cur_y + Inches(0.02), w - pad * 2 - Inches(0.5), Inches(0.55))
         btf = box.text_frame
         btf.word_wrap = True
@@ -618,15 +648,16 @@ def add_ai_insight_strip(slide, x, y, w, text):
     return box
 
 
-def add_pill_stat(slide, x, y, w, h, text):
+def add_pill_stat(slide, x, y, w, h, text, theme: dict | None = None):
+    t = theme or THEME_PALETTES["green"]
     pill = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h)
     try:
         pill.adjustments[0] = 0.5
     except Exception:
         pass
     pill.fill.solid()
-    pill.fill.fore_color.rgb = GREEN_MAIN
-    pill.line.color.rgb = GOLD_MAIN
+    pill.fill.fore_color.rgb = t["main"]
+    pill.line.color.rgb = t["light"]
     pill.line.width = Pt(1)
     _no_shadow(pill)
     tf = pill.text_frame
@@ -634,12 +665,13 @@ def add_pill_stat(slide, x, y, w, h, text):
     p = tf.paragraphs[0]
     p.text = text
     p.alignment = PP_ALIGN.CENTER
-    _set_font(p, BODY_FONT, Pt(13), bold=True, color=GOLD_MAIN)
+    _set_font(p, BODY_FONT, Pt(13), bold=True, color=t["light"])
 
 
-def add_asset_card_row(slide, x, y, w, h, items):
+def add_asset_card_row(slide, x, y, w, h, items, theme: dict | None = None):
     """items: list of (badge_num, title, stat_text, desc_text). `h` adalah tinggi ZONA yang
     dialokasikan pemanggil (bisa jauh lebih besar dari kebutuhan konten sebenarnya)."""
+    t = theme or THEME_PALETTES["green"]
     n = len(items)
     if n == 0:
         return y
@@ -667,12 +699,12 @@ def add_asset_card_row(slide, x, y, w, h, items):
         cx = x + idx * (card_w + gap)
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, row_y, card_w, card_h)
         card.fill.solid()
-        card.fill.fore_color.rgb = GREEN_MAIN
-        card.line.color.rgb = GOLD_MAIN
+        card.fill.fore_color.rgb = t["main"]
+        card.line.color.rgb = t["light"]
         card.line.width = Pt(0.75)
         _no_shadow(card)
         _modest_corner(card)
-        add_badge_circle(slide, cx + pad, row_y + pad, Inches(0.42), num, GOLD_MAIN, font_size=Pt(15))
+        add_badge_circle(slide, cx + pad, row_y + pad, Inches(0.42), num, t["light"], font_size=Pt(15))
         title_box = slide.shapes.add_textbox(cx + pad, row_y + pad + Inches(0.55), card_w - pad * 2, Inches(0.55))
         ttf = title_box.text_frame
         ttf.word_wrap = True
@@ -682,7 +714,7 @@ def add_asset_card_row(slide, x, y, w, h, items):
         stat_box = slide.shapes.add_textbox(cx + pad, row_y + pad + Inches(1.1), card_w - pad * 2, Inches(0.35))
         sp = stat_box.text_frame.paragraphs[0]
         sp.text = stat
-        _set_font(sp, BODY_FONT, Pt(13), bold=True, color=GOLD_MAIN)
+        _set_font(sp, BODY_FONT, Pt(13), bold=True, color=t["light"])
         desc_box = slide.shapes.add_textbox(cx + pad, row_y + pad + Inches(1.55), card_w - pad * 2, card_h - Inches(1.55) - pad * 2)
         dtf = desc_box.text_frame
         dtf.word_wrap = True
@@ -692,12 +724,13 @@ def add_asset_card_row(slide, x, y, w, h, items):
     return row_y + card_h
 
 
-def add_asset_ranked_bars(slide, x, y, w, items, row_h=Inches(1.0)):
+def add_asset_ranked_bars(slide, x, y, w, items, row_h=Inches(1.0), theme: dict | None = None):
     """Alternatif visual KETIGA (selain add_asset_card_row/add_podium_row) — daftar entitas
     berperingkat dengan batang proporsional horizontal per item (badge nomor + nama + batang
     + angka) — titik variasi tampilan tambahan utk asset_cards (lihat `asset_style`). items:
     list of dict {num,name,stat,count}. Dipakai utk jumlah item BERAPA PUN (podium hanya
     cocok tepat 3)."""
+    t = theme or THEME_PALETTES["green"]
     max_count = max((it.get("count") or 0) for it in items) or 1
     badge_d = Inches(0.4)
     track_h = Inches(0.16)
@@ -708,7 +741,7 @@ def add_asset_ranked_bars(slide, x, y, w, items, row_h=Inches(1.0)):
     for it in items:
         frac = (it.get("count") or 0) / max_count if max_count else 0
         frac = max(frac, 0.04)
-        add_badge_circle(slide, x, cur_y, badge_d, it["num"], GOLD_MAIN, font_size=Pt(13))
+        add_badge_circle(slide, x, cur_y, badge_d, it["num"], t["light"], font_size=Pt(13))
         name_box = slide.shapes.add_textbox(track_x, cur_y - Inches(0.03), track_w, Inches(0.32))
         np_ = name_box.text_frame.paragraphs[0]
         np_.text = it["name"]
@@ -717,19 +750,19 @@ def add_asset_ranked_bars(slide, x, y, w, items, row_h=Inches(1.0)):
         sp = stat_box.text_frame.paragraphs[0]
         sp.text = it["stat"]
         sp.alignment = PP_ALIGN.RIGHT
-        _set_font(sp, BODY_FONT, Pt(12), bold=True, color=GOLD_MAIN)
+        _set_font(sp, BODY_FONT, Pt(12), bold=True, color=t["light"])
 
         track_y = cur_y + Inches(0.36)
         track = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, track_x, track_y, track_w, track_h)
         track.fill.solid()
-        track.fill.fore_color.rgb = GREEN_CHART
+        track.fill.fore_color.rgb = t["chart"]
         track.line.fill.background()
         _no_shadow(track)
         _modest_corner(track, frac=0.5)
         fill_w = Inches(max(Emu(track_w).inches * frac, 0.15))
         fill = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, track_x, track_y, fill_w, track_h)
         fill.fill.solid()
-        fill.fill.fore_color.rgb = GOLD_MAIN
+        fill.fill.fore_color.rgb = t["light"]
         fill.line.fill.background()
         _no_shadow(fill)
         _modest_corner(fill, frac=0.5)
@@ -737,17 +770,18 @@ def add_asset_ranked_bars(slide, x, y, w, items, row_h=Inches(1.0)):
     return cur_y
 
 
-def add_podium_row(slide, x, y, w, h, items):
+def add_podium_row(slide, x, y, w, h, items, theme: dict | None = None):
     """items: TEPAT 3 dict {"num","name","stat"} — analog `_podium_row()` di export_pdf.py.
     Titik variasi tampilan utk asset_cards (lihat `asset_style` di generate_ppt_report),
     alternatif dari `add_asset_card_row` (baris kartu rata) — rank #1 di TENGAH & PALING
     TINGGI, meniru podium juara, dipakai kalau kebetulan item persis 3 (ranking top-3)."""
+    t = theme or THEME_PALETTES["green"]
     if len(items) != 3:
         return Emu(y).inches + Emu(h).inches
     order = [1, 0, 2]  # tampil sbg [rank2, rank1, rank3] spy rank1 di tengah
     ranked = [items[i] for i in order]
     height_frac = [0.73, 1.0, 0.55]
-    colors = [GREEN_MAIN, GOLD_MAIN, GREEN_CHART]
+    colors = [t["main"], t["light"], t["chart"]]
     gap = Inches(0.35)
     col_w = (w - gap * 2) / 3
     label_zone_in = 1.0
@@ -788,19 +822,20 @@ def add_podium_row(slide, x, y, w, h, items):
     return base_bottom_in
 
 
-def add_recommendation_timeline(slide, x, y, w, h, items):
+def add_recommendation_timeline(slide, x, y, w, h, items, theme: dict | None = None):
     """items: 2-6 dict {"num","title","detail"} — analog `_timeline_html()` di
     export_pdf.py. Titik variasi tampilan utk recommendations (lihat `recommendation_style`
     di generate_ppt_report), alternatif dari grid kartu — garis horizontal di tengah `h`
     dengan node bergantian di ATAS/BAWAH garis, dipakai kalau jumlah item pas 2-6 (bukan
     grid biasa)."""
+    t = theme or THEME_PALETTES["green"]
     n = len(items)
     if not (2 <= n <= 6):
         return False
     mid_y = y + h // 2
     line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, mid_y - Pt(1), w, Pt(2))
     line.fill.solid()
-    line.fill.fore_color.rgb = GOLD_MAIN
+    line.fill.fore_color.rgb = t["light"]
     line.line.fill.background()
     _no_shadow(line)
 
@@ -813,8 +848,8 @@ def add_recommendation_timeline(slide, x, y, w, h, items):
         above = (idx % 2 == 0)
         node = slide.shapes.add_shape(MSO_SHAPE.OVAL, node_cx - node_d // 2, mid_y - node_d // 2, node_d, node_d)
         node.fill.solid()
-        node.fill.fore_color.rgb = GREEN_MAIN
-        node.line.color.rgb = GOLD_MAIN
+        node.fill.fore_color.rgb = t["main"]
+        node.line.color.rgb = t["light"]
         node.line.width = Pt(1.5)
         _no_shadow(node)
         ntf = node.text_frame
@@ -847,13 +882,14 @@ def add_recommendation_timeline(slide, x, y, w, h, items):
     return True
 
 
-def add_recommendation_banner_list(slide, x, y, w, items, title_pt=13, detail_pt=10.5, max_y=None):
+def add_recommendation_banner_list(slide, x, y, w, items, title_pt=13, detail_pt=10.5, max_y=None, theme: dict | None = None):
     """Alternatif visual KETIGA (selain grid kartu/add_recommendation_timeline) — daftar
     rekomendasi sebagai banner selebar `w` bertumpuk vertikal (badge nomor + judul + detail)
     — titik variasi tampilan tambahan utk recommendations (lihat `recommendation_style`),
     dipakai utk jumlah item BERAPA PUN (timeline dibatasi 2-6). `max_y` opsional — kalau
     total tinggi bakal melebihi, font & tinggi banner dikecilkan proporsional (pola sama
     dengan add_badge_list/add_priority_panel di file ini)."""
+    t = theme or THEME_PALETTES["green"]
     if not items:
         return y
     badge_d = Inches(0.4)
@@ -888,7 +924,7 @@ def add_recommendation_banner_list(slide, x, y, w, items, title_pt=13, detail_pt
         banner.line.width = Pt(0.75)
         _no_shadow(banner)
         _modest_corner(banner)
-        add_badge_circle(slide, x + pad, cur_y + pad, Inches(0.4 * scale), it["num"], GOLD_MAIN, font_size=Pt(13 * scale))
+        add_badge_circle(slide, x + pad, cur_y + pad, Inches(0.4 * scale), it["num"], t["light"], font_size=Pt(13 * scale))
         # BUG YANG DIPERBAIKI: title_box dulu tinggi TETAP 0.4in, sementara det_box di bawahnya
         # diposisikan berdasarkan estimasi tinggi KONTEN sebenarnya (title_h_in, sering < 0.4in
         # utk judul 1 baris) — box tetap 0.4in penuh jadi bounding-box-nya menimpa det_box
@@ -957,11 +993,12 @@ def add_native_bar_chart(slide, x, y, cx, cy, categories, values, colors=None, h
     return gframe
 
 
-def add_native_doughnut_chart(slide, x, y, cx, cy, categories, values, colors=None):
+def add_native_doughnut_chart(slide, x, y, cx, cy, categories, values, colors=None, theme: dict | None = None):
     """Alternatif visual utk distribusi kategori (selain add_native_bar_chart) — titik
     variasi tampilan antar generate (lihat `category_style` di generate_ppt_report), chart
     doughnut NATIVE PowerPoint (bukan gambar statis) supaya tetap bisa diedit user kalau mau,
     konsisten dengan seluruh chart lain di file ini."""
+    t = theme or THEME_PALETTES["green"]
     chart_data = CategoryChartData()
     chart_data.categories = categories
     chart_data.add_series("Jumlah", values)
@@ -988,7 +1025,7 @@ def add_native_doughnut_chart(slide, x, y, cx, cy, categories, values, colors=No
     for i, pt in enumerate(series.points):
         pt.format.fill.solid()
         pt.format.fill.fore_color.rgb = palette[i % len(palette)]
-        pt.format.line.color.rgb = GREEN_BG
+        pt.format.line.color.rgb = t["bg"]
         pt.format.line.width = Pt(1.5)
     return gframe
 
@@ -1021,7 +1058,8 @@ def add_stacked_proportion_bar(slide, x, y, w, values, colors=None, height=Inche
     return Emu(y).inches + Emu(height).inches
 
 
-def add_native_table(slide, x, y, w, h, headers, rows, highlight_indices=None):
+def add_native_table(slide, x, y, w, h, headers, rows, highlight_indices=None, theme: dict | None = None):
+    t = theme or THEME_PALETTES["green"]
     highlight_indices = highlight_indices or set()
     n_rows = len(rows) + 1
     n_cols = len(headers)
@@ -1031,7 +1069,7 @@ def add_native_table(slide, x, y, w, h, headers, rows, highlight_indices=None):
     for c, htext in enumerate(headers):
         cell = table.cell(0, c)
         cell.fill.solid()
-        cell.fill.fore_color.rgb = GREEN_BG
+        cell.fill.fore_color.rgb = t["bg"]
         cell.margin_left = cell.margin_right = Inches(0.08)
         p = cell.text_frame.paragraphs[0]
         p.text = htext
@@ -1055,17 +1093,18 @@ def add_native_table(slide, x, y, w, h, headers, rows, highlight_indices=None):
     return gframe
 
 
-def add_split_cover_slide(prs, block, flourish_corner, logo_path):
+def add_split_cover_slide(prs, block, flourish_corner, logo_path, theme: dict | None = None):
     """Varian cover 2-kolom warna penuh (emas kiri + hijau kanan, angka hero besar di kolom
     emas) — analog `_split_cover_td()` di export_pdf.py, titik variasi tampilan (lihat
     `cover_style` di generate_ppt_report), alternatif dari cover 1-warna standar."""
+    t = theme or THEME_PALETTES["green"]
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     left_w = Inches(13.33 * 0.37)
     right_x = left_w
     right_w = SLIDE_W - left_w
-    _fill_rect_bg(slide, 0, 0, left_w, SLIDE_H, GOLD_MAIN)
-    _fill_rect_bg(slide, right_x, 0, right_w, SLIDE_H, GREEN_BG)
-    add_corner_flourish(slide, flourish_corner, area_x=right_x, area_w=right_w)
+    _fill_rect_bg(slide, 0, 0, left_w, SLIDE_H, t["light"])
+    _fill_rect_bg(slide, right_x, 0, right_w, SLIDE_H, t["bg"])
+    add_corner_flourish(slide, flourish_corner, area_x=right_x, area_w=right_w, theme=t)
     add_logo(slide, logo_path)
 
     value, label = block.get("hero_stat") or (str(block.get("total_records", "")), "Total Data")
@@ -1083,7 +1122,7 @@ def add_split_cover_slide(prs, block, flourish_corner, logo_path):
     vtf.word_wrap = True
     vp = vtf.paragraphs[0]
     vp.text = str(value)
-    _set_font(vp, TITLE_FONT, Pt(54), bold=True, color=GREEN_BG)
+    _set_font(vp, TITLE_FONT, Pt(54), bold=True, color=t["bg"])
 
     label_top_in = 3.15 + value_h_in + 0.15
     label_box = slide.shapes.add_textbox(Inches(0.45), Inches(label_top_in), left_w - Inches(0.7), Inches(0.4))
@@ -1112,7 +1151,7 @@ def add_split_cover_slide(prs, block, flourish_corner, logo_path):
     kicker2_box = slide.shapes.add_textbox(text_x, Inches(2.15), text_w, Inches(0.3))
     kp2 = kicker2_box.text_frame.paragraphs[0]
     kp2.text = block["kicker"].upper()
-    _set_font(kp2, BODY_FONT, Pt(10.5), bold=True, color=GOLD_MAIN)
+    _set_font(kp2, BODY_FONT, Pt(10.5), bold=True, color=t["light"])
 
     title_top_in = 2.5
     title_height_in = _estimate_wrapped_height_in(title_text, title_size_pt, Emu(text_w).inches)
@@ -1138,23 +1177,24 @@ def add_split_cover_slide(prs, block, flourish_corner, logo_path):
     _set_font(p1, BODY_FONT, Pt(12), color=WHITE)
     p2 = itf.add_paragraph()
     p2.text = block["info_line"]
-    _set_font(p2, BODY_FONT, Pt(12), color=GOLD_LIGHT)
+    _set_font(p2, BODY_FONT, Pt(12), color=t["soft"])
     p2.space_before = Pt(6)
 
     return slide
 
 
-def add_split_closing_slide(prs, block, flourish_corner):
+def add_split_closing_slide(prs, block, flourish_corner, theme: dict | None = None):
     """Varian penutup berpasangan dgn `add_split_cover_slide` — angka hero yang SAMA
     ditampilkan lagi di kolom emas kiri (mengulang temuan utama, gaya "bookend" laporan
     eksekutif), analog `_split_closing_td()` di export_pdf.py."""
+    t = theme or THEME_PALETTES["green"]
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     left_w = Inches(13.33 * 0.37)
     right_x = left_w
     right_w = SLIDE_W - left_w
-    _fill_rect_bg(slide, 0, 0, left_w, SLIDE_H, GOLD_MAIN)
-    _fill_rect_bg(slide, right_x, 0, right_w, SLIDE_H, GREEN_BG)
-    add_corner_flourish(slide, flourish_corner, area_x=right_x, area_w=right_w)
+    _fill_rect_bg(slide, 0, 0, left_w, SLIDE_H, t["light"])
+    _fill_rect_bg(slide, right_x, 0, right_w, SLIDE_H, t["bg"])
+    add_corner_flourish(slide, flourish_corner, area_x=right_x, area_w=right_w, theme=t)
 
     value, label = block.get("hero_stat") or ("", "")
     value_w_in = Emu(left_w - Inches(0.6)).inches
@@ -1164,7 +1204,7 @@ def add_split_closing_slide(prs, block, flourish_corner):
     vtf.word_wrap = True
     vp = vtf.paragraphs[0]
     vp.text = str(value)
-    _set_font(vp, TITLE_FONT, Pt(42), bold=True, color=GREEN_BG)
+    _set_font(vp, TITLE_FONT, Pt(42), bold=True, color=t["bg"])
 
     label_top_in = 3.15 + value_h_in + 0.12
     label_box = slide.shapes.add_textbox(Inches(0.45), Inches(label_top_in), left_w - Inches(0.7), Inches(0.4))
@@ -1193,7 +1233,7 @@ def add_split_closing_slide(prs, block, flourish_corner):
     note_box = slide.shapes.add_textbox(text_x, Inches(note_top_in), text_w, Inches(0.4))
     np_ = note_box.text_frame.paragraphs[0]
     np_.text = block["note"]
-    _set_font(np_, BODY_FONT, Pt(11), italic=True, color=GOLD_LIGHT)
+    _set_font(np_, BODY_FONT, Pt(11), italic=True, color=t["soft"])
 
     return slide
 
@@ -1239,20 +1279,28 @@ class _PptBlockContext:
     recommendation_style: str
     kicker_ringkasan: str
     kicker_analisis: str
+    # Palet warna tema (report.theme_color) — 5 peran, sama persis dgn export_pdf.py. Dipakai
+    # di elemen BRAND/struktural — TIDAK PERNAH di SEVERITY_COLOR/kondisional is_critical.
+    accent_main: RGBColor
+    accent_bg: RGBColor
+    accent_chart: RGBColor
+    accent_light: RGBColor
+    accent_soft: RGBColor
+    theme: dict | None = None
     cover_hero_stat: dict | None = None
 
 
 def _build_cover_slide(block: dict, ctx: _PptBlockContext):
     ctx.cover_hero_stat = block.get("hero_stat")
     if ctx.cover_style == "split":
-        add_split_cover_slide(ctx.prs, block, ctx.flourish_corner, ctx.logo_path)
+        add_split_cover_slide(ctx.prs, block, ctx.flourish_corner, ctx.logo_path, theme=ctx.theme)
         return None
     cover = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
-    add_dark_bg(cover)
-    add_corner_flourish(cover, ctx.flourish_corner)
+    add_dark_bg(cover, theme=ctx.theme)
+    add_corner_flourish(cover, ctx.flourish_corner, theme=ctx.theme)
     add_logo(cover, ctx.logo_path)
 
-    add_kicker(cover, block["kicker"], color=GOLD_MAIN, y=Inches(1.7))
+    add_kicker(cover, block["kicker"], color=ctx.accent_light, y=Inches(1.7))
 
     # Ukuran font judul menyesuaikan panjangnya (laporan bisa dari domain apa saja
     # - SOC, keuangan, KPI, dll - judulnya bisa jauh lebih panjang/pendek dari
@@ -1293,7 +1341,7 @@ def _build_cover_slide(block: dict, ctx: _PptBlockContext):
     _set_font(p1, BODY_FONT, Pt(12.5), color=WHITE)
     p2 = itf.add_paragraph()
     p2.text = block["info_line"]
-    _set_font(p2, BODY_FONT, Pt(12.5), color=GOLD_LIGHT)
+    _set_font(p2, BODY_FONT, Pt(12.5), color=ctx.accent_soft)
     p2.space_before = Pt(6)
 
     footer_l = cover.shapes.add_textbox(MARGIN_X, SLIDE_H - Inches(0.55), Inches(5), Inches(0.3))
@@ -1306,7 +1354,7 @@ def _build_cover_slide(block: dict, ctx: _PptBlockContext):
 def _build_intro_slide(block: dict, ctx: _PptBlockContext):
     bg_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_logo(bg_slide, ctx.logo_path)
-    add_kicker(bg_slide, block["kicker"], color=GREEN_MAIN)
+    add_kicker(bg_slide, block["kicker"], color=ctx.accent_main)
     title_bottom = add_title(bg_slide, block["title"])
 
     left_w = Inches(7.0) if ctx.panel_side == "right" else Inches(4.9)
@@ -1325,7 +1373,7 @@ def _build_intro_slide(block: dict, ctx: _PptBlockContext):
     _set_font(pp, BODY_FONT, Pt(13), color=GRAY_TEXT)
 
     objectives = [(o["num"], o["title"], o["detail"]) for o in block["objectives"]]
-    add_badge_list(bg_slide, left_x, Inches(content_top + 1.4), left_w, objectives, badge_color=GREEN_MAIN, row_h=Inches(1.05), max_y=SLIDE_H - Inches(0.4))
+    add_badge_list(bg_slide, left_x, Inches(content_top + 1.4), left_w, objectives, badge_color=ctx.accent_main, row_h=Inches(1.05), max_y=SLIDE_H - Inches(0.4))
 
     scope = block["scope"]
     scope_rows = [
@@ -1337,16 +1385,16 @@ def _build_intro_slide(block: dict, ctx: _PptBlockContext):
     add_ivory_panel(
         bg_slide, panel_x, Inches(content_top), panel_w, Inches(4.3),
         "i", scope["panel_title"], scope_rows, mode="kv",
-        footnote=scope["footnote"],
+        footnote=scope["footnote"], theme=ctx.theme,
     )
     return bg_slide
 
 
 def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     exec_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
-    add_dark_bg(exec_slide)
+    add_dark_bg(exec_slide, theme=ctx.theme)
     add_logo(exec_slide, ctx.logo_path)
-    add_kicker(exec_slide, ctx.kicker_ringkasan, color=GOLD_MAIN)
+    add_kicker(exec_slide, ctx.kicker_ringkasan, color=ctx.accent_light)
     title_bottom = add_title(exec_slide, block["heading"], color=WHITE)
 
     # BUG NYATA YANG DIPERBAIKI (dilaporkan user, disertai tangkapan layar): grid
@@ -1376,7 +1424,7 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
         if available_in > content_total_in:
             grid_y_in += (available_in - content_total_in) / 2
 
-    grid_bottom = add_stat_card_grid(exec_slide, MARGIN_X, Inches(grid_y_in), CONTENT_W, Inches(grid_h_in), block["stat_items"], cols=ctx.stat_cols, dark=True)
+    grid_bottom = add_stat_card_grid(exec_slide, MARGIN_X, Inches(grid_y_in), CONTENT_W, Inches(grid_h_in), block["stat_items"], cols=ctx.stat_cols, dark=True, theme=ctx.theme)
 
     # BUG YANG DIPERBAIKI: box caption dulu tinggi TETAP 0.9in apa pun panjang
     # teksnya — kalau blok grid+caption digeser turun (lihat centering di atas),
@@ -1389,14 +1437,14 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     ctf.word_wrap = True
     cp = ctf.paragraphs[0]
     cp.text = block["caption"]
-    _set_font(cp, BODY_FONT, Pt(11.5), italic=True, color=GOLD_LIGHT)
+    _set_font(cp, BODY_FONT, Pt(11.5), italic=True, color=ctx.accent_soft)
     return exec_slide
 
 
 def _build_dynamic_section_slide(block: dict, ctx: _PptBlockContext):
     dyn_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_logo(dyn_slide, ctx.logo_path)
-    add_kicker(dyn_slide, block["kicker"], color=GREEN_MAIN)
+    add_kicker(dyn_slide, block["kicker"], color=ctx.accent_main)
     title_bottom = add_title(dyn_slide, block["title"])
     content_top = max(title_bottom + 0.2, 1.6)
 
@@ -1426,18 +1474,18 @@ def _build_dynamic_section_slide(block: dict, ctx: _PptBlockContext):
     if has_aux:
         if block.get("aux_stat"):
             value, label = block["aux_stat"]
-            add_critical_highlight_panel(dyn_slide, panel_x, Inches(content_top), panel_w, Inches(2.6), value, label)
+            add_critical_highlight_panel(dyn_slide, panel_x, Inches(content_top), panel_w, Inches(2.6), value, label, theme=ctx.theme)
         else:
             rows = [(it["label"], it["value"]) for it in block["aux_list"]]
             panel_title = "Data Highlight" if is_english(ctx.report) else "Sorotan Data"
-            add_ivory_panel(dyn_slide, panel_x, Inches(content_top), panel_w, Inches(3.4), "i", panel_title, rows, mode="kv")
+            add_ivory_panel(dyn_slide, panel_x, Inches(content_top), panel_w, Inches(3.4), "i", panel_title, rows, mode="kv", theme=ctx.theme)
     return dyn_slide
 
 
 def _build_category_distribution_slide(block: dict, ctx: _PptBlockContext):
     cat_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_logo(cat_slide, ctx.logo_path)
-    add_kicker(cat_slide, ctx.kicker_analisis, color=GREEN_MAIN)
+    add_kicker(cat_slide, ctx.kicker_analisis, color=ctx.accent_main)
     title_bottom = add_title(cat_slide, block["title"])
 
     intro_y = max(title_bottom + 0.15, 1.45)
@@ -1451,8 +1499,11 @@ def _build_category_distribution_slide(block: dict, ctx: _PptBlockContext):
     body_y = intro_y + 0.65
     cat_has_caption = bool(block.get("ai_caption"))
     cat_body_h = Inches(4.0) if cat_has_caption else Inches(4.6)
+    # Ramp warna kategori/status DITURUNKAN dari tema (report.theme_color), bukan konstanta
+    # hijau/emas tetap — sama seperti export_pdf.py. GRAY_TEXT tetap warna ke-5 (netral).
+    ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
     legend_rows = [
-        (CATEGORY_COLOR_RAMP[l["color_index"]], l["name"], f'{l["pct"]}%')
+        (ramp[l["color_index"] % len(ramp)], l["name"], f'{l["pct"]}%')
         for l in block["legend"]
     ]
     # Titik variasi tampilan: bar horizontal (warna accent hijau/emas gantian),
@@ -1470,14 +1521,14 @@ def _build_category_distribution_slide(block: dict, ctx: _PptBlockContext):
         # add_ivory_panel PPT tidak menyusut sendiri ke kontennya (beda dari versi
         # PDF), jadi kalau dikasih tinggi generus, hasilnya kartu besar nyaris kosong.
         bar_h = Inches(0.55)
-        seg_colors = [CATEGORY_COLOR_RAMP[l["color_index"]] for l in block["legend"]]
+        seg_colors = [ramp[l["color_index"] % len(ramp)] for l in block["legend"]]
         add_stacked_proportion_bar(cat_slide, MARGIN_X, Inches(body_y), CONTENT_W, block["values"], colors=seg_colors, height=bar_h)
         legend_y_in = body_y + Emu(bar_h).inches + 0.35
         legend_h_in = 0.85 + 0.4 * len(legend_rows) + (0.35 if block["footnote"] else 0)
         add_ivory_panel(
             cat_slide, MARGIN_X, Inches(legend_y_in), CONTENT_W, Inches(legend_h_in),
             "%", block["legend_panel_title"], legend_rows, mode="legend",
-            footnote=block["footnote"],
+            footnote=block["footnote"], theme=ctx.theme,
         )
         cat_content_bottom_in = legend_y_in + legend_h_in
     else:
@@ -1491,6 +1542,7 @@ def _build_category_distribution_slide(block: dict, ctx: _PptBlockContext):
             add_native_doughnut_chart(
                 cat_slide, donut_x, donut_y, Inches(donut_side), Inches(donut_side),
                 block["categories"], block["values"],
+                colors=[ramp[l["color_index"] % len(ramp)] for l in block["legend"]], theme=ctx.theme,
             )
         else:
             add_native_bar_chart(
@@ -1501,7 +1553,7 @@ def _build_category_distribution_slide(block: dict, ctx: _PptBlockContext):
         add_ivory_panel(
             cat_slide, panel_x2, Inches(body_y), Inches(4.9), cat_body_h,
             "%", block["legend_panel_title"], legend_rows, mode="legend",
-            footnote=block["footnote"],
+            footnote=block["footnote"], theme=ctx.theme,
         )
     if cat_has_caption:
         add_ai_insight_strip(cat_slide, MARGIN_X, Inches(cat_content_bottom_in + 0.12), CONTENT_W, block["ai_caption"])
@@ -1511,7 +1563,7 @@ def _build_category_distribution_slide(block: dict, ctx: _PptBlockContext):
 def _build_severity_distribution_slide(block: dict, ctx: _PptBlockContext):
     sev_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_logo(sev_slide, ctx.logo_path)
-    add_kicker(sev_slide, ctx.kicker_analisis, color=GREEN_MAIN)
+    add_kicker(sev_slide, ctx.kicker_analisis, color=ctx.accent_main)
     title_bottom = add_title(sev_slide, block["title"])
 
     intro_y = max(title_bottom + 0.15, 1.45)
@@ -1536,7 +1588,7 @@ def _build_severity_distribution_slide(block: dict, ctx: _PptBlockContext):
 
     add_critical_highlight_panel(
         sev_slide, sev_panel_x, Inches(sev_body_y), Inches(4.3), sev_body_h,
-        f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"],
+        f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"], theme=ctx.theme,
     )
     if sev_has_caption:
         add_ai_insight_strip(sev_slide, MARGIN_X, Inches(sev_body_y) + sev_body_h + Inches(0.12), CONTENT_W, block["ai_caption"])
@@ -1546,7 +1598,7 @@ def _build_severity_distribution_slide(block: dict, ctx: _PptBlockContext):
 def _build_status_distribution_slide(block: dict, ctx: _PptBlockContext):
     status_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_logo(status_slide, ctx.logo_path)
-    add_kicker(status_slide, ctx.kicker_analisis, color=GREEN_MAIN)
+    add_kicker(status_slide, ctx.kicker_analisis, color=ctx.accent_main)
     title_bottom = add_title(status_slide, block["title"])
 
     intro_y = max(title_bottom + 0.15, 1.45)
@@ -1565,9 +1617,10 @@ def _build_status_distribution_slide(block: dict, ctx: _PptBlockContext):
     # atas): donut/stacked butuh panel legend (segmen tidak ber-label nama sendiri,
     # beda dari bar chart yang sumbu kategorinya otomatis jadi label) — dipola sama
     # persis seperti category_distribution.
+    ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
     if ctx.status_style in ("donut", "stacked"):
         status_total = sum(block["values"]) or 1
-        status_colors = [CATEGORY_COLOR_RAMP[i % len(CATEGORY_COLOR_RAMP)] for i in range(len(block["values"]))]
+        status_colors = [ramp[i % len(ramp)] for i in range(len(block["values"]))]
         status_legend_rows = [
             (status_colors[i], name, f"{round(val / status_total * 100, 1)}%")
             for i, (name, val) in enumerate(zip(block["categories"], block["values"]))
@@ -1582,11 +1635,11 @@ def _build_status_distribution_slide(block: dict, ctx: _PptBlockContext):
             donut_y = Inches(status_body_y + (Emu(status_body_h).inches - donut_side) / 2)
             add_native_doughnut_chart(
                 status_slide, donut_x, donut_y, Inches(donut_side), Inches(donut_side),
-                block["categories"], block["values"],
+                block["categories"], block["values"], colors=status_colors, theme=ctx.theme,
             )
             add_ivory_panel(
                 status_slide, status_panel_x, Inches(status_body_y), Inches(4.9), status_body_h,
-                "%", status_legend_title, status_legend_rows, mode="legend",
+                "%", status_legend_title, status_legend_rows, mode="legend", theme=ctx.theme,
             )
         else:
             # "stacked" ditumpuk vertikal — lihat catatan sama di category_distribution
@@ -1597,7 +1650,7 @@ def _build_status_distribution_slide(block: dict, ctx: _PptBlockContext):
             legend_h_in = 0.85 + 0.4 * len(status_legend_rows)
             add_ivory_panel(
                 status_slide, MARGIN_X, Inches(legend_y_in), CONTENT_W, Inches(legend_h_in),
-                "%", status_legend_title, status_legend_rows, mode="legend",
+                "%", status_legend_title, status_legend_rows, mode="legend", theme=ctx.theme,
             )
             status_content_bottom_in = legend_y_in + legend_h_in
     else:
@@ -1613,12 +1666,13 @@ def _build_status_distribution_slide(block: dict, ctx: _PptBlockContext):
 def _build_critical_table_slide(block: dict, ctx: _PptBlockContext):
     table_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_logo(table_slide, ctx.logo_path)
-    kicker_color = RED_CRIT if block["kicker_is_critical"] else GREEN_MAIN
+    # RED_CRIT TIDAK ikut tema (severity fixed) — cuma cabang "tidak kritis" yang ikut tema.
+    kicker_color = RED_CRIT if block["kicker_is_critical"] else ctx.accent_main
     add_kicker(table_slide, block["kicker"], color=kicker_color)
     title_bottom = add_title(table_slide, block["title"])
 
     table_y = max(title_bottom + 0.15, 1.55)
-    add_native_table(table_slide, MARGIN_X, Inches(table_y), CONTENT_W, Inches(4.9), block["headers"], block["rows"], set(block["highlight_idx"]))
+    add_native_table(table_slide, MARGIN_X, Inches(table_y), CONTENT_W, Inches(4.9), block["headers"], block["rows"], set(block["highlight_idx"]), theme=ctx.theme)
 
     if block["caption"]:
         cap_box = table_slide.shapes.add_textbox(MARGIN_X, Inches(table_y) + Inches(4.9) + Inches(0.1), CONTENT_W, Inches(0.4))
@@ -1635,17 +1689,17 @@ def _build_asset_cards_slide(block: dict, ctx: _PptBlockContext):
         # Titik variasi tampilan: ranking podium top-3 (bg TERANG, analog cover
         # normal) — alternatif dari baris kartu gelap standar, lihat add_podium_row.
         add_logo(asset_slide, ctx.logo_path)
-        add_kicker(asset_slide, block["kicker"], color=GREEN_MAIN)
+        add_kicker(asset_slide, block["kicker"], color=ctx.accent_main)
         title_bottom = add_title(asset_slide, block["title"], color=TEXT_DARK)
         podium_y = max(title_bottom + 0.3, 2.0)
-        add_podium_row(asset_slide, MARGIN_X, Inches(podium_y), CONTENT_W, Inches(max(3.0, 6.5 - podium_y)), block["items"])
+        add_podium_row(asset_slide, MARGIN_X, Inches(podium_y), CONTENT_W, Inches(max(3.0, 6.5 - podium_y)), block["items"], theme=ctx.theme)
     elif ctx.asset_style == "bars":
         # Titik variasi tampilan: daftar berperingkat dgn batang proporsional (bg
         # GELAP, analog kartu standar) — dipakai utk jumlah item berapa pun (bukan
         # cuma tepat 3 seperti podium), lihat add_asset_ranked_bars.
-        add_dark_bg(asset_slide)
+        add_dark_bg(asset_slide, theme=ctx.theme)
         add_logo(asset_slide, ctx.logo_path)
-        add_kicker(asset_slide, block["kicker"], color=GOLD_MAIN)
+        add_kicker(asset_slide, block["kicker"], color=ctx.accent_light)
         title_bottom = add_title(asset_slide, block["title"], color=WHITE)
         bars_y = max(title_bottom + 0.3, 2.0)
         # Sisa ruang di bawah baris terakhir dibagi rata (digeser ke tengah), bukan
@@ -1655,29 +1709,30 @@ def _build_asset_cards_slide(block: dict, ctx: _PptBlockContext):
         bars_available_in = 6.6 - bars_y
         if bars_available_in > bars_content_h_in:
             bars_y += (bars_available_in - bars_content_h_in) / 2
-        add_asset_ranked_bars(asset_slide, MARGIN_X, Inches(bars_y), CONTENT_W, block["items"], row_h=Inches(bars_row_h_in))
+        add_asset_ranked_bars(asset_slide, MARGIN_X, Inches(bars_y), CONTENT_W, block["items"], row_h=Inches(bars_row_h_in), theme=ctx.theme)
     else:
-        add_dark_bg(asset_slide)
+        add_dark_bg(asset_slide, theme=ctx.theme)
         add_logo(asset_slide, ctx.logo_path)
-        add_kicker(asset_slide, block["kicker"], color=GOLD_MAIN)
+        add_kicker(asset_slide, block["kicker"], color=ctx.accent_light)
         title_bottom = add_title(asset_slide, block["title"], color=WHITE)
 
         card_items = [(it["num"], it["name"], it["stat"], it["detail"]) for it in block["items"]]
         cards_y = max(title_bottom + 0.2, 1.9)
-        add_asset_card_row(asset_slide, MARGIN_X, Inches(cards_y), CONTENT_W, Inches(max(3.0, 6.5 - cards_y)), card_items)
+        add_asset_card_row(asset_slide, MARGIN_X, Inches(cards_y), CONTENT_W, Inches(max(3.0, 6.5 - cards_y)), card_items, theme=ctx.theme)
     return asset_slide
 
 
 def _build_key_findings_slide(block: dict, ctx: _PptBlockContext):
     find_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_logo(find_slide, ctx.logo_path)
-    add_kicker(find_slide, block["kicker"], color=GREEN_MAIN)
+    add_kicker(find_slide, block["kicker"], color=ctx.accent_main)
     title_bottom = add_title(find_slide, block["title"])
 
     findings_items = [(it["num"], it["title"], it["detail"]) for it in block["items"]]
 
+    # RED_CRIT TIDAK ikut tema (severity fixed) — cuma cabang "tidak kritis" yang ikut tema.
     def _finding_color(idx, item, _items=block["items"]):
-        return RED_CRIT if _items[idx]["is_critical"] else GREEN_MAIN
+        return RED_CRIT if _items[idx]["is_critical"] else ctx.accent_main
 
     # Keluhan nyata dari pengguna: 1 kolom penuh CONTENT_W bikin baris ~11.8in
     # lebar (nyaris selebar slide) sekaligus font kekecilan (9.3pt) kalau itemnya
@@ -1690,7 +1745,7 @@ def _build_key_findings_slide(block: dict, ctx: _PptBlockContext):
 def _build_recommendations_slide(block: dict, ctx: _PptBlockContext):
     rec_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_logo(rec_slide, ctx.logo_path)
-    add_kicker(rec_slide, block["kicker"], color=GREEN_MAIN)
+    add_kicker(rec_slide, block["kicker"], color=ctx.accent_main)
     title_bottom = add_title(rec_slide, block["title"])
 
     items = block["items"]
@@ -1701,7 +1756,7 @@ def _build_recommendations_slide(block: dict, ctx: _PptBlockContext):
         # export_pdf.py) — alternatif dari grid kartu standar di bawah, dipakai
         # kalau jumlah rekomendasi pas 2-6 (lihat add_recommendation_timeline).
         timeline_h = Inches(max(2.6, 6.9 - Emu(start_y_rec).inches))
-        add_recommendation_timeline(rec_slide, MARGIN_X, start_y_rec, CONTENT_W, timeline_h, items)
+        add_recommendation_timeline(rec_slide, MARGIN_X, start_y_rec, CONTENT_W, timeline_h, items, theme=ctx.theme)
         return rec_slide
 
     if ctx.recommendation_style == "banners":
@@ -1709,7 +1764,7 @@ def _build_recommendations_slide(block: dict, ctx: _PptBlockContext):
         # (analog _recommendation_banner_list_html di export_pdf.py) — alternatif
         # dari grid kartu, dipakai utk jumlah item BERAPA PUN (beda dari timeline
         # yang dibatasi 2-6).
-        add_recommendation_banner_list(rec_slide, MARGIN_X, start_y_rec, CONTENT_W, items, max_y=SLIDE_H - Inches(0.4))
+        add_recommendation_banner_list(rec_slide, MARGIN_X, start_y_rec, CONTENT_W, items, max_y=SLIDE_H - Inches(0.4), theme=ctx.theme)
         return rec_slide
 
     card_cols = ctx.card_cols
@@ -1775,7 +1830,7 @@ def _build_recommendations_slide(block: dict, ctx: _PptBlockContext):
             card.line.width = Pt(0.75)
             _no_shadow(card)
             _modest_corner(card)
-            add_badge_circle(rec_slide, cx + Inches(0.2), cy + Inches(0.18 * scale), Inches(0.36 * scale), item["num"], GOLD_MAIN, font_size=Pt(13 * scale))
+            add_badge_circle(rec_slide, cx + Inches(0.2), cy + Inches(0.18 * scale), Inches(0.36 * scale), item["num"], ctx.accent_light, font_size=Pt(13 * scale))
             title_box = rec_slide.shapes.add_textbox(cx + Inches(0.2), cy + Inches(0.62 * scale), card_w - Inches(0.4), Inches(0.35))
             ttf2 = title_box.text_frame
             ttf2.word_wrap = True
@@ -1795,9 +1850,9 @@ def _build_recommendations_slide(block: dict, ctx: _PptBlockContext):
 
 def _build_conclusion_slide(block: dict, ctx: _PptBlockContext):
     concl_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
-    add_dark_bg(concl_slide)
+    add_dark_bg(concl_slide, theme=ctx.theme)
     add_logo(concl_slide, ctx.logo_path)
-    add_kicker(concl_slide, block["kicker"], color=GOLD_MAIN)
+    add_kicker(concl_slide, block["kicker"], color=ctx.accent_light)
     title_bottom = add_title(concl_slide, block["title"], color=WHITE)
 
     left_w2 = Inches(7.0)
@@ -1821,13 +1876,13 @@ def _build_conclusion_slide(block: dict, ctx: _PptBlockContext):
 
     pill_y = Inches(content_top2 + 2.0)
     for pill_text in block["pills"][:3]:
-        add_pill_stat(concl_slide, text_x2, pill_y, left_w2, Inches(0.6), pill_text)
+        add_pill_stat(concl_slide, text_x2, pill_y, left_w2, Inches(0.6), pill_text, theme=ctx.theme)
         pill_y += Inches(0.75)
 
     if priority_items:
         add_priority_panel(
             concl_slide, panel_x3, Inches(content_top2), Inches(4.3), Inches(max(3.0, 6.3 - content_top2)),
-            block["priority_panel_title"], priority_items,
+            block["priority_panel_title"], priority_items, theme=ctx.theme,
         )
     return concl_slide
 
@@ -1835,11 +1890,11 @@ def _build_conclusion_slide(block: dict, ctx: _PptBlockContext):
 def _build_closing_slide(block: dict, ctx: _PptBlockContext):
     if ctx.cover_style == "split":
         closing_block = {**block, "hero_stat": ctx.cover_hero_stat}
-        add_split_closing_slide(ctx.prs, closing_block, ctx.flourish_corner)
+        add_split_closing_slide(ctx.prs, closing_block, ctx.flourish_corner, theme=ctx.theme)
         return None
     closing = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
-    add_dark_bg(closing)
-    add_corner_flourish(closing, ctx.flourish_corner)
+    add_dark_bg(closing, theme=ctx.theme)
+    add_corner_flourish(closing, ctx.flourish_corner, theme=ctx.theme)
     # Teks digeser ke kanan kalau flourish-nya di pojok kiri-bawah (satu-satunya
     # varian yang jangkauannya menjorok ke area teks, yang start dari MARGIN_X) —
     # keluhan nyata dari pengguna: garis lengkung dekoratif menembus teks penutup.
@@ -1867,7 +1922,7 @@ def _build_closing_slide(block: dict, ctx: _PptBlockContext):
     note_box = closing.shapes.add_textbox(text_x2, Inches(note_top_in), text_w2, Inches(0.4))
     np_ = note_box.text_frame.paragraphs[0]
     np_.text = block["note"]
-    _set_font(np_, BODY_FONT, Pt(11.5), italic=True, color=GOLD_LIGHT)
+    _set_font(np_, BODY_FONT, Pt(11.5), italic=True, color=ctx.accent_soft)
     return None
 
 
@@ -1912,7 +1967,6 @@ class PPTXExporter:
         panel_side = vs["panel_side"]
         stat_cols = vs["stat_cols"]
         card_cols = vs["card_cols"]
-        accent_bar_color = GOLD_MAIN if vs["accent_bar_color"] == "gold" else GREEN_MAIN
         category_style = vs["category_style"]
         status_style = vs["status_style"]
         cover_style = vs["cover_style"]
@@ -1921,6 +1975,13 @@ class PPTXExporter:
         # Teks kicker TETAP (bukan bagian dari visual_style — cuma variasi kata, bukan bentuk)
         kicker_ringkasan = "Executive Summary" if is_english(report) else "Ringkasan Eksekutif"
         kicker_analisis = "DATA ANALYSIS" if is_english(report) else "ANALISIS DATA"
+
+        # Palet warna tema (report.theme_color) — accent_bar_color TIDAK LAGI dipakai untuk
+        # warna aksen (dulu diacak hijau/emas lewat visual_style, independen dari pilihan user
+        # di Report Settings). Sekarang accent_bar_color = ctx.accent_main, konsisten dgn tema.
+        theme_key = resolve_theme_color(report)
+        palette = THEME_PALETTES[theme_key]
+        accent_bar_color = palette["main"]
 
         content_slides: list = []  # dipakai utk stamping footer di akhir (kecuali cover/penutup)
 
@@ -1938,6 +1999,12 @@ class PPTXExporter:
             cover_style=cover_style,
             asset_style=asset_style,
             recommendation_style=recommendation_style,
+            accent_main=palette["main"],
+            accent_bg=palette["bg"],
+            accent_chart=palette["chart"],
+            accent_light=palette["light"],
+            accent_soft=palette["soft"],
+            theme=palette,
             kicker_ringkasan=kicker_ringkasan,
             kicker_analisis=kicker_analisis,
         )

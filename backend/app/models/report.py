@@ -54,8 +54,19 @@ class Report(Base):
     # Kustomisasi Template Kop & Tema Visual (Revisi Progress 2)
     header_title = Column(String, nullable=True, default="PT PETROKIMIA GRESIK")
     header_subtitle = Column(String, nullable=True, default="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI")
-    theme_color = Column(String, nullable=True, default="green")  # green, navy, dark, gold
+    # "auto" (default) = warna diacak & DIKUNCI sekali saat analisis berhasil (lihat
+    # resolved_theme_color di pick_visual_style()/resolve_theme_color()), sama seperti
+    # style_preset="auto" mengacak gaya layout. Nilai eksplisit (green/navy/dark/gold) = warna
+    # tetap sesuai pilihan user, tidak pernah diacak.
+    theme_color = Column(String, nullable=True, default="auto")  # auto, green, navy, dark, gold
     domain_type = Column(String, nullable=True, default="general")  # soc_security, financial, kpi_hr, general
+
+    # Preset gaya/layout laporan (cover, chart, kartu, dst) yang dipilih user di Report Settings.
+    # "auto" (default) = perilaku lama, pick_visual_style() memilih kombinasi acak seperti
+    # sebelumnya. Nilai lain ("minimalist"/"corporate"/"executive") = kombinasi TETAP, lihat
+    # STYLE_PRESETS di report_render_logic.py. NULL untuk laporan lama sebelum kolom ini ada,
+    # diperlakukan sama seperti "auto".
+    style_preset = Column(String, nullable=True, default="auto")  # auto, minimalist, corporate, executive
 
     # Gaya penulisan & tingkat detail narasi AI (Report Settings) — dipakai di prompts.py utk
     # menyesuaikan instruksi ke model, BUKAN cuma disimpan tanpa efek.

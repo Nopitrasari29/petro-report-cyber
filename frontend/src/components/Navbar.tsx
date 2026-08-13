@@ -95,23 +95,6 @@ export default function Navbar() {
         if (userData?.password_set === false) {
           setShowPasswordSetupModal(true);
         }
-
-        try {
-          const settingsRes = await fetch(`${API_BASE_URL}/api/v1/settings/`, {
-            headers: authHeaders()
-          });
-          if (settingsRes.ok) {
-            const settings = await settingsRes.json();
-            const dbLang = settings.ai_language === "Indonesian" ? "Indonesian" : "English";
-            const currentLang = localStorage.getItem("ui_language") || "English";
-            if (dbLang !== currentLang) {
-              localStorage.setItem("ui_language", dbLang);
-              window.dispatchEvent(new Event("ui_language_changed"));
-            }
-          }
-        } catch (settingsErr) {
-          console.warn("Failed to sync settings language in Navbar:", settingsErr);
-        }
       } catch {
         localStorage.removeItem("token");
         router.push("/login");
@@ -141,6 +124,52 @@ export default function Navbar() {
       }
     } catch (err) {
       console.error("Failed to mark notifications as read:", err);
+    }
+  };
+
+  const handleDeleteNotification = async (id: number) => {
+    if (!getToken()) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/notifications/${id}`, {
+        method: "DELETE",
+        headers: authHeaders()
+      });
+      if (res.ok) {
+        setApiNotifications(prev => prev.filter(n => n.id !== id));
+      }
+    } catch (err) {
+      console.error("Failed to delete notification:", err);
+    }
+  };
+
+  const handleBulkDeleteNotifications = async (ids: number[]) => {
+    if (!getToken() || ids.length === 0) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/notifications/bulk-delete`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(ids)
+      });
+      if (res.ok) {
+        setApiNotifications(prev => prev.filter(n => !ids.includes(n.id)));
+      }
+    } catch (err) {
+      console.error("Failed to bulk delete notifications:", err);
+    }
+  };
+
+  const handleDeleteAllRead = async () => {
+    if (!getToken()) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/notifications/clear`, {
+        method: "DELETE",
+        headers: authHeaders()
+      });
+      if (res.ok) {
+        setApiNotifications(prev => prev.filter(n => n.unread));
+      }
+    } catch (err) {
+      console.error("Failed to clear read notifications:", err);
     }
   };
 
@@ -231,6 +260,9 @@ export default function Navbar() {
           showUserMenu={showUserMenu}
           setShowUserMenu={setShowUserMenu}
           onMarkAllRead={handleMarkAllRead}
+          onDeleteNotification={handleDeleteNotification}
+          onBulkDeleteNotifications={handleBulkDeleteNotifications}
+          onDeleteAllRead={handleDeleteAllRead}
         />
 
         <div className="relative" ref={userMenuRef}>

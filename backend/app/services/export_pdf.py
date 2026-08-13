@@ -19,7 +19,7 @@ import math
 from dataclasses import dataclass
 
 from app.models.report import Report
-from app.services.report_render_logic import build_report_blocks, is_english, find_logo_path, get_visual_style
+from app.services.report_render_logic import build_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,31 @@ GRAY_TEXT = "#5C6B62"
 RED_CRIT = "#B23A2E"
 RED_CRIT_BG = "#F8E2DE"
 PANEL_BORDER = "#E2E5DE"
+
+# ── TEMA WARNA (report.theme_color) ─────────────────────────────────────────
+# GREEN_MAIN/BG/CHART & GOLD_MAIN/LIGHT di atas TETAP ada apa adanya (dipakai langsung oleh
+# SEVERITY_COLOR & kondisional is_critical di bawah — warna severity TIDAK boleh ikut berubah
+# oleh tema apa pun, itu konvensi semantik cyber-security yang tetap). THEME_PALETTES di bawah
+# ini murni untuk elemen BRAND/struktural (cover, kicker, badge, border panel, header tabel,
+# chart "bar" utama) — "green" memakai nilai HEX yang sama persis dgn di atas supaya tema
+# default/laporan lama tetap identik visual dengan sebelum tema ini ada.
+NAVY_MAIN = "#1E3A5F"
+NAVY_BG = "#0F172A"
+NAVY_CHART = "#3B6EA5"
+DARK_MAIN = "#1F2937"
+DARK_BG = "#111827"
+DARK_CHART = "#3F4B5C"
+GOLD_BRONZE_MAIN = "#8A6A16"
+GOLD_BRONZE_BG = "#4A3908"
+GOLD_CREAM_LIGHT = "#F3E3AE"
+GOLD_CREAM_SOFT = "#FBF3DC"
+
+THEME_PALETTES: dict[str, dict[str, str]] = {
+    "green": {"main": GREEN_MAIN, "bg": GREEN_BG, "chart": GREEN_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
+    "navy": {"main": NAVY_MAIN, "bg": NAVY_BG, "chart": NAVY_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
+    "dark": {"main": DARK_MAIN, "bg": DARK_BG, "chart": DARK_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
+    "gold": {"main": GOLD_BRONZE_MAIN, "bg": GOLD_BRONZE_BG, "chart": GOLD_MAIN, "light": GOLD_CREAM_LIGHT, "soft": GOLD_CREAM_SOFT},
+}
 FONT_ATTR_QUOTE_BUG_NOTE = """
 BUG BESAR YANG DIPERBAIKI (ditemukan lewat isolasi render+sampling langsung, bukan cuma baca
 dokumentasi): TITLE_FONT/BODY_FONT SEBELUMNYA memakai tanda kutip DOBEL di sekeliling nama font
@@ -243,7 +268,8 @@ def _donut_chart_svg(values, colors=None, size=210, stroke_w=36) -> str:
     return f'<div style="text-align:center;padding:14pt 0;">{svg}</div>'
 
 
-def _ivory_panel(icon_text, title_text, rows_html, footnote=None) -> str:
+def _ivory_panel(icon_text, title_text, rows_html, footnote=None, theme: dict | None = None) -> str:
+    t = theme or THEME_PALETTES["green"]
     # RANCANG ULANG (target WeasyPrint, engine utama sejak WeasyPrint aktif — lihat
     # FONT_ATTR_QUOTE_BUG_NOTE di atas untuk riwayat kenapa file ini tadinya penuh workaround
     # height eksplisit): dikonfirmasi lewat isolasi render+sampling bahwa WeasyPrint (BEDA dari
@@ -261,9 +287,9 @@ def _ivory_panel(icon_text, title_text, rows_html, footnote=None) -> str:
         )
     header_html = (
         f'<table style="width:100%;margin-bottom:10px;" cellpadding="0" cellspacing="0"><tr>'
-        f'<td style="width:30px;vertical-align:middle;">{_badge(icon_text, GOLD_MAIN, size="22px", font_size="9pt")}</td>'
+        f'<td style="width:30px;vertical-align:middle;">{_badge(icon_text, t["light"], size="22px", font_size="9pt")}</td>'
         f'<td style="vertical-align:middle;padding:0 0 0 6px;">'
-        f'<span style="font-weight:700;font-size:10.5pt;color:{GREEN_MAIN};text-transform:uppercase;">{_esc(title_text)}</span>'
+        f'<span style="font-weight:700;font-size:10.5pt;color:{t["main"]};text-transform:uppercase;">{_esc(title_text)}</span>'
         f'</td></tr></table>'
     )
     # BUG BESAR YANG DIPERBAIKI: atribut HTML `cellpadding` TERBUKTI (isolasi render+sampling,
@@ -276,7 +302,8 @@ def _ivory_panel(icon_text, title_text, rows_html, footnote=None) -> str:
     )
 
 
-def _ivory_kv_rows(rows) -> str:
+def _ivory_kv_rows(rows, theme: dict | None = None) -> str:
+    t = theme or THEME_PALETTES["green"]
     # RANCANG ULANG: SEBELUMNYA label & value ditumpuk 2 baris per row (judul tebal, lalu value
     # di baris baru) — makan 2x tinggi vertikal dibanding perlu, dan bikin panel terlihat lebih
     # kosong/boros dibanding referensi. Sekarang label & value SEJAJAR dalam SATU baris (kolom
@@ -285,7 +312,7 @@ def _ivory_kv_rows(rows) -> str:
     # singkat (mis. "42 data") tanpa perlu tinggi baris tetap yang boros.
     trs = "".join(
         f'<tr>'
-        f'<td style="width:118px;vertical-align:top;padding:5pt 10pt 5pt 0;font-size:9.5pt;font-weight:700;color:{GREEN_MAIN};">{_esc(label)}</td>'
+        f'<td style="width:118px;vertical-align:top;padding:5pt 10pt 5pt 0;font-size:9.5pt;font-weight:700;color:{t["main"]};">{_esc(label)}</td>'
         f'<td style="vertical-align:top;padding:5pt 0;font-size:9.5pt;color:{GRAY_TEXT};">{_esc(value)}</td>'
         f'</tr>'
         for label, value in rows
@@ -293,7 +320,8 @@ def _ivory_kv_rows(rows) -> str:
     return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{trs}</table>'
 
 
-def _legend_rows(rows) -> str:
+def _legend_rows(rows, theme: dict | None = None) -> str:
+    t = theme or THEME_PALETTES["green"]
     parts = []
     for color, label, pct in rows:
         parts.append(
@@ -302,30 +330,32 @@ def _legend_rows(rows) -> str:
             f'<table cellpadding="0" cellspacing="0"><tr><td style="width:12px;height:12px;background:{color};font-size:1px;line-height:1px;">&nbsp;</td></tr></table>'
             f'</td>'
             f'<td style="padding:6pt 8pt;font-size:9.5pt;color:{TEXT_DARK};vertical-align:middle;">{_esc(label)}</td>'
-            f'<td style="text-align:right;font-weight:700;font-size:9.5pt;color:{GREEN_MAIN};vertical-align:middle;padding:6pt 0;">{_esc(pct)}</td>'
+            f'<td style="text-align:right;font-weight:700;font-size:9.5pt;color:{t["main"]};vertical-align:middle;padding:6pt 0;">{_esc(pct)}</td>'
             f'</tr>'
         )
     return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(parts)}</table>'
 
 
-def _dark_panel(inner_html, w="100%") -> str:
+def _dark_panel(inner_html, w="100%", theme: dict | None = None) -> str:
     # RANCANG ULANG (target WeasyPrint) — height eksplisit dihapus, panel sepadat kontennya.
     # cellpadding (atribut HTML) diganti CSS `padding` langsung — lihat catatan di _ivory_panel
     # soal cellpadding TERBUKTI tidak dihormati WeasyPrint (konten menempel ke border).
+    t = theme or THEME_PALETTES["green"]
     return (
-        f'<table style="width:{w};background:{GREEN_BG};border:1px solid {GOLD_MAIN};border-radius:10px;">'
+        f'<table style="width:{w};background:{t["bg"]};border:1px solid {t["light"]};border-radius:10px;">'
         f'<tr><td style="vertical-align:top;padding:18pt;">{inner_html}</td></tr></table>'
     )
 
 
-def _critical_highlight_panel(pct_text, sub_text, detail_text=None) -> str:
-    detail_html = f'<div style="font-size:9.5pt;color:{GOLD_LIGHT};margin-top:14px;">{_esc(detail_text)}</div>' if detail_text else ""
+def _critical_highlight_panel(pct_text, sub_text, detail_text=None, theme: dict | None = None) -> str:
+    t = theme or THEME_PALETTES["green"]
+    detail_html = f'<div style="font-size:9.5pt;color:{t["soft"]};margin-top:14px;">{_esc(detail_text)}</div>' if detail_text else ""
     inner = (
-        f'<div style="text-align:center;font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:{GOLD_MAIN};">{_esc(pct_text)}</div>'
+        f'<div style="text-align:center;font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:{t["light"]};">{_esc(pct_text)}</div>'
         f'<div style="text-align:center;font-size:10.5pt;color:#fff;margin-top:6px;">{_esc(sub_text)}</div>'
         f'{detail_html}'
     )
-    return _dark_panel(inner)
+    return _dark_panel(inner, theme=theme)
 
 
 def _ai_insight_strip(text) -> str:
@@ -335,14 +365,15 @@ def _ai_insight_strip(text) -> str:
     )
 
 
-def _priority_panel(title_text, items) -> str:
+def _priority_panel(title_text, items, theme: dict | None = None) -> str:
     # RANCANG ULANG (target WeasyPrint, lihat catatan di _ivory_panel) — height eksplisit
     # dihapus di semua level, padding antar baris dipakai langsung (aman sekarang karena tidak
     # ada lagi height eksplisit yang bisa dikombinasikan jadi trigger shrink xhtml2pdf), dan
     # panel dibangun lewat `_dark_panel()` yang sama dipakai panel gelap lain (konsisten).
+    t = theme or THEME_PALETTES["green"]
     rows = "".join(
         f'<tr>'
-        f'<td style="width:32px;vertical-align:top;padding:9pt 0;">{_badge(letter, GOLD_MAIN, size="24px", font_size="10pt")}</td>'
+        f'<td style="width:32px;vertical-align:top;padding:9pt 0;">{_badge(letter, t["light"], size="24px", font_size="10pt")}</td>'
         f'<td style="vertical-align:top;padding:9pt 0 9pt 10px;font-size:10.5pt;color:#fff;">{_esc(text)}</td>'
         f'</tr>'
         for letter, text in items
@@ -350,15 +381,16 @@ def _priority_panel(title_text, items) -> str:
     rows_table = f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{rows}</table>'
     inner = (
         f'<div style="font-size:9.5pt;font-weight:700;letter-spacing:1px;text-transform:uppercase;'
-        f'color:{GOLD_MAIN};margin-bottom:6px;">{_esc(title_text)}</div>{rows_table}'
+        f'color:{t["light"]};margin-bottom:6px;">{_esc(title_text)}</div>{rows_table}'
     )
-    return _dark_panel(inner)
+    return _dark_panel(inner, theme=theme)
 
 
-def _pill(text) -> str:
+def _pill(text, theme: dict | None = None) -> str:
+    t = theme or THEME_PALETTES["green"]
     return (
-        f'<div style="background:{GREEN_MAIN};border:1px solid {GOLD_MAIN};border-radius:999px;'
-        f'padding:10px 16px;text-align:center;font-weight:700;font-size:10.5pt;color:{GOLD_MAIN};margin-bottom:10px;">'
+        f'<div style="background:{t["main"]};border:1px solid {t["light"]};border-radius:999px;'
+        f'padding:10px 16px;text-align:center;font-weight:700;font-size:10.5pt;color:{t["light"]};margin-bottom:10px;">'
         f'{_esc(text)}</div>'
     )
 
@@ -392,12 +424,13 @@ def _card_grid(cell_inner_htmls: list, cols: int) -> str:
     return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
 
 
-def _stat_card_grid(items, cols=3, dark=True) -> str:
-    bg = GREEN_MAIN if dark else IVORY
+def _stat_card_grid(items, cols=3, dark=True, theme: dict | None = None) -> str:
+    t = theme or THEME_PALETTES["green"]
+    bg = t["main"] if dark else IVORY
     label_color = WHITE if dark else TEXT_DARK
     cell_htmls = [
-        f'<table style="width:100%;min-height:1.15in;margin-bottom:12pt;background:{bg};border:1px solid {GOLD_MAIN};border-radius:10px;"><tr><td style="text-align:center;vertical-align:middle;padding:14pt;">'
-        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:22pt;color:{GOLD_MAIN};">{_esc(value)}</div>'
+        f'<table style="width:100%;min-height:1.15in;margin-bottom:12pt;background:{bg};border:1px solid {t["light"]};border-radius:10px;"><tr><td style="text-align:center;vertical-align:middle;padding:14pt;">'
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:22pt;color:{t["light"]};">{_esc(value)}</div>'
         f'<div style="font-size:9pt;color:{label_color};margin-top:6px;">{_esc(label)}</div>'
         f'</td></tr></table>'
         for value, label in items
@@ -405,13 +438,14 @@ def _stat_card_grid(items, cols=3, dark=True) -> str:
     return _card_grid(cell_htmls, cols)
 
 
-def _asset_card_row(items) -> str:
+def _asset_card_row(items, theme: dict | None = None) -> str:
+    t = theme or THEME_PALETTES["green"]
     n = len(items) or 1
     cell_htmls = [
-        f'<table style="width:100%;background:{GREEN_MAIN};border:1px solid {GOLD_MAIN};border-radius:10px;"><tr><td style="vertical-align:top;padding:18pt;">'
-        f'{_badge(num, GOLD_MAIN, size="34px", font_size="13pt")}'
+        f'<table style="width:100%;background:{t["main"]};border:1px solid {t["light"]};border-radius:10px;"><tr><td style="vertical-align:top;padding:18pt;">'
+        f'{_badge(num, t["light"], size="34px", font_size="13pt")}'
         f'<div style="font-weight:700;font-size:12.5pt;color:#fff;margin-top:12px;">{_esc(title)}</div>'
-        f'<div style="font-weight:700;font-size:10.5pt;color:{GOLD_MAIN};margin-top:4px;">{_esc(stat)}</div>'
+        f'<div style="font-weight:700;font-size:10.5pt;color:{t["light"]};margin-top:4px;">{_esc(stat)}</div>'
         f'<div style="font-size:9pt;color:#E8ECE6;margin-top:10px;">{_esc(desc)}</div>'
         f'</td></tr></table>'
         for num, title, stat, desc in items
@@ -419,11 +453,12 @@ def _asset_card_row(items) -> str:
     return _card_grid(cell_htmls, n)
 
 
-def _asset_ranked_bars_html(items) -> str:
+def _asset_ranked_bars_html(items, theme: dict | None = None) -> str:
     """Alternatif visual KETIGA (selain _asset_card_row/_podium_row) — daftar entitas
     berperingkat dengan batang proporsional horizontal per item (badge nomor + nama + batang
     + angka), BUKAN kartu kotak atau podium — titik variasi tampilan tambahan utk asset_cards
     (lihat `asset_style`). Dipakai utk jumlah item BERAPA PUN (podium hanya cocok tepat 3)."""
+    t = theme or THEME_PALETTES["green"]
     max_count = max((it.get("count") or 0) for it in items) or 1
     rows = []
     for it in items:
@@ -432,43 +467,44 @@ def _asset_ranked_bars_html(items) -> str:
         rows.append(
             f'<tr><td style="padding:12pt 0;">'
             f'<table style="width:100%;" cellpadding="0" cellspacing="0"><tr>'
-            f'<td style="width:40px;vertical-align:middle;">{_badge(it["num"], GOLD_MAIN, size="32px", font_size="12pt")}</td>'
+            f'<td style="width:40px;vertical-align:middle;">{_badge(it["num"], t["light"], size="32px", font_size="12pt")}</td>'
             f'<td style="vertical-align:middle;padding:0 14pt;">'
             f'<div style="font-weight:700;font-size:12pt;color:#fff;margin-bottom:8px;">{_esc(it["name"])}</div>'
-            f'<table style="width:100%;background:{GREEN_CHART};border-radius:5px;" cellpadding="0" cellspacing="0"><tr>'
+            f'<table style="width:100%;background:{t["chart"]};border-radius:5px;" cellpadding="0" cellspacing="0"><tr>'
             f'<td style="width:{pct}%;">'
             f'<table style="width:100%;" cellpadding="0" cellspacing="0"><tr>'
-            f'<td style="background:{GOLD_MAIN};height:12px;border-radius:5px;font-size:1px;line-height:1px;">&nbsp;</td>'
+            f'<td style="background:{t["light"]};height:12px;border-radius:5px;font-size:1px;line-height:1px;">&nbsp;</td>'
             f'</tr></table></td>'
             f'<td></td>'
             f'</tr></table>'
             f'</td>'
-            f'<td style="width:95px;text-align:right;vertical-align:middle;font-weight:700;font-size:12pt;color:{GOLD_MAIN};">{_esc(it["stat"])}</td>'
+            f'<td style="width:95px;text-align:right;vertical-align:middle;font-weight:700;font-size:12pt;color:{t["light"]};">{_esc(it["stat"])}</td>'
             f'</tr></table>'
             f'</td></tr>'
         )
     return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
 
 
-def _podium_row(items) -> str:
+def _podium_row(items, theme: dict | None = None) -> str:
     """Alternatif visual utk top-3 entitas (asset_cards) — titik variasi tampilan (lihat
     `asset_style` di generate_pdf_report), BUKAN penggantian permanen. items: list of dict
     {"num","name","stat"} — dirender sebagai podium (rank 1 di tengah & paling tinggi, gaya
     "sorotan performa" mirip laporan KPI/produksi), bukan 3 kartu sejajar sama besar."""
+    t = theme or THEME_PALETTES["green"]
     ranked = sorted(items, key=lambda it: int(it["num"]))[:3]
     if len(ranked) == 3:
         ranked = [ranked[1], ranked[0], ranked[2]]  # tampil: 2, 1, 3 (podium)
     heights_pt = {"1": 130, "2": 95, "3": 72}
-    colors = {"1": GOLD_MAIN, "2": GREEN_MAIN, "3": GREEN_CHART}
+    colors = {"1": t["light"], "2": t["main"], "3": t["chart"]}
     col_pct = round(100 / max(len(ranked), 1), 3)
     cells = []
     for it in ranked:
         h = heights_pt.get(it["num"], 80)
-        color = colors.get(it["num"], GREEN_MAIN)
+        color = colors.get(it["num"], t["main"])
         cells.append(
             f'<td style="width:{col_pct}%;vertical-align:bottom;text-align:center;padding:0 10pt;">'
             f'<div style="font-weight:700;font-size:12pt;color:{TEXT_DARK};">{_esc(it["name"])}</div>'
-            f'<div style="font-weight:700;font-size:13pt;color:{GREEN_MAIN};margin-bottom:12pt;">{_esc(it["stat"])}</div>'
+            f'<div style="font-weight:700;font-size:13pt;color:{t["main"]};margin-bottom:12pt;">{_esc(it["stat"])}</div>'
             f'<div style="background:{color};border-radius:8pt 8pt 0 0;height:{h}pt;">'
             f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;'
             f'text-align:center;line-height:{h}pt;">{_esc(it["num"])}</div>'
@@ -477,7 +513,7 @@ def _podium_row(items) -> str:
     return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0"><tr>{"".join(cells)}</tr></table>'
 
 
-def _timeline_html(items, container_h_pt=230) -> str:
+def _timeline_html(items, container_h_pt=230, theme: dict | None = None) -> str:
     """Alternatif visual utk daftar rekomendasi (kartu grid) — titik variasi tampilan (lihat
     `recommendation_style` di generate_pdf_report). items: list of dict {"num","title",
     "detail"}, dirender sebagai roadmap horizontal: garis + node bulat bernomor, label
@@ -485,17 +521,18 @@ def _timeline_html(items, container_h_pt=230) -> str:
     dihitung via CSS transform:translate (dikonfirmasi didukung WeasyPrint lewat isolasi
     render+sampling), BUKAN <table> — perlu node yang duduk TEPAT di tengah satu garis
     horizontal kontinu, sesuatu yang tidak bisa dicapai rapi dengan tabel kolom."""
+    t = theme or THEME_PALETTES["green"]
     n = len(items) or 1
     line_y = container_h_pt / 2
     parts = [f'<div style="position:relative;height:{container_h_pt}pt;margin-top:10pt;">']
     parts.append(
-        f'<div style="position:absolute;left:3%;right:3%;top:{line_y}pt;height:2pt;background:{GOLD_MAIN};"></div>'
+        f'<div style="position:absolute;left:3%;right:3%;top:{line_y}pt;height:2pt;background:{t["light"]};"></div>'
     )
     col_w_pct = 100 / n
     for i, it in enumerate(items):
         cx_pct = round((i + 0.5) / n * 100, 3)
         above = (i % 2 == 0)
-        node_color = GOLD_MAIN if i == 0 else GREEN_MAIN
+        node_color = t["light"] if i == 0 else t["main"]
         parts.append(
             f'<div style="position:absolute;left:{cx_pct}%;top:{line_y}pt;transform:translate(-50%,-50%);'
             f'width:24pt;height:24pt;border-radius:50%;background:{node_color};color:#fff;text-align:center;'
@@ -527,11 +564,12 @@ def _timeline_html(items, container_h_pt=230) -> str:
     return "".join(parts)
 
 
-def _recommendation_banner_list_html(items) -> str:
+def _recommendation_banner_list_html(items, theme: dict | None = None) -> str:
     """Alternatif visual KETIGA (selain grid kartu/_timeline_html) — daftar rekomendasi
     sebagai banner selebar halaman bertumpuk vertikal (badge nomor + judul + detail),
     berselang-seling warna latar tipis — titik variasi tampilan tambahan utk recommendations
     (lihat `recommendation_style`), dipakai utk jumlah item BERAPA PUN (timeline dibatasi 2-6)."""
+    t = theme or THEME_PALETTES["green"]
     rows = []
     for idx, it in enumerate(items):
         bg = IVORY if idx % 2 == 0 else WHITE
@@ -540,8 +578,8 @@ def _recommendation_banner_list_html(items) -> str:
             if it.get("detail") else ""
         )
         rows.append(
-            f'<table style="width:100%;background:{bg};border-left:4px solid {GOLD_MAIN};margin-bottom:10pt;" cellpadding="0" cellspacing="0">'
-            f'<tr><td style="width:52px;vertical-align:top;padding:14pt 0 14pt 16pt;">{_badge(it["num"], GREEN_MAIN, size="32px", font_size="12pt")}</td>'
+            f'<table style="width:100%;background:{bg};border-left:4px solid {t["light"]};margin-bottom:10pt;" cellpadding="0" cellspacing="0">'
+            f'<tr><td style="width:52px;vertical-align:top;padding:14pt 0 14pt 16pt;">{_badge(it["num"], t["main"], size="32px", font_size="12pt")}</td>'
             f'<td style="vertical-align:top;padding:14pt 16pt 14pt 12pt;">'
             f'<div style="font-weight:700;font-size:12.5pt;color:{TEXT_DARK};">{_esc(it["title"])}</div>'
             f'{detail_html}'
@@ -578,11 +616,12 @@ def _main_panel_pair(main_html, panel_html, main_pct, side) -> str:
     return _two_col(main_html, panel_html, left_pct=main_pct)
 
 
-def _critical_table(headers, rows, highlight_idx) -> str:
+def _critical_table(headers, rows, highlight_idx, theme: dict | None = None) -> str:
     # RANCANG ULANG (target WeasyPrint, lihat catatan di _ivory_panel) — height eksplisit
     # dihapus di semua level, padding vertikal dipakai langsung (aman sekarang, lihat catatan
     # di _ivory_kv_rows) untuk baris yang lebih lapang & natural.
-    thead = "".join(f'<th style="background:{GREEN_BG};color:#fff;padding:9px;text-align:left;font-size:9pt;vertical-align:middle;">{_esc(h)}</th>' for h in headers)
+    t = theme or THEME_PALETTES["green"]
+    thead = "".join(f'<th style="background:{t["bg"]};color:#fff;padding:9px;text-align:left;font-size:9pt;vertical-align:middle;">{_esc(h)}</th>' for h in headers)
     trows = []
     for i, row_vals in enumerate(rows):
         is_open = i in highlight_idx
@@ -601,7 +640,8 @@ def _critical_table(headers, rows, highlight_idx) -> str:
     )
 
 
-def _flourish_html(corner="bottom_right") -> str:
+def _flourish_html(corner="bottom_right", theme: dict | None = None) -> str:
+    t = theme or THEME_PALETTES["green"]
     pos = {
         "bottom_right": "bottom:-70px;right:-70px;",
         "top_right": "top:-70px;right:-70px;",
@@ -609,7 +649,7 @@ def _flourish_html(corner="bottom_right") -> str:
     }.get(corner, "bottom:-70px;right:-70px;")
     circles = "".join(
         f'<div style="position:absolute;{pos}width:{140+ i*55}px;height:{140+i*55}px;'
-        f'border-radius:50%;border:1px solid {GOLD_MAIN};"></div>'
+        f'border-radius:50%;border:1px solid {t["light"]};"></div>'
         for i in range(4)
     )
     # BUG BESAR YANG DIPERBAIKI: dulu pakai shorthand CSS `inset:0` — TERBUKTI (isolasi
@@ -620,13 +660,14 @@ def _flourish_html(corner="bottom_right") -> str:
     return f'<div style="position:absolute;top:0;right:0;bottom:0;left:0;overflow:hidden;pointer-events:none;">{circles}</div>'
 
 
-def _split_cover_td(block, flourish_corner) -> str:
+def _split_cover_td(block, flourish_corner, theme: dict | None = None) -> str:
     """Varian cover 2-kolom warna penuh (emas kiri + hijau kanan, angka hero besar di kolom
     emas) — titik variasi tampilan (lihat `cover_style` di generate_pdf_report), alternatif
     dari cover 1-warna standar. Dikembalikan sebagai dua <td> LENGKAP (dipakai lewat
     `_page(..., raw=True)`, lihat catatan di sana) karena masing-masing kolom perlu warna
     latar SENDIRI penuh 1 halaman — tidak bisa dicapai dengan satu <td> background tunggal
     seperti pola cover biasa."""
+    t = theme or THEME_PALETTES["green"]
     value, label = block.get("hero_stat") or (str(block.get("total_records", "")), "Total Data")
     hero_kicker = block.get("hero_stat_kicker", "CAPAIAN")
     left_w_pct = 37
@@ -638,14 +679,14 @@ def _split_cover_td(block, flourish_corner) -> str:
     # SATU <div style="position:relative;height:...;"> eksplisit di dalam <td> (BUKAN taruh
     # position:relative langsung di <td>-nya) — offset absolute di dalamnya baru dihitung benar.
     left_td = (
-        f'<td style="width:{left_w_pct}%;background:{GOLD_MAIN};color:{TEXT_DARK};'
+        f'<td style="width:{left_w_pct}%;background:{t["light"]};color:{TEXT_DARK};'
         f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};">'
         f'<div style="position:relative;height:7.5in;">'
         f'<div style="margin:0.5in 0.45in;">'
         f'<div style="font-size:9pt;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">{_esc(hero_kicker)}</div>'
         f'</div>'
         f'<div style="position:absolute;left:0.45in;right:0.3in;top:3.15in;">'
-        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:58pt;color:{GREEN_BG};line-height:1;">{_esc(value)}</div>'
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:58pt;color:{t["bg"]};line-height:1;">{_esc(value)}</div>'
         f'<div style="font-size:11pt;margin-top:10px;">{_esc(label)}</div>'
         f'</div>'
         # BUG WEASYPRINT LAIN: `position:absolute;bottom:...` (bukan `top:...`) di dalam <td>
@@ -660,53 +701,55 @@ def _split_cover_td(block, flourish_corner) -> str:
     title_text = block["title"]
     title_size_pt = 26 if len(title_text) > 55 else 32 if len(title_text) > 40 else 38 if len(title_text) > 28 else 44
     right_td = (
-        f'<td style="width:{100 - left_w_pct}%;background:{GREEN_BG};color:#fff;position:relative;'
+        f'<td style="width:{100 - left_w_pct}%;background:{t["bg"]};color:#fff;position:relative;'
         f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};overflow:hidden;">'
-        f'{_flourish_html(flourish_corner)}'
+        f'{_flourish_html(flourish_corner, theme=t)}'
         f'<div style="position:relative;margin:0.5in;">'
         f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
-        f'{_kicker(block["kicker"], GOLD_MAIN)}'
+        f'{_kicker(block["kicker"], t["light"])}'
         f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:{title_size_pt}pt;color:#fff;margin-bottom:10px;">{_esc(title_text)}</div>'
         f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(block["subtitle"])}</div>'
         f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
-        f'<div style="font-size:10.5pt;color:{GOLD_LIGHT};margin-top:6px;">{_esc(block["info_line"])}</div>'
+        f'<div style="font-size:10.5pt;color:{t["soft"]};margin-top:6px;">{_esc(block["info_line"])}</div>'
         f'</div></td>'
     )
     return left_td + right_td
 
 
-def _split_closing_td(block, flourish_corner="bottom_right") -> str:
+def _split_closing_td(block, flourish_corner="bottom_right", theme: dict | None = None) -> str:
     """Varian penutup berpasangan dgn _split_cover_td — angka hero yang SAMA ditampilkan lagi
     di kolom emas kiri (mengulang temuan utama di penutup, gaya "bookend" laporan
     eksekutif), kolom kanan tetap "Terima Kasih" seperti biasa."""
+    t = theme or THEME_PALETTES["green"]
     value, label = block.get("hero_stat") or ("", "")
     left_w_pct = 37
     # Lihat catatan panjang di _split_cover_td soal kenapa position:relative TIDAK boleh
     # langsung di <td> kalau ada anak position:absolute beroffset non-nol/persentase.
     left_td = (
-        f'<td style="width:{left_w_pct}%;background:{GOLD_MAIN};color:{TEXT_DARK};'
+        f'<td style="width:{left_w_pct}%;background:{t["light"]};color:{TEXT_DARK};'
         f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};">'
         f'<div style="position:relative;height:7.5in;">'
         f'<div style="position:absolute;left:0.45in;right:0.3in;top:3.15in;">'
-        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:46pt;color:{GREEN_BG};line-height:1;">{_esc(value)}</div>'
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:46pt;color:{t["bg"]};line-height:1;">{_esc(value)}</div>'
         f'<div style="font-size:10.5pt;margin-top:8px;">{_esc(label)}</div>'
         f'</div></div></td>'
     )
     right_td = (
-        f'<td style="width:{100 - left_w_pct}%;background:{GREEN_BG};color:#fff;position:relative;'
+        f'<td style="width:{100 - left_w_pct}%;background:{t["bg"]};color:#fff;position:relative;'
         f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};overflow:hidden;">'
-        f'{_flourish_html(flourish_corner)}'
+        f'{_flourish_html(flourish_corner, theme=t)}'
         f'<div style="position:relative;margin:0.5in;">'
         f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
         f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;margin-bottom:10px;">{_esc(block["thank_you"])}</div>'
         f'<div style="font-size:12pt;color:#fff;margin-bottom:8px;">{_esc(block["title"])}</div>'
-        f'<div style="font-size:10.5pt;font-style:italic;color:{GOLD_LIGHT};">{_esc(block["note"])}</div>'
+        f'<div style="font-size:10.5pt;font-style:italic;color:{t["soft"]};">{_esc(block["note"])}</div>'
         f'</div></td>'
     )
     return left_td + right_td
 
 
-def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None, logo_b64=None, last=False, raw=False) -> str:
+def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None, logo_b64=None, last=False, raw=False, theme: dict | None = None) -> str:
+    t = theme or THEME_PALETTES["green"]
     break_style = "" if last else "page-break-after:always;"
     if raw:
         # `raw=True`: `inner_html` SUDAH berupa satu/lebih <td> lengkap (mis. cover/penutup
@@ -714,9 +757,9 @@ def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None
         # tanpa background/margin-inset/flourish tunggal standar di bawah ini (pemanggil yang
         # bertanggung jawab penuh atas seluruh isi <tr>, termasuk warnanya sendiri).
         return f'<table style="width:13.333in;{break_style}" cellpadding="0" cellspacing="0"><tr>{inner_html}</tr></table>'
-    bg = GREEN_BG if dark else WHITE
+    bg = t["bg"] if dark else WHITE
     color = WHITE if dark else TEXT_DARK
-    flourish_html = _flourish_html(flourish) if flourish else ""
+    flourish_html = _flourish_html(flourish, theme=t) if flourish else ""
     logo_html = (
         f'<img src="data:image/png;base64,{logo_b64}" style="position:absolute;top:0.3in;right:0.3in;height:40px;" />'
         if logo_b64 else ""
@@ -724,7 +767,7 @@ def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None
     footer_html = ""
     if page_num is not None:
         footer_html = (
-            f'<div style="position:absolute;bottom:0.3in;right:0.3in;font-size:8pt;color:{GRAY_TEXT if not dark else GOLD_LIGHT};'
+            f'<div style="position:absolute;bottom:0.3in;right:0.3in;font-size:8pt;color:{GRAY_TEXT if not dark else t["soft"]};'
             f'font-family:{BODY_FONT};">{page_num:02d} / {total_pages:02d}</div>'
         )
     # DUA bug xhtml2pdf yang ditemukan & dihindari di sini (dibuktikan lewat isolasi test
@@ -782,6 +825,19 @@ class _PdfBlockContext:
     recommendation_style: str
     kicker_ringkasan: str
     kicker_analisis: str
+    # Palet warna tema (report.theme_color) — 5 peran, resolusi lihat resolve_theme_color()/
+    # THEME_PALETTES di atas. "accent_main" dkk dipakai di elemen BRAND/struktural (cover,
+    # kicker, badge, border panel, header tabel, chart bar utama) — TIDAK PERNAH dipakai di
+    # SEVERITY_COLOR/kondisional is_critical, itu tetap warna semantik severity yang fixed.
+    accent_main: str
+    accent_bg: str
+    accent_chart: str
+    accent_light: str
+    accent_soft: str
+    # Sama persis dgn 5 field accent_* di atas, dikemas jadi 1 dict {"main","bg","chart",
+    # "light","soft"} — kemudahan utk dioper sebagai parameter `theme=` ke helper murni
+    # (_ivory_panel, _stat_card_grid, dkk) yang tidak butuh field ctx lain.
+    theme: dict | None = None
     cover_hero_stat: dict | None = None
 
 
@@ -791,7 +847,7 @@ def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         # Varian 2-kolom warna penuh (lihat _split_cover_td) — dipakai via
         # _page(..., raw=True) karena tiap kolom butuh background sendiri penuh
         # 1 halaman, bukan satu warna latar tunggal seperti varian "solid".
-        return (_split_cover_td(block, ctx.flourish_corner), True, None, False, True)
+        return (_split_cover_td(block, ctx.flourish_corner, theme=ctx.theme), True, None, False, True)
     else:
         # BUG BESAR YANG DIPERBAIKI: `margin-top` pada <div> PEMBUNGKUS (bukan pada
         # dirinya sendiri) terbukti (isolasi render+sampling) TIDAK diterapkan ke child
@@ -804,11 +860,11 @@ def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         # (bukan margin pada parent) terbukti aman di posisi manapun dalam alur.
         inner = (
             f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
-            f'{_kicker(block["kicker"], GOLD_MAIN)}'
+            f'{_kicker(block["kicker"], ctx.accent_light)}'
             f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:#fff;margin-bottom:10px;">{_esc(block["title"])}</div>'
             f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(block["subtitle"])}</div>'
             f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
-            f'<div style="font-size:10.5pt;color:{GOLD_LIGHT};margin-top:6px;">{_esc(block["info_line"])}</div>'
+            f'<div style="font-size:10.5pt;color:{ctx.accent_soft};margin-top:6px;">{_esc(block["info_line"])}</div>'
             f'<div style="position:absolute;bottom:0;left:0;font-size:9pt;font-weight:700;color:#fff;">{_esc(block["header_title"])}</div>'
         )
         return (inner, True, ctx.flourish_corner, False)
@@ -816,7 +872,7 @@ def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
 
 def _build_intro_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     objectives_html = "".join([
-        _badge_row(o["num"], o["title"], o["detail"], GREEN_MAIN) for o in block["objectives"]
+        _badge_row(o["num"], o["title"], o["detail"], ctx.accent_main) for o in block["objectives"]
     ])
     scope = block["scope"]
     scope_rows = _ivory_kv_rows([
@@ -824,11 +880,11 @@ def _build_intro_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         (scope["total_event_label"], scope["total_records_text"]),
         (scope["source_file_label"], scope["input_file_name"]),
         (scope["data_type_label_label"], scope["data_type_label"]),
-    ])
-    scope_panel = _ivory_panel("i", scope["panel_title"], scope_rows, footnote=scope["footnote"])
+    ], theme=ctx.theme)
+    scope_panel = _ivory_panel("i", scope["panel_title"], scope_rows, footnote=scope["footnote"], theme=ctx.theme)
     bg_left = f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:18px;">{block["purpose_text"]}</div>{objectives_html}'
     inner = (
-        _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) +
+        _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) +
         _main_panel_pair(bg_left, scope_panel, 58, ctx.panel_side)
     )
     return (inner, False, None, False)
@@ -836,14 +892,14 @@ def _build_intro_block(block: dict, ctx: _PdfBlockContext) -> tuple:
 
 def _build_executive_summary_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     inner = (
-        _kicker(ctx.kicker_ringkasan, GOLD_MAIN) +
+        _kicker(ctx.kicker_ringkasan, ctx.accent_light) +
         f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:18px;">{_esc(block["heading"])}</div>' +
-        _stat_card_grid(block["stat_items"], cols=ctx.stat_cols, dark=True) +
+        _stat_card_grid(block["stat_items"], cols=ctx.stat_cols, dark=True, theme=ctx.theme) +
         # max-width dibatasi ~9.5in (bukan full CONTENT_W ~12.3in) — paragraf
         # selebar halaman penuh di kertas widescreen 13.333in menghasilkan baris
         # >150 karakter, jauh melebihi lebar baca nyaman (~75-90 karakter); versi
         # referensi selalu membatasi teks naratif ke lebar yang lebih wajar.
-        f'<div style="font-size:10.5pt;font-style:italic;color:{GOLD_LIGHT};margin-top:18px;max-width:9.5in;">{_esc(block["caption"])}</div>'
+        f'<div style="font-size:10.5pt;font-style:italic;color:{ctx.accent_soft};margin-top:18px;max-width:9.5in;">{_esc(block["caption"])}</div>'
     )
     return (inner, True, None, False)
 
@@ -852,32 +908,36 @@ def _build_dynamic_section_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     text_html = f'<div style="font-size:11.5pt;color:{GRAY_TEXT};max-width:9.5in;">{_esc(block["text"])}</div>'
     if block.get("aux_stat"):
         value, label = block["aux_stat"]
-        panel_html = _critical_highlight_panel(value, label)
+        panel_html = _critical_highlight_panel(value, label, theme=ctx.theme)
         body = _main_panel_pair(text_html, panel_html, 62, ctx.panel_side)
     elif block.get("aux_list"):
-        rows_html = _ivory_kv_rows([(it["label"], it["value"]) for it in block["aux_list"]])
+        rows_html = _ivory_kv_rows([(it["label"], it["value"]) for it in block["aux_list"]], theme=ctx.theme)
         panel_title = "Data Highlight" if is_english(ctx.report) else "Sorotan Data"
-        panel_html = _ivory_panel("i", panel_title, rows_html)
+        panel_html = _ivory_panel("i", panel_title, rows_html, theme=ctx.theme)
         body = _main_panel_pair(text_html, panel_html, 62, ctx.panel_side)
     else:
         body = text_html
-    inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + body
+    inner = _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) + body
     return (inner, False, None, False)
 
 
 def _build_category_distribution_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # Ramp warna kategori/status DITURUNKAN dari tema (report.theme_color), bukan konstanta
+    # hijau/emas tetap — supaya chart multi-segmen (donut/stacked) ikut tema, sama seperti
+    # bar chart utama. GRAY_TEXT tetap sebagai warna ke-5 (netral, dipakai kalau kategori > 4).
+    ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
     legend = _legend_rows([
-        (CATEGORY_COLOR_RAMP[l["color_index"]], l["name"], f"{l['pct']}%") for l in block["legend"]
-    ])
-    legend_panel = _ivory_panel("%", block["legend_panel_title"], legend, footnote=block["footnote"])
+        (ramp[l["color_index"] % len(ramp)], l["name"], f"{l['pct']}%") for l in block["legend"]
+    ], theme=ctx.theme)
+    legend_panel = _ivory_panel("%", block["legend_panel_title"], legend, footnote=block["footnote"], theme=ctx.theme)
     # Titik variasi tampilan: bar horizontal (warna accent hijau/emas gantian per
     # generate), donut ring multi-warna, ATAU batang proporsi 100% bersegmen (lihat
     # category_style/accent_bar_color di generate_pdf_report) — datanya identik,
     # cuma cara visualnya beda tiap generate.
     if ctx.category_style == "donut":
-        chart_html = _donut_chart_svg(block["values"])
+        chart_html = _donut_chart_svg(block["values"], colors=[ramp[l["color_index"] % len(ramp)] for l in block["legend"]])
     elif ctx.category_style == "stacked":
-        seg_colors = [CATEGORY_COLOR_RAMP[l["color_index"]] for l in block["legend"]]
+        seg_colors = [ramp[l["color_index"] % len(ramp)] for l in block["legend"]]
         chart_html = _stacked_proportion_bar_html(block["values"], colors=seg_colors)
     else:
         chart_html = _bar_chart_html(block["categories"], block["values"], colors=[ctx.accent_bar_color] * len(block["values"]))
@@ -892,7 +952,7 @@ def _build_category_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
     else:
         body = _main_panel_pair(chart_html, legend_panel, 58, ctx.panel_side)
     inner = (
-        _kicker(ctx.kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
+        _kicker(ctx.kicker_analisis, ctx.accent_main) + _title(block["title"]) +
         f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;max-width:9.5in;">{_esc(block["intro"])}</div>' +
         body + caption_html
     )
@@ -900,12 +960,14 @@ def _build_category_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
 
 
 def _build_severity_distribution_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # SEVERITY_COLOR TIDAK PERNAH ikut tema — warna severity (critical=merah, high=emas, dst)
+    # adalah konvensi semantik cyber-security yang fixed, terlepas dari theme_color laporan.
     sev_colors = [SEVERITY_COLOR[k] for k in block["severity_keys"]]
     chart_html = _bar_chart_html(block["categories"], block["values"], colors=sev_colors)
-    panel = _critical_highlight_panel(f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"])
+    panel = _critical_highlight_panel(f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"], theme=ctx.theme)
     caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
     inner = (
-        _kicker(ctx.kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
+        _kicker(ctx.kicker_analisis, ctx.accent_main) + _title(block["title"]) +
         f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;max-width:9.5in;">{_esc(block["intro"])}</div>' +
         _main_panel_pair(chart_html, panel, 62, ctx.panel_side) + caption_html
     )
@@ -915,19 +977,20 @@ def _build_severity_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
 def _build_status_distribution_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
     intro_html = f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;max-width:9.5in;">{_esc(block["intro"])}</div>'
+    ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
     # Titik variasi tampilan (independen dari category_style — lihat status_style di
     # generate_pdf_report): donut butuh panel legend berdampingan (warna donut tidak
     # ber-label sendiri, beda dari bar chart yang sumbu kategorinya sudah jadi label),
     # jadi strukturnya digeser ke pola _main_panel_pair yang sama dgn category_distribution.
     if ctx.status_style in ("donut", "stacked"):
         status_total = sum(block["values"]) or 1
-        status_colors = [CATEGORY_COLOR_RAMP[i % len(CATEGORY_COLOR_RAMP)] for i in range(len(block["values"]))]
+        status_colors = [ramp[i % len(ramp)] for i in range(len(block["values"]))]
         legend_rows_html = _legend_rows([
             (status_colors[i], name, f"{round(val / status_total * 100, 1)}%")
             for i, (name, val) in enumerate(zip(block["categories"], block["values"]))
-        ])
+        ], theme=ctx.theme)
         legend_title = "Status Proportion" if is_english(ctx.report) else "Proporsi Status"
-        legend_panel = _ivory_panel("%", legend_title, legend_rows_html)
+        legend_panel = _ivory_panel("%", legend_title, legend_rows_html, theme=ctx.theme)
         if ctx.status_style == "donut":
             chart_html = _donut_chart_svg(block["values"], colors=status_colors)
             body = _main_panel_pair(chart_html, legend_panel, 58, ctx.panel_side)
@@ -940,21 +1003,22 @@ def _build_status_distribution_block(block: dict, ctx: _PdfBlockContext) -> tupl
     else:
         body = _bar_chart_html(block["categories"], block["values"], colors=[ctx.accent_bar_color] * len(block["values"]))
     inner = (
-        _kicker(ctx.kicker_analisis, GREEN_MAIN) + _title(block["title"]) +
+        _kicker(ctx.kicker_analisis, ctx.accent_main) + _title(block["title"]) +
         intro_html + body + caption_html
     )
     return (inner, False, None, False)
 
 
 def _build_critical_table_block(block: dict, ctx: _PdfBlockContext) -> tuple:
-    table_html = _critical_table(block["headers"], block["rows"], set(block["highlight_idx"]))
+    table_html = _critical_table(block["headers"], block["rows"], set(block["highlight_idx"]), theme=ctx.theme)
     caption_html = ""
     if block["caption"]:
         caption_html = (
             f'<div style="font-size:9.5pt;font-style:italic;color:{GRAY_TEXT};margin-top:12px;">'
             f'{_esc(block["caption"])}</div>'
         )
-    kicker_color = RED_CRIT if block["kicker_is_critical"] else GREEN_MAIN
+    # RED_CRIT TIDAK ikut tema (severity fixed) — cuma cabang "tidak kritis" yang ikut tema.
+    kicker_color = RED_CRIT if block["kicker_is_critical"] else ctx.accent_main
     inner = (
         _kicker(block["kicker"], kicker_color) + _title(block["title"]) +
         table_html + caption_html
@@ -970,8 +1034,8 @@ def _build_asset_cards_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     if ctx.asset_style == "podium" and len(block["items"]) == 3:
         podium_items = [{"num": it["num"], "name": it["name"], "stat": it["stat"]} for it in block["items"]]
         inner = (
-            _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) +
-            f'<div style="margin-top:20pt;">{_podium_row(podium_items)}</div>'
+            _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) +
+            f'<div style="margin-top:20pt;">{_podium_row(podium_items, theme=ctx.theme)}</div>'
         )
         return (inner, False, None, False)
     elif ctx.asset_style == "bars":
@@ -980,27 +1044,28 @@ def _build_asset_cards_block(block: dict, ctx: _PdfBlockContext) -> tuple:
             for it in block["items"]
         ]
         inner = (
-            _kicker(block["kicker"], GOLD_MAIN) +
+            _kicker(block["kicker"], ctx.accent_light) +
             f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:14px;">{_esc(block["title"])}</div>' +
-            f'<div style="margin-top:8pt;">{_asset_ranked_bars_html(bar_items)}</div>'
+            f'<div style="margin-top:8pt;">{_asset_ranked_bars_html(bar_items, theme=ctx.theme)}</div>'
         )
         return (inner, True, None, False)
     else:
         card_items = [(it["num"], it["name"], it["stat"], it["detail"]) for it in block["items"]]
         inner = (
-            _kicker(block["kicker"], GOLD_MAIN) +
+            _kicker(block["kicker"], ctx.accent_light) +
             f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:18px;">{_esc(block["title"])}</div>' +
-            _asset_card_row(card_items)
+            _asset_card_row(card_items, theme=ctx.theme)
         )
         return (inner, True, None, False)
 
 
 def _build_key_findings_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # RED_CRIT TIDAK ikut tema (severity fixed) — cuma cabang "tidak kritis" yang ikut tema.
     findings_html_parts = [
-        _badge_row(it["num"], it["title"], it["detail"], RED_CRIT if it["is_critical"] else GREEN_MAIN)
+        _badge_row(it["num"], it["title"], it["detail"], RED_CRIT if it["is_critical"] else ctx.accent_main)
         for it in block["items"]
     ]
-    inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + "".join(findings_html_parts)
+    inner = _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) + "".join(findings_html_parts)
     return (inner, False, None, False)
 
 
@@ -1008,11 +1073,11 @@ def _build_recommendations_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     # Timeline (lihat _timeline_html) cocok utk jumlah item sedang (2-6) — kalau
     # lebih banyak, node/label jadi terlalu sempit & kartu grid tetap lebih rapi.
     if ctx.recommendation_style == "timeline" and 2 <= len(block["items"]) <= 6:
-        inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + _timeline_html(block["items"])
+        inner = _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) + _timeline_html(block["items"], theme=ctx.theme)
     elif ctx.recommendation_style == "banners":
         inner = (
-            _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) +
-            f'<div style="margin-top:8pt;">{_recommendation_banner_list_html(block["items"])}</div>'
+            _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) +
+            f'<div style="margin-top:8pt;">{_recommendation_banner_list_html(block["items"], theme=ctx.theme)}</div>'
         )
     else:
         # Height eksplisit dihapus (lihat catatan di _card_grid) — kartu sepadat
@@ -1022,18 +1087,18 @@ def _build_recommendations_block(block: dict, ctx: _PdfBlockContext) -> tuple:
             detail_html = f'<div style="font-size:9.5pt;color:{GRAY_TEXT};margin-top:6px;">{_esc(it["detail"])}</div>' if it["detail"] else ""
             cell_htmls.append(
                 f'<table style="width:100%;margin-bottom:12pt;background:{IVORY};border:1px solid {PANEL_BORDER};border-radius:10px;"><tr><td style="vertical-align:top;padding:14pt;">'
-                f'{_badge(it["num"], GOLD_MAIN, size="28px")}'
+                f'{_badge(it["num"], ctx.accent_light, size="28px")}'
                 f'<div style="font-weight:700;font-size:11pt;color:{TEXT_DARK};margin-top:10px;">{_esc(it["title"])}</div>'
                 f'{detail_html}</td></tr></table>'
             )
-        inner = _kicker(block["kicker"], GREEN_MAIN) + _title(block["title"]) + _card_grid(cell_htmls, ctx.card_cols)
+        inner = _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) + _card_grid(cell_htmls, ctx.card_cols)
     return (inner, False, None, False)
 
 
 def _build_conclusion_block(block: dict, ctx: _PdfBlockContext) -> tuple:
-    pills_html = "".join(_pill(p) for p in block["pills"])
+    pills_html = "".join(_pill(p, theme=ctx.theme) for p in block["pills"])
     priority_items = [(p["letter"], p["text"]) for p in block["priority_items"]]
-    priority_html = _priority_panel(block["priority_panel_title"], priority_items) if priority_items else ""
+    priority_html = _priority_panel(block["priority_panel_title"], priority_items, theme=ctx.theme) if priority_items else ""
     concl_left = (
         f'<div style="font-size:11pt;color:#E8ECE6;margin-bottom:18px;">{_esc(block["text"])}</div>'
         f'{pills_html}'
@@ -1043,7 +1108,7 @@ def _build_conclusion_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     # kosong & teks Kesimpulan malah ke kanan, lebih buruk dari layout defaultnya.
     concl_side = ctx.panel_side if priority_html else "right"
     inner = (
-        _kicker(block["kicker"], GOLD_MAIN) +
+        _kicker(block["kicker"], ctx.accent_light) +
         f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:16px;">{_esc(block["title"])}</div>' +
         _main_panel_pair(concl_left, priority_html, 58, concl_side)
     )
@@ -1054,7 +1119,7 @@ def _build_closing_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     if ctx.cover_style == "split":
         # Bookend dgn cover: panel kiri warna emas mengulang angka hero yang sama.
         closing_block = {**block, "hero_stat": ctx.cover_hero_stat}
-        return (_split_closing_td(closing_block, ctx.flourish_corner), True, None, True, True)
+        return (_split_closing_td(closing_block, ctx.flourish_corner, theme=ctx.theme), True, None, True, True)
     else:
         # Spacer sibling, bukan margin-top pada div pembungkus — lihat catatan panjang
         # di slide "cover" di atas (bug yang sama persis, ini slide yang jadi bukti
@@ -1063,7 +1128,7 @@ def _build_closing_block(block: dict, ctx: _PdfBlockContext) -> tuple:
             f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
             f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;margin-bottom:10px;">{_esc(block["thank_you"])}</div>'
             f'<div style="font-size:12pt;color:#fff;margin-bottom:8px;">{_esc(block["title"])}</div>'
-            f'<div style="font-size:10.5pt;font-style:italic;color:{GOLD_LIGHT};">{_esc(block["note"])}</div>'
+            f'<div style="font-size:10.5pt;font-style:italic;color:{ctx.accent_soft};">{_esc(block["note"])}</div>'
         )
         return (inner, True, ctx.flourish_corner, True)
 
@@ -1108,7 +1173,6 @@ class PDFExporter:
         stat_cols = vs["stat_cols"]
         card_cols = vs["card_cols"]
         panel_side = vs["panel_side"]
-        accent_bar_color = GOLD_MAIN if vs["accent_bar_color"] == "gold" else GREEN_MAIN
         category_style = vs["category_style"]
         status_style = vs["status_style"]
         cover_style = vs["cover_style"]
@@ -1117,6 +1181,14 @@ class PDFExporter:
         # Teks kicker TETAP (bukan bagian dari visual_style — cuma variasi kata, bukan bentuk)
         kicker_ringkasan = "Executive Summary" if is_english(report) else "Ringkasan Eksekutif"
         kicker_analisis = "DATA ANALYSIS" if is_english(report) else "ANALISIS DATA"
+
+        # Palet warna tema (report.theme_color) — accent_bar_color TIDAK LAGI dipakai untuk
+        # warna aksen (dulu diacak hijau/emas lewat visual_style, independen dari pilihan user
+        # di Report Settings — bisa kontradiksi dgn tema, mis. tema navy tapi bar random emas).
+        # Sekarang accent_bar_color = ctx.accent_main langsung, konsisten dgn tema yang dipilih.
+        theme_key = resolve_theme_color(report)
+        palette = THEME_PALETTES[theme_key]
+        accent_bar_color = palette["main"]
 
         pages = []  # list of (html, dark, flourish, is_last)
 
@@ -1132,6 +1204,12 @@ class PDFExporter:
             cover_style=cover_style,
             asset_style=asset_style,
             recommendation_style=recommendation_style,
+            accent_main=palette["main"],
+            accent_bg=palette["bg"],
+            accent_chart=palette["chart"],
+            accent_light=palette["light"],
+            accent_soft=palette["soft"],
+            theme=palette,
             kicker_ringkasan=kicker_ringkasan,
             kicker_analisis=kicker_analisis,
         )
@@ -1163,7 +1241,7 @@ class PDFExporter:
                 inner, dark=dark, flourish=flourish,
                 page_num=page_num, total_pages=total_pages,
                 logo_b64=(logo_b64 if not is_cover_or_closing else None),
-                last=is_last, raw=raw,
+                last=is_last, raw=raw, theme=ctx.theme,
             ))
 
         html_content = f"""

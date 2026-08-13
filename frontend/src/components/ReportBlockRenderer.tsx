@@ -5,8 +5,11 @@ import {
   TITLE_FONT,
   BODY_FONT,
   DEFAULT_VISUAL_STYLE,
+  THEME_PALETTES,
+  resolveThemeColors,
   type ReportBlock,
   type VisualStyle,
+  type ThemeColors,
 } from "@/utils/reportTheme";
 
 const C = REPORT_COLORS;
@@ -37,7 +40,7 @@ function BlockTitle({ children, color = C.textDark }: { children: React.ReactNod
 // `add_corner_flourish` di export_pdf.py/export_ppt.py, dipakai cover & penutup. SEBELUMNYA
 // preview React sama sekali tidak menampilkan ini (dilaporkan user sbg salah satu perbedaan
 // preview vs hasil unduhan) — sekarang direplikasi murni CSS (border lingkaran, tanpa isi).
-function Flourish({ corner }: { corner: VisualStyle["flourish_corner"] }) {
+function Flourish({ corner, theme = THEME_PALETTES.green }: { corner: VisualStyle["flourish_corner"]; theme?: ThemeColors }) {
   const posStyle: React.CSSProperties =
     corner === "top_right"
       ? { top: -70, right: -70 }
@@ -50,7 +53,7 @@ function Flourish({ corner }: { corner: VisualStyle["flourish_corner"] }) {
         <div
           key={i}
           className="absolute rounded-full"
-          style={{ ...posStyle, width: 140 + i * 55, height: 140 + i * 55, border: `1px solid ${C.goldMain}` }}
+          style={{ ...posStyle, width: 140 + i * 55, height: 140 + i * 55, border: `1px solid ${theme.light}` }}
         />
       ))}
     </div>
@@ -61,17 +64,19 @@ function BarChart({
   categories,
   values,
   colors,
+  theme = THEME_PALETTES.green,
 }: {
   categories: string[];
   values: number[];
   colors?: string[];
+  theme?: ThemeColors;
 }) {
   const max = Math.max(...values, 1);
   return (
     <div className="space-y-2.5">
       {categories.map((cat, i) => {
         const pct = Math.max((values[i] / max) * 100, 1.5);
-        const color = colors ? colors[i] : C.greenMain;
+        const color = colors ? colors[i] : theme.main;
         return (
           <div key={cat} className="flex items-center gap-2 text-xs">
             <div className="w-24 shrink-0 truncate font-semibold" style={{ color: C.textDark }}>
@@ -181,11 +186,13 @@ function IvoryPanel({
   title,
   children,
   footnote,
+  theme = THEME_PALETTES.green,
 }: {
   badge: string;
   title: string;
   children: React.ReactNode;
   footnote?: string;
+  theme?: ThemeColors;
 }) {
   return (
     <div
@@ -195,11 +202,11 @@ function IvoryPanel({
       <div className="flex items-center gap-2 mb-3">
         <span
           className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white shrink-0"
-          style={{ background: C.goldMain }}
+          style={{ background: theme.light }}
         >
           {badge}
         </span>
-        <span className="text-xs font-black uppercase tracking-wide" style={{ color: C.greenMain }}>
+        <span className="text-xs font-black uppercase tracking-wide" style={{ color: theme.main }}>
           {title}
         </span>
       </div>
@@ -245,11 +252,11 @@ function AiCaption({ text }: { text?: string }) {
   );
 }
 
-function Pill({ text }: { text: string }) {
+function Pill({ text, theme = THEME_PALETTES.green }: { text: string; theme?: ThemeColors }) {
   return (
     <div
       className="inline-block rounded-full px-4 py-1.5 text-xs font-black mr-2 mb-2"
-      style={{ border: `1px solid ${C.goldMain}`, color: C.goldMain }}
+      style={{ border: `1px solid ${theme.light}`, color: theme.light }}
     >
       {text}
     </div>
@@ -264,13 +271,13 @@ function Pill({ text }: { text: string }) {
 // kebetulan pilih "solid") — sekarang dipilih sesuai `vs.cover_style` yang sama persis
 // dipakai backend saat laporan ini dianalisis (lihat pick_visual_style()).
 // ---------------------------------------------------------------------------------------
-function CoverSplit({ block, flourishCorner }: { block: ReportBlock; flourishCorner: VisualStyle["flourish_corner"] }) {
+function CoverSplit({ block, flourishCorner, theme = THEME_PALETTES.green }: { block: ReportBlock; flourishCorner: VisualStyle["flourish_corner"]; theme?: ThemeColors }) {
   const [heroValue, heroLabel] = block.hero_stat || ["", ""];
   return (
     <div className="overflow-hidden flex flex-col sm:flex-row min-h-full" style={{ fontFamily: BODY_FONT }}>
       <div
         className="sm:w-[37%] p-5 sm:p-6 flex flex-col justify-between gap-4 shrink-0"
-        style={{ background: C.goldMain, color: C.textDark }}
+        style={{ background: theme.light, color: C.textDark }}
       >
         <div className="text-[10px] font-black uppercase tracking-[0.18em]">
           {block.hero_stat_kicker}
@@ -278,7 +285,7 @@ function CoverSplit({ block, flourishCorner }: { block: ReportBlock; flourishCor
         <div>
           <div
             className="text-4xl sm:text-5xl font-bold leading-none"
-            style={{ fontFamily: TITLE_FONT, color: C.greenBg }}
+            style={{ fontFamily: TITLE_FONT, color: theme.bg }}
           >
             {heroValue}
           </div>
@@ -286,16 +293,16 @@ function CoverSplit({ block, flourishCorner }: { block: ReportBlock; flourishCor
         </div>
         <div className="text-[9px] sm:text-[10px] font-bold">{block.header_title}</div>
       </div>
-      <div className="relative flex-1 p-5 sm:p-8 overflow-hidden" style={{ background: C.greenBg, color: C.white }}>
-        <Flourish corner={flourishCorner} />
+      <div className="relative flex-1 p-5 sm:p-8 overflow-hidden" style={{ background: theme.bg, color: C.white }}>
+        <Flourish corner={flourishCorner} theme={theme} />
         <div className="relative">
-          <Kicker text={block.kicker} color={C.goldMain} />
+          <Kicker text={block.kicker} color={theme.light} />
           <div className="text-2xl sm:text-3xl font-bold mb-3" style={{ fontFamily: TITLE_FONT }}>
             {block.title}
           </div>
           <div className="text-sm mb-4">{block.subtitle}</div>
           <div className="text-xs">{block.period_label} {block.period_text}</div>
-          <div className="text-xs mt-1" style={{ color: C.goldLight }}>
+          <div className="text-xs mt-1" style={{ color: theme.soft }}>
             {block.info_line}
           </div>
         </div>
@@ -304,21 +311,21 @@ function CoverSplit({ block, flourishCorner }: { block: ReportBlock; flourishCor
   );
 }
 
-function CoverSolid({ block, flourishCorner }: { block: ReportBlock; flourishCorner: VisualStyle["flourish_corner"] }) {
+function CoverSolid({ block, flourishCorner, theme = THEME_PALETTES.green }: { block: ReportBlock; flourishCorner: VisualStyle["flourish_corner"]; theme?: ThemeColors }) {
   return (
     <div
       className="relative overflow-hidden min-h-full flex flex-col justify-center p-8 sm:p-12"
-      style={{ background: C.greenBg, color: C.white, fontFamily: BODY_FONT }}
+      style={{ background: theme.bg, color: C.white, fontFamily: BODY_FONT }}
     >
-      <Flourish corner={flourishCorner} />
+      <Flourish corner={flourishCorner} theme={theme} />
       <div className="relative">
-        <Kicker text={block.kicker} color={C.goldMain} />
+        <Kicker text={block.kicker} color={theme.light} />
         <div className="text-3xl sm:text-4xl font-bold mb-3" style={{ fontFamily: TITLE_FONT }}>
           {block.title}
         </div>
         <div className="text-sm sm:text-base mb-4">{block.subtitle}</div>
         <div className="text-xs sm:text-sm">{block.period_label} {block.period_text}</div>
-        <div className="text-xs sm:text-sm mt-1" style={{ color: C.goldLight }}>
+        <div className="text-xs sm:text-sm mt-1" style={{ color: theme.soft }}>
           {block.info_line}
         </div>
       </div>
@@ -329,11 +336,11 @@ function CoverSolid({ block, flourishCorner }: { block: ReportBlock; flourishCor
   );
 }
 
-function CoverBlock({ block, vs }: { block: ReportBlock; vs: VisualStyle }) {
+function CoverBlock({ block, vs, theme = THEME_PALETTES.green }: { block: ReportBlock; vs: VisualStyle; theme?: ThemeColors }) {
   return vs.cover_style === "solid" ? (
-    <CoverSolid block={block} flourishCorner={vs.flourish_corner} />
+    <CoverSolid block={block} flourishCorner={vs.flourish_corner} theme={theme} />
   ) : (
-    <CoverSplit block={block} flourishCorner={vs.flourish_corner} />
+    <CoverSplit block={block} flourishCorner={vs.flourish_corner} theme={theme} />
   );
 }
 
@@ -341,56 +348,56 @@ function CoverBlock({ block, vs }: { block: ReportBlock; vs: VisualStyle }) {
 // Penutup — dipasangkan dgn gaya cover yang sama (bookend), mirror `_split_closing_td`/
 // `add_split_closing_slide` vs cabang non-split `_build_closing_slide`.
 // ---------------------------------------------------------------------------------------
-function ClosingSplit({ block, flourishCorner }: { block: ReportBlock; flourishCorner: VisualStyle["flourish_corner"] }) {
+function ClosingSplit({ block, flourishCorner, theme = THEME_PALETTES.green }: { block: ReportBlock; flourishCorner: VisualStyle["flourish_corner"]; theme?: ThemeColors }) {
   const [heroValue, heroLabel] = block.hero_stat || ["", ""];
   return (
     <div className="overflow-hidden flex flex-col sm:flex-row min-h-full" style={{ fontFamily: BODY_FONT }}>
       <div
         className="sm:w-[37%] p-5 sm:p-6 flex flex-col justify-center shrink-0"
-        style={{ background: C.goldMain, color: C.textDark }}
+        style={{ background: theme.light, color: C.textDark }}
       >
-        <div className="text-4xl sm:text-5xl font-bold leading-none" style={{ fontFamily: TITLE_FONT, color: C.greenBg }}>
+        <div className="text-4xl sm:text-5xl font-bold leading-none" style={{ fontFamily: TITLE_FONT, color: theme.bg }}>
           {heroValue}
         </div>
         <div className="text-xs sm:text-sm mt-2">{heroLabel}</div>
       </div>
-      <div className="relative flex-1 p-5 sm:p-8 flex flex-col justify-center overflow-hidden" style={{ background: C.greenBg, color: C.white }}>
-        <Flourish corner={flourishCorner} />
+      <div className="relative flex-1 p-5 sm:p-8 flex flex-col justify-center overflow-hidden" style={{ background: theme.bg, color: C.white }}>
+        <Flourish corner={flourishCorner} theme={theme} />
         <div className="relative">
           <div className="text-2xl sm:text-3xl font-bold mb-2" style={{ fontFamily: TITLE_FONT }}>
             {block.thank_you}
           </div>
           <div className="text-sm mb-2">{block.title}</div>
-          <div className="text-xs italic" style={{ color: C.goldLight }}>{block.note}</div>
+          <div className="text-xs italic" style={{ color: theme.soft }}>{block.note}</div>
         </div>
       </div>
     </div>
   );
 }
 
-function ClosingSolid({ block, flourishCorner }: { block: ReportBlock; flourishCorner: VisualStyle["flourish_corner"] }) {
+function ClosingSolid({ block, flourishCorner, theme = THEME_PALETTES.green }: { block: ReportBlock; flourishCorner: VisualStyle["flourish_corner"]; theme?: ThemeColors }) {
   return (
     <div
       className="relative overflow-hidden min-h-full flex flex-col items-center justify-center text-center p-8"
-      style={{ background: C.greenBg, color: C.white, fontFamily: BODY_FONT }}
+      style={{ background: theme.bg, color: C.white, fontFamily: BODY_FONT }}
     >
-      <Flourish corner={flourishCorner} />
+      <Flourish corner={flourishCorner} theme={theme} />
       <div className="relative">
         <div className="text-2xl sm:text-3xl font-bold mb-3" style={{ fontFamily: TITLE_FONT }}>
           {block.thank_you}
         </div>
         <div className="text-sm mb-2">{block.title}</div>
-        <div className="text-xs italic" style={{ color: C.goldLight }}>{block.note}</div>
+        <div className="text-xs italic" style={{ color: theme.soft }}>{block.note}</div>
       </div>
     </div>
   );
 }
 
-function ClosingBlock({ block, vs }: { block: ReportBlock; vs: VisualStyle }) {
+function ClosingBlock({ block, vs, theme = THEME_PALETTES.green }: { block: ReportBlock; vs: VisualStyle; theme?: ThemeColors }) {
   return vs.cover_style === "solid" ? (
-    <ClosingSolid block={block} flourishCorner={vs.flourish_corner} />
+    <ClosingSolid block={block} flourishCorner={vs.flourish_corner} theme={theme} />
   ) : (
-    <ClosingSplit block={block} flourishCorner={vs.flourish_corner} />
+    <ClosingSplit block={block} flourishCorner={vs.flourish_corner} theme={theme} />
   );
 }
 
@@ -398,23 +405,23 @@ function ClosingBlock({ block, vs }: { block: ReportBlock; vs: VisualStyle }) {
 // Aset sasaran — "cards" (grid biasa) / "podium" (3 kartu gaya podium, tengah lebih tinggi,
 // fallback ke cards kalau bukan persis 3 item) / "bars" (leaderboard batang horizontal).
 // ---------------------------------------------------------------------------------------
-function AssetCards({ items }: { items: any[] }) {
+function AssetCards({ items, theme = THEME_PALETTES.green }: { items: any[]; theme?: ThemeColors }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
       {items.map((it) => (
         <div
           key={it.num}
           className="rounded-xl p-4"
-          style={{ border: `1px solid ${C.goldMain}66`, background: "#ffffff0d" }}
+          style={{ border: `1px solid ${theme.light}66`, background: "#ffffff0d" }}
         >
           <span
             className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-black mb-2"
-            style={{ background: C.goldMain, color: C.textDark }}
+            style={{ background: theme.light, color: C.textDark }}
           >
             {it.num}
           </span>
           <div className="font-bold text-sm">{it.name}</div>
-          <div className="text-xs font-black mt-1" style={{ color: C.goldLight }}>{it.stat}</div>
+          <div className="text-xs font-black mt-1" style={{ color: theme.soft }}>{it.stat}</div>
           <div className="text-[11px] mt-2 opacity-80">{it.detail}</div>
         </div>
       ))}
@@ -422,8 +429,8 @@ function AssetCards({ items }: { items: any[] }) {
   );
 }
 
-function AssetPodium({ items }: { items: any[] }) {
-  if (items.length !== 3) return <AssetCards items={items} />;
+function AssetPodium({ items, theme = THEME_PALETTES.green }: { items: any[]; theme?: ThemeColors }) {
+  if (items.length !== 3) return <AssetCards items={items} theme={theme} />;
   const order = [1, 0, 2];
   const heightCls = ["h-32", "h-40", "h-28"];
   return (
@@ -434,16 +441,16 @@ function AssetPodium({ items }: { items: any[] }) {
           <div
             key={it.num}
             className={`rounded-xl p-3 flex flex-col justify-end ${heightCls[pos]}`}
-            style={{ border: `1px solid ${C.goldMain}66`, background: pos === 1 ? "#ffffff1a" : "#ffffff0d" }}
+            style={{ border: `1px solid ${theme.light}66`, background: pos === 1 ? "#ffffff1a" : "#ffffff0d" }}
           >
             <span
               className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-black mb-2"
-              style={{ background: C.goldMain, color: C.textDark }}
+              style={{ background: theme.light, color: C.textDark }}
             >
               {it.num}
             </span>
             <div className="font-bold text-sm truncate">{it.name}</div>
-            <div className="text-xs font-black mt-1" style={{ color: C.goldLight }}>{it.stat}</div>
+            <div className="text-xs font-black mt-1" style={{ color: theme.soft }}>{it.stat}</div>
           </div>
         );
       })}
@@ -451,7 +458,7 @@ function AssetPodium({ items }: { items: any[] }) {
   );
 }
 
-function AssetBars({ items }: { items: any[] }) {
+function AssetBars({ items, theme = THEME_PALETTES.green }: { items: any[]; theme?: ThemeColors }) {
   const nums = items.map((it) => parseFloat(String(it.stat).replace(/[^\d.]/g, "")) || 0);
   const max = Math.max(...nums, 1);
   return (
@@ -460,19 +467,19 @@ function AssetBars({ items }: { items: any[] }) {
         <div key={it.num} className="flex items-center gap-3">
           <span
             className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-black shrink-0"
-            style={{ background: C.goldMain, color: C.textDark }}
+            style={{ background: theme.light, color: C.textDark }}
           >
             {it.num}
           </span>
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline justify-between text-xs mb-1 gap-2">
               <span className="font-bold truncate">{it.name}</span>
-              <span className="font-black shrink-0" style={{ color: C.goldLight }}>{it.stat}</span>
+              <span className="font-black shrink-0" style={{ color: theme.soft }}>{it.stat}</span>
             </div>
             <div className="h-2 rounded-full" style={{ background: "#ffffff26" }}>
               <div
                 className="h-2 rounded-full"
-                style={{ width: `${Math.max((nums[i] / max) * 100, 4)}%`, background: C.goldMain }}
+                style={{ width: `${Math.max((nums[i] / max) * 100, 4)}%`, background: theme.light }}
               />
             </div>
           </div>
@@ -482,17 +489,17 @@ function AssetBars({ items }: { items: any[] }) {
   );
 }
 
-function AssetSection({ items, style }: { items: any[]; style: VisualStyle["asset_style"] }) {
-  if (style === "podium") return <AssetPodium items={items} />;
-  if (style === "bars") return <AssetBars items={items} />;
-  return <AssetCards items={items} />;
+function AssetSection({ items, style, theme = THEME_PALETTES.green }: { items: any[]; style: VisualStyle["asset_style"]; theme?: ThemeColors }) {
+  if (style === "podium") return <AssetPodium items={items} theme={theme} />;
+  if (style === "bars") return <AssetBars items={items} theme={theme} />;
+  return <AssetCards items={items} theme={theme} />;
 }
 
 // ---------------------------------------------------------------------------------------
 // Rekomendasi — "cards" (grid biasa) / "timeline" (garis vertikal tersambung) / "banners"
 // (stripe horizontal penuh lebar, ditumpuk).
 // ---------------------------------------------------------------------------------------
-function RecommendationCards({ items, cols }: { items: any[]; cols: number }) {
+function RecommendationCards({ items, cols, theme = THEME_PALETTES.green }: { items: any[]; cols: number; theme?: ThemeColors }) {
   return (
     <div
       className="grid grid-cols-1 gap-4 mt-4"
@@ -506,7 +513,7 @@ function RecommendationCards({ items, cols }: { items: any[]; cols: number }) {
         >
           <span
             className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-black text-white mb-2"
-            style={{ background: C.goldMain }}
+            style={{ background: theme.light }}
           >
             {it.num}
           </span>
@@ -520,7 +527,7 @@ function RecommendationCards({ items, cols }: { items: any[]; cols: number }) {
   );
 }
 
-function RecommendationTimeline({ items }: { items: any[] }) {
+function RecommendationTimeline({ items, theme = THEME_PALETTES.green }: { items: any[]; theme?: ThemeColors }) {
   return (
     <div className="mt-4 relative pl-2">
       <div className="absolute left-[15px] top-2 bottom-2 w-px" style={{ background: C.panelBorder }} />
@@ -529,7 +536,7 @@ function RecommendationTimeline({ items }: { items: any[] }) {
           <div key={it.num} className="flex gap-4 relative">
             <span
               className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-black text-white shrink-0 relative z-10"
-              style={{ background: C.goldMain }}
+              style={{ background: theme.light }}
             >
               {it.num}
             </span>
@@ -546,7 +553,7 @@ function RecommendationTimeline({ items }: { items: any[] }) {
   );
 }
 
-function RecommendationBanners({ items }: { items: any[] }) {
+function RecommendationBanners({ items, theme = THEME_PALETTES.green }: { items: any[]; theme?: ThemeColors }) {
   return (
     <div className="space-y-3 mt-4">
       {items.map((it: any) => (
@@ -557,7 +564,7 @@ function RecommendationBanners({ items }: { items: any[] }) {
         >
           <span
             className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-black text-white shrink-0"
-            style={{ background: C.goldMain }}
+            style={{ background: theme.light }}
           >
             {it.num}
           </span>
@@ -573,36 +580,48 @@ function RecommendationBanners({ items }: { items: any[] }) {
   );
 }
 
-function RecommendationSection({ items, style, cols }: { items: any[]; style: VisualStyle["recommendation_style"]; cols: number }) {
-  if (style === "timeline") return <RecommendationTimeline items={items} />;
-  if (style === "banners") return <RecommendationBanners items={items} />;
-  return <RecommendationCards items={items} cols={cols} />;
+function RecommendationSection({ items, style, cols, theme = THEME_PALETTES.green }: { items: any[]; style: VisualStyle["recommendation_style"]; cols: number; theme?: ThemeColors }) {
+  if (style === "timeline") return <RecommendationTimeline items={items} theme={theme} />;
+  if (style === "banners") return <RecommendationBanners items={items} theme={theme} />;
+  return <RecommendationCards items={items} cols={cols} theme={theme} />;
 }
 
-export default function ReportBlockRenderer({ block, visualStyle }: { block: ReportBlock; visualStyle?: VisualStyle }) {
+export default function ReportBlockRenderer({
+  block,
+  visualStyle,
+  themeColor,
+}: {
+  block: ReportBlock;
+  visualStyle?: VisualStyle;
+  themeColor?: string;
+}) {
   const vs = visualStyle || DEFAULT_VISUAL_STYLE;
+  const theme = resolveThemeColors(themeColor);
 
   if (block.kind === "cover") {
-    return <CoverBlock block={block} vs={vs} />;
+    return <CoverBlock block={block} vs={vs} theme={theme} />;
   }
   if (block.kind === "closing") {
-    return <ClosingBlock block={block} vs={vs} />;
+    return <ClosingBlock block={block} vs={vs} theme={theme} />;
   }
 
   const dark = !!block.dark;
   const wrapStyle: React.CSSProperties = dark
-    ? { background: C.greenBg, color: C.white }
+    ? { background: theme.bg, color: C.white }
     : { background: C.white, color: C.textDark };
 
   return (
     <div className="min-h-full p-6 sm:p-8" style={{ ...wrapStyle, fontFamily: BODY_FONT }}>
-      {renderInner(block, vs)}
+      {renderInner(block, vs, theme)}
     </div>
   );
 }
 
-function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
-  const accentColor = vs.accent_bar_color === "gold" ? C.goldMain : C.greenMain;
+function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): React.ReactNode {
+  const accentColor = theme.main;
+  // Ramp warna kategori/status DITURUNKAN dari tema — sama seperti export_pdf.py/export_ppt.py.
+  // C.grayText tetap warna ke-5 (netral).
+  const ramp = [theme.main, theme.chart, theme.light, theme.soft, C.grayText];
 
   switch (block.kind) {
 
@@ -613,12 +632,12 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
             {block.purpose_text}
           </p>
           {block.objectives.map((o: any) => (
-            <BadgeRow key={o.num} num={o.num} title={o.title} detail={o.detail} color={C.greenMain} />
+            <BadgeRow key={o.num} num={o.num} title={o.title} detail={o.detail} color={theme.main} />
           ))}
         </div>
       );
       const panelCol = (
-        <IvoryPanel badge="i" title={block.scope.panel_title} footnote={block.scope.footnote}>
+        <IvoryPanel badge="i" title={block.scope.panel_title} footnote={block.scope.footnote} theme={theme}>
           {[
             [block.scope.period_label, block.scope.period_text],
             [block.scope.total_event_label, block.scope.total_records_text],
@@ -638,7 +657,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
       );
       return (
         <>
-          <Kicker text={block.kicker} color={C.greenMain} />
+          <Kicker text={block.kicker} color={theme.main} />
           <BlockTitle>{block.title}</BlockTitle>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {vs.panel_side === "left" ? (
@@ -654,7 +673,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
     case "executive_summary":
       return (
         <>
-          <Kicker text={block.title || "Executive Summary"} color={C.goldMain} />
+          <Kicker text={block.title || "Executive Summary"} color={theme.light} />
           <BlockTitle color={C.white}>{block.heading}</BlockTitle>
           <div
             className="grid grid-cols-2 gap-3 mt-4"
@@ -664,14 +683,14 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
               <div
                 key={i}
                 className="rounded-xl p-4 text-center"
-                style={{ border: `1px solid ${C.goldMain}66`, background: "#ffffff10" }}
+                style={{ border: `1px solid ${theme.light}66`, background: "#ffffff10" }}
               >
                 <div className="text-xl font-black">{s[0]}</div>
                 <div className="text-[10px] font-bold mt-1 opacity-80">{s[1]}</div>
               </div>
             ))}
           </div>
-          <div className="text-xs italic mt-5" style={{ color: C.goldLight }}>
+          <div className="text-xs italic mt-5" style={{ color: theme.soft }}>
             {block.caption}
           </div>
         </>
@@ -687,26 +706,26 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
       const auxCol = block.aux_stat ? (
         <div
           className="rounded-xl p-4 h-full flex flex-col justify-center items-center text-center"
-          style={{ background: C.greenBg, border: `1px solid ${C.goldMain}66` }}
+          style={{ background: theme.bg, border: `1px solid ${theme.light}66` }}
         >
-          <div className="text-3xl font-black" style={{ color: C.goldMain }}>
+          <div className="text-3xl font-black" style={{ color: theme.light }}>
             {block.aux_stat[0]}
           </div>
           <div className="text-xs mt-1 text-white">{block.aux_stat[1]}</div>
         </div>
       ) : block.aux_list ? (
-        <IvoryPanel badge="i" title="Sorotan Data">
+        <IvoryPanel badge="i" title="Sorotan Data" theme={theme}>
           {block.aux_list.map((it: any, i: number) => (
             <div key={i} className="flex items-center justify-between text-xs">
               <span className="truncate" style={{ color: C.textDark }}>{it.label}</span>
-              <span className="font-bold" style={{ color: C.greenMain }}>{it.value}</span>
+              <span className="font-bold" style={{ color: theme.main }}>{it.value}</span>
             </div>
           ))}
         </IvoryPanel>
       ) : null;
       return (
         <>
-          <Kicker text={block.kicker} color={C.greenMain} />
+          <Kicker text={block.kicker} color={theme.main} />
           <BlockTitle>{block.title}</BlockTitle>
           {hasAux ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -721,26 +740,27 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
     }
 
     case "category_distribution": {
+      const catRampColors = block.legend.map((l: any) => ramp[l.color_index % ramp.length]);
       const chartCol = (
         <Chart
           style={vs.category_style}
           categories={block.categories}
           values={block.values}
-          colors={vs.category_style === "bar" ? block.categories.map(() => accentColor) : undefined}
+          colors={vs.category_style === "bar" ? block.categories.map(() => accentColor) : catRampColors}
         />
       );
       const panelCol = (
-        <IvoryPanel badge="%" title={block.legend_panel_title} footnote={block.footnote}>
+        <IvoryPanel badge="%" title={block.legend_panel_title} footnote={block.footnote} theme={theme}>
           {block.legend.map((l: any, i: number) => (
             <div key={i} className="flex items-center gap-2 text-xs">
               <span
                 className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ background: CATEGORY_COLOR_RAMP[l.color_index] }}
+                style={{ background: ramp[l.color_index % ramp.length] }}
               />
               <span className="flex-1 truncate" style={{ color: C.textDark }}>
                 {l.name}
               </span>
-              <span className="font-bold" style={{ color: C.greenMain }}>
+              <span className="font-bold" style={{ color: theme.main }}>
                 {l.pct}%
               </span>
             </div>
@@ -749,7 +769,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
       );
       return (
         <>
-          <Kicker text={block.kicker} color={C.greenMain} />
+          <Kicker text={block.kicker} color={theme.main} />
           <BlockTitle>{block.title}</BlockTitle>
           <p className="text-xs mb-4" style={{ color: C.grayText }}>
             {block.intro}
@@ -775,10 +795,10 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
       const panelCol = (
         <div
           className="rounded-xl p-4 h-full flex flex-col justify-center"
-          style={{ background: C.greenBg, border: `1px solid ${C.goldMain}66` }}
+          style={{ background: theme.bg, border: `1px solid ${theme.light}66` }}
         >
           <div className="text-3xl font-black text-white">{block.crit_pct}%</div>
-          <div className="text-xs mt-1" style={{ color: C.goldLight }}>
+          <div className="text-xs mt-1" style={{ color: theme.soft }}>
             {block.panel_text}
           </div>
           {block.detail_text && (
@@ -790,7 +810,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
       );
       return (
         <>
-          <Kicker text={block.kicker} color={C.greenMain} />
+          <Kicker text={block.kicker} color={theme.main} />
           <BlockTitle>{block.title}</BlockTitle>
           <p className="text-xs mb-4" style={{ color: C.grayText }}>
             {block.intro}
@@ -806,7 +826,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
     case "status_distribution":
       return (
         <>
-          <Kicker text={block.kicker} color={C.greenMain} />
+          <Kicker text={block.kicker} color={theme.main} />
           <BlockTitle>{block.title}</BlockTitle>
           <p className="text-xs mb-4" style={{ color: C.grayText }}>
             {block.intro}
@@ -815,7 +835,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
             style={vs.status_style}
             categories={block.categories}
             values={block.values}
-            colors={vs.status_style === "bar" ? block.categories.map(() => accentColor) : undefined}
+            colors={vs.status_style === "bar" ? block.categories.map(() => accentColor) : block.categories.map((_c: string, i: number) => ramp[i % ramp.length])}
           />
           <AiCaption text={block.ai_caption} />
         </>
@@ -824,12 +844,12 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
     case "critical_table":
       return (
         <>
-          <Kicker text={block.kicker} color={block.kicker_is_critical ? C.redCrit : C.greenMain} />
+          <Kicker text={block.kicker} color={block.kicker_is_critical ? C.redCrit : theme.main} />
           <BlockTitle>{block.title}</BlockTitle>
           <div className="overflow-x-auto">
             <table className="w-full text-xs border-collapse">
               <thead>
-                <tr style={{ background: C.greenBg }}>
+                <tr style={{ background: theme.bg }}>
                   {block.headers.map((h: string) => (
                     <th key={h} className="text-left px-3 py-2 text-white font-bold">
                       {h}
@@ -876,16 +896,16 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
     case "asset_cards":
       return (
         <>
-          <Kicker text={block.kicker} color={C.goldMain} />
+          <Kicker text={block.kicker} color={theme.light} />
           <BlockTitle color={C.white}>{block.title}</BlockTitle>
-          <AssetSection items={block.items} style={vs.asset_style} />
+          <AssetSection items={block.items} style={vs.asset_style} theme={theme} />
         </>
       );
 
     case "key_findings":
       return (
         <>
-          <Kicker text={block.kicker} color={C.greenMain} />
+          <Kicker text={block.kicker} color={theme.main} />
           <BlockTitle>{block.title}</BlockTitle>
           {block.items.map((it: any) => (
             <BadgeRow
@@ -893,7 +913,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
               num={it.num}
               title={it.title}
               detail={it.detail}
-              color={it.is_critical ? C.redCrit : C.greenMain}
+              color={it.is_critical ? C.redCrit : theme.main}
             />
           ))}
         </>
@@ -902,16 +922,16 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
     case "recommendations":
       return (
         <>
-          <Kicker text={block.kicker} color={C.greenMain} />
+          <Kicker text={block.kicker} color={theme.main} />
           <BlockTitle>{block.title}</BlockTitle>
-          <RecommendationSection items={block.items} style={vs.recommendation_style} cols={vs.card_cols} />
+          <RecommendationSection items={block.items} style={vs.recommendation_style} cols={vs.card_cols} theme={theme} />
         </>
       );
 
     case "conclusion":
       return (
         <>
-          <Kicker text={block.kicker} color={C.goldMain} />
+          <Kicker text={block.kicker} color={theme.light} />
           <BlockTitle color={C.white}>{block.title}</BlockTitle>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -920,17 +940,17 @@ function renderInner(block: ReportBlock, vs: VisualStyle): React.ReactNode {
               </p>
               <div>
                 {block.pills.map((p: string, i: number) => (
-                  <Pill key={i} text={p} />
+                  <Pill key={i} text={p} theme={theme} />
                 ))}
               </div>
             </div>
             {block.priority_items.length > 0 && (
-              <IvoryPanel badge="!" title={block.priority_panel_title}>
+              <IvoryPanel badge="!" title={block.priority_panel_title} theme={theme}>
                 {block.priority_items.map((p: any) => (
                   <div key={p.letter} className="flex items-start gap-2 text-xs">
                     <span
                       className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white shrink-0"
-                      style={{ background: C.goldMain }}
+                      style={{ background: theme.light }}
                     >
                       {p.letter}
                     </span>

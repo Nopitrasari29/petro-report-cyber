@@ -68,10 +68,58 @@ DEFAULT_VISUAL_STYLE = {
     "card_cols": 3,
     "accent_bar_color": "green",
     "flourish_corner": "bottom_right",
+    "resolved_theme_color": "green",
 }
 
 
-def pick_visual_style() -> dict:
+# Preset gaya/layout bernama yang bisa dipilih user di Report Settings (Step 2 wizard,
+# field `style_preset` pada Report) — kombinasi TETAP dari knob yang sama dipakai
+# pick_visual_style() acak di bawah, supaya "Simple"/"Professional"/"Bold" punya arti visual
+# yang konsisten & bisa diprediksi, bukan ikut diacak lagi. `accent_bar_color` tetap disimpan
+# di tiap preset demi kompatibilitas bentuk data dengan DEFAULT_VISUAL_STYLE/laporan lama —
+# TIDAK lagi dipakai untuk warna aksen (lihat resolve_theme_color(), warna sekarang murni dari
+# report.theme_color, terpisah dari style_preset).
+STYLE_PRESETS: dict[str, dict] = {
+    "minimalist": {  # Simple/Minimalist — densitas visual rendah, cepat dipindai
+        "cover_style": "solid",
+        "category_style": "bar",
+        "status_style": "bar",
+        "asset_style": "cards",
+        "recommendation_style": "cards",
+        "panel_side": "right",
+        "stat_cols": 2,
+        "card_cols": 2,
+        "accent_bar_color": "green",
+        "flourish_corner": "bottom_right",
+    },
+    "corporate": {  # Professional/Corporate — seimbang, dekat dengan gaya umum sebelumnya
+        "cover_style": "split",
+        "category_style": "donut",
+        "status_style": "bar",
+        "asset_style": "cards",
+        "recommendation_style": "cards",
+        "panel_side": "right",
+        "stat_cols": 3,
+        "card_cols": 3,
+        "accent_bar_color": "green",
+        "flourish_corner": "bottom_right",
+    },
+    "executive": {  # Bold/Executive — lebih padat & grafis, untuk pembaca eksekutif/dewan
+        "cover_style": "split",
+        "category_style": "stacked",
+        "status_style": "donut",
+        "asset_style": "podium",
+        "recommendation_style": "timeline",
+        "panel_side": "left",
+        "stat_cols": 3,
+        "card_cols": 3,
+        "accent_bar_color": "green",
+        "flourish_corner": "top_right",
+    },
+}
+
+
+def pick_visual_style(preset: str | None = None) -> dict:
     """Pilih SATU kombinasi varian tampilan (bentuk cover, gaya chart, gaya kartu, dst) —
     dipanggil SEKALI oleh analysis.py tepat saat analisis AI berhasil, hasilnya DISIMPAN ke
     report.visual_style (bukan di-random ulang tiap kali file diunduh seperti sebelumnya).
@@ -80,20 +128,60 @@ def pick_visual_style() -> dict:
     jadi bisa terlihat SANGAT berbeda dari file yang benar-benar diunduh. Sekarang preview,
     PDF, dan PPTX bertiga membaca `report.visual_style` yang SAMA, jadi dijamin konsisten utk
     1 laporan yang sama — regenerate laporan (analisis AI baru) boleh dapat kombinasi lain,
-    laporan yang sudah ada tidak pernah berubah bentuk sendiri kapan pun dilihat/diunduh."""
-    rnd = random.Random()
-    return {
-        "cover_style": rnd.choice(["solid", "split"]),
-        "category_style": rnd.choice(["bar", "donut", "stacked"]),
-        "status_style": rnd.choice(["bar", "donut", "stacked"]),
-        "asset_style": rnd.choice(["cards", "podium", "bars"]),
-        "recommendation_style": rnd.choice(["cards", "timeline", "banners"]),
-        "panel_side": rnd.choice(["left", "right"]),
-        "stat_cols": rnd.choice([2, 3]),
-        "card_cols": rnd.choice([2, 3]),
-        "accent_bar_color": rnd.choice(["green", "gold"]),
-        "flourish_corner": rnd.choice(["bottom_right", "top_right", "bottom_left"]),
-    }
+    laporan yang sudah ada tidak pernah berubah bentuk sendiri kapan pun dilihat/diunduh.
+
+    `preset`: nilai report.style_preset ("minimalist"/"corporate"/"executive") — kalau cocok
+    salah satu STYLE_PRESETS, kembalikan kombinasi TETAP itu (deterministik, sesuai pilihan
+    user). Kalau None/""/"auto"/nilai tak dikenal, PERSIS perilaku lama: pilih acak penuh —
+    supaya laporan lama & laporan tanpa preset eksplisit tidak berubah sama sekali.
+
+    `resolved_theme_color` SELALU diisi acak di sini (terlepas dari preset gaya) — dipakai
+    HANYA kalau report.theme_color = "auto" (lihat resolve_theme_color()); kalau user pilih
+    warna eksplisit, nilai ini dihitung tapi tidak pernah dibaca. Diacak & DIKUNCI di sini
+    (bukan saat render) dengan alasan SAMA PERSIS seperti knob gaya lain di atas — supaya
+    preview web & file PDF/PPTX yang diunduh SELALU menampilkan warna yang identik untuk 1
+    laporan yang sama, bukan re-roll acak tiap kali dibuka/diunduh."""
+    key = (preset or "").strip().lower()
+    if key in STYLE_PRESETS:
+        result = dict(STYLE_PRESETS[key])
+    else:
+        rnd = random.Random()
+        result = {
+            "cover_style": rnd.choice(["solid", "split"]),
+            "category_style": rnd.choice(["bar", "donut", "stacked"]),
+            "status_style": rnd.choice(["bar", "donut", "stacked"]),
+            "asset_style": rnd.choice(["cards", "podium", "bars"]),
+            "recommendation_style": rnd.choice(["cards", "timeline", "banners"]),
+            "panel_side": rnd.choice(["left", "right"]),
+            "stat_cols": rnd.choice([2, 3]),
+            "card_cols": rnd.choice([2, 3]),
+            "accent_bar_color": rnd.choice(["green", "gold"]),
+            "flourish_corner": rnd.choice(["bottom_right", "top_right", "bottom_left"]),
+        }
+    result["resolved_theme_color"] = random.choice(VALID_THEME_COLORS)
+    return result
+
+
+VALID_THEME_COLORS = ("green", "navy", "dark", "gold")
+
+
+def resolve_theme_color(report) -> str:
+    """Validasi report.theme_color ke salah satu dari 4 kunci tema dikenal (green/navy/dark/
+    gold). Nilai HEX (export_pdf.py) vs RGBColor (export_ppt.py) SENGAJA didefinisikan
+    terpisah per file (medium-specific), konsisten dengan konvensi warna module ini yang
+    tidak disatukan.
+
+    report.theme_color = "auto" (pilihan user, ATAU default utk laporan yang belum pernah
+    disentuh pickernya) berarti warna diacak & DIKUNCI sekali oleh pick_visual_style() tepat
+    saat analisis berhasil (lihat resolved_theme_color di sana) — dibaca dari situ di sini,
+    BUKAN diacak ulang tiap render, supaya preview & file yang diunduh selalu sewarna utk 1
+    laporan yang sama. Laporan lama (theme_color NULL, dari sebelum "auto" ada) & laporan yang
+    belum pernah dianalisis (visual_style masih NULL) fallback ke "green"."""
+    key = str(getattr(report, "theme_color", None) or "auto").strip().lower()
+    if key in VALID_THEME_COLORS:
+        return key
+    resolved = get_visual_style(report).get("resolved_theme_color")
+    return resolved if resolved in VALID_THEME_COLORS else "green"
 
 
 def get_visual_style(report) -> dict:

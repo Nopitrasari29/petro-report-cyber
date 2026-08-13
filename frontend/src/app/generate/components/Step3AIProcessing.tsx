@@ -68,12 +68,14 @@ function computeAnalyzingProgress(
   if (tokensGenerated && expectedTotalTokens && expectedTotalTokens > 0) {
     const ratio = Math.min(tokensGenerated / expectedTotalTokens, 1);
     return (
-      ANALYZING_RANGE_START + ratio * (ANALYZING_RANGE_END - ANALYZING_RANGE_START)
+      ANALYZING_RANGE_START +
+      ratio * (ANALYZING_RANGE_END - ANALYZING_RANGE_START)
     );
   }
   const ratio = Math.min(elapsedSeconds / ANALYZING_FALLBACK_ASSUMED_SEC, 0.9);
   return (
-    ANALYZING_RANGE_START + ratio * (ANALYZING_RANGE_END - ANALYZING_RANGE_START)
+    ANALYZING_RANGE_START +
+    ratio * (ANALYZING_RANGE_END - ANALYZING_RANGE_START)
   );
 }
 
@@ -87,10 +89,22 @@ function computeAnalyzingProgress(
 // tetap jujur (berbasis progres token asli) dibanding cuma menampilkan angka token mentah.
 const AI_PHASE_LABELS: [string, string][] = [
   ["Menyusun ringkasan eksekutif...", "Drafting executive summary..."],
-  ["Menganalisis tren & pergerakan data...", "Analyzing trends & data movement..."],
-  ["Mengevaluasi distribusi & prioritas data...", "Evaluating distribution & priority data..."],
-  ["Menilai risiko & potensi kendala...", "Assessing risks & potential issues..."],
-  ["Merumuskan rekomendasi tindakan...", "Formulating action recommendations..."],
+  [
+    "Menganalisis tren & pergerakan data...",
+    "Analyzing trends & data movement...",
+  ],
+  [
+    "Mengevaluasi distribusi & prioritas data...",
+    "Evaluating distribution & priority data...",
+  ],
+  [
+    "Menilai risiko & potensi kendala...",
+    "Assessing risks & potential issues...",
+  ],
+  [
+    "Merumuskan rekomendasi tindakan...",
+    "Formulating action recommendations...",
+  ],
   ["Menyusun kesimpulan akhir...", "Writing final conclusion..."],
 ];
 
@@ -270,7 +284,7 @@ export default function Step3AIProcessing({
 
   return (
     <ScrollReveal animation="fadeInUp" className="space-y-6">
-      <div className="text-left">
+      <div className="text-left -mt-2 mb-3">
         <h2 className="text-2xl font-extrabold text-stone-900">
           {tx("AI Processing", "AI Processing")}
         </h2>
@@ -489,7 +503,7 @@ export default function Step3AIProcessing({
       {/* Status information or Error messages */}
       {errorMsg && (
         <div className="bg-red-50 border border-red-200 text-red-750 px-4 py-3 rounded-xl text-xs font-medium text-left">
-          <strong>Error:</strong> {errorMsg}
+          <strong>{tx("Error:", "Error:")}</strong> {errorMsg}
         </div>
       )}
 

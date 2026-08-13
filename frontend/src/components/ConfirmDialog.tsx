@@ -12,6 +12,11 @@ interface ConfirmDialogProps {
   danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  // z-index Tailwind class dari overlay — default z-100 cukup utk kebanyakan pemanggil, tapi
+  // kalau dialog ini dipicu dari DALAM modal lain yang z-index-nya lebih tinggi (mis.
+  // NotificationsMenu, yang modal "All Notifications"-nya pakai z-[9999]), overlay ini perlu
+  // dinaikkan juga supaya tidak tertutup modal pemicunya sendiri.
+  zIndexClass?: string;
 }
 
 export default function ConfirmDialog({
@@ -23,6 +28,7 @@ export default function ConfirmDialog({
   danger = false,
   onConfirm,
   onCancel,
+  zIndexClass = "z-100",
 }: ConfirmDialogProps) {
   const { tx } = useTx();
 
@@ -39,7 +45,7 @@ export default function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-100 bg-stone-900/40 flex items-center justify-center p-4 animate-fadeIn"
+      className={`fixed inset-0 ${zIndexClass} bg-stone-900/40 flex items-center justify-center p-4 animate-fadeIn`}
       onClick={onCancel}
     >
       <div

@@ -107,7 +107,8 @@ export function useGenerateWizard() {
   const [headerSubtitle, setHeaderSubtitle] = useState(
     "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
   );
-  const [themeColor, setThemeColor] = useState("green");
+  const [themeColor, setThemeColor] = useState("auto");
+  const [stylePreset, setStylePreset] = useState("auto");
   const [domainType, setDomainType] = useState("general");
   const [dynamicSections, setDynamicSections] = useState<DynamicSectionItem[]>(
     [],
@@ -208,6 +209,12 @@ export function useGenerateWizard() {
   // bukan lagi 6 field ai_summary yang terpisah dari apa yang benar-benar tampil di Preview.
   const [blocks, setBlocks] = useState<ReportBlock[]>([]);
   const [visualStyle, setVisualStyle] = useState<VisualStyle>(DEFAULT_VISUAL_STYLE);
+  // Warna TERRESOLVE dari backend (resolve_theme_color) — BEDA dari `themeColor` di atas, yang
+  // itu cuma pilihan mentah user di picker Step 2 (bisa "auto"). Kalau user pilih "Automatic",
+  // warna sungguhan baru DIKUNCI acak sekali saat analisis AI berhasil (lihat resolved_theme_color
+  // di pick_visual_style()) — preview Step 4 harus baca hasil kunci itu dari sini, BUKAN
+  // `themeColor` mentah (yang tetap "auto" selamanya di state picker, bukan warna sungguhan).
+  const [resolvedThemeColor, setResolvedThemeColor] = useState("green");
   const [blocksLoading, setBlocksLoading] = useState(true);
   const [blocksError, setBlocksError] = useState("");
 
@@ -218,10 +225,11 @@ export function useGenerateWizard() {
     setBlocksLoading(true);
     setBlocksError("");
     fetchReportBlocks(reportIdForBlocks, getToken())
-      .then(({ blocks: b, visualStyle: vs }) => {
+      .then(({ blocks: b, visualStyle: vs, themeColor: tc }) => {
         if (!cancelled) {
           setBlocks(b);
           setVisualStyle(vs);
+          setResolvedThemeColor(tc);
         }
       })
       .catch((err) => {
@@ -423,7 +431,7 @@ export function useGenerateWizard() {
     const newFiles = allFiles.filter((f) => f.size <= MAX_UPLOAD_SIZE_BYTES);
     if (oversized.length > 0) {
       setErrorMsg(
-        `File berikut melebihi batas maksimum 100MB dan tidak ditambahkan: ${oversized.map((f) => f.name).join(", ")}.`,
+        `${tx("File berikut melebihi batas maksimum 100MB dan tidak ditambahkan:", "The following files exceed the 100MB limit and were not added:")} ${oversized.map((f) => f.name).join(", ")}.`,
       );
     }
     if (newFiles.length === 0) return;
@@ -656,7 +664,10 @@ export function useGenerateWizard() {
       setLoading(false);
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(err.message || "Terjadi kesalahan tidak terduga.");
+      setErrorMsg(
+        err.message ||
+          tx("Terjadi kesalahan tidak terduga.", "An unexpected error occurred."),
+      );
       setAiStatus("pending");
       setProcessingStep("idle");
       setLoading(false);
@@ -694,7 +705,10 @@ export function useGenerateWizard() {
     cancelRequestedRef.current = false;
     if (!periodStart || !periodEnd) {
       setErrorMsg(
-        "Periode laporan belum terisi. Silakan isi Report Period secara manual di Step 2.",
+        tx(
+          "Periode laporan belum terisi. Silakan isi Report Period secara manual di Step 2.",
+          "Report period is not filled in. Please fill in the Report Period manually in Step 2.",
+        ),
       );
       return;
     }
@@ -770,6 +784,7 @@ export function useGenerateWizard() {
       formData.append("header_title", headerTitle);
       formData.append("header_subtitle", headerSubtitle);
       formData.append("theme_color", themeColor);
+      formData.append("style_preset", stylePreset);
       formData.append("domain_type", domainType);
       formData.append("tone", tone);
       formData.append("default_level", defaultLevel);
@@ -850,7 +865,10 @@ export function useGenerateWizard() {
       setLoading(false);
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(err.message || "Terjadi kesalahan tidak terduga.");
+      setErrorMsg(
+        err.message ||
+          tx("Terjadi kesalahan tidak terduga.", "An unexpected error occurred."),
+      );
       setAiStatus("pending");
       setProcessingStep("idle");
       setLoading(false);
@@ -964,7 +982,8 @@ export function useGenerateWizard() {
     setHeaderSubtitle(
       "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
     );
-    setThemeColor("green");
+    setThemeColor("auto");
+    setStylePreset("auto");
     setDomainType("general");
     setTone("Professional");
     setDefaultLevel("Standard");
@@ -1013,6 +1032,8 @@ export function useGenerateWizard() {
     setHeaderSubtitle,
     themeColor,
     setThemeColor,
+    stylePreset,
+    setStylePreset,
     tone,
     setTone,
     defaultLevel,
@@ -1031,6 +1052,7 @@ export function useGenerateWizard() {
     pages,
     blocks,
     visualStyle,
+    resolvedThemeColor,
     blocksLoading,
     blocksError,
     getPageText,

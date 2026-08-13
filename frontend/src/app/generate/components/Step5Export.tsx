@@ -19,19 +19,30 @@ async function downloadAuthorizedFile(
   reportId: number | null,
   reportTitle: string | undefined,
   format: "pdf" | "pptx",
+  tx: (key: string, fallback: string) => string,
 ) {
   if (!reportId) return;
   if (!getToken()) {
-    throw new Error("Token tidak ditemukan. Silakan login ulang.");
+    throw new Error(
+      tx(
+        "Token tidak ditemukan. Silakan login ulang.",
+        "Token not found. Please log in again.",
+      ),
+    );
   }
 
   const url = `${API_BASE_URL}/api/v1/history/${reportId}/${format}`;
   const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) {
-    let detail = `Gagal mengunduh ${format.toUpperCase()}.`;
+    let detail = tx(
+      "Gagal mengunduh {format}.",
+      "Failed to download {format}.",
+    ).replace("{format}", format.toUpperCase());
     if (res.status === 401) {
-      detail =
-        "Token akses tidak valid atau telah kedaluwarsa. Silakan login ulang.";
+      detail = tx(
+        "Token akses tidak valid atau telah kedaluwarsa. Silakan login ulang.",
+        "Access token is invalid or has expired. Please log in again.",
+      );
     }
     try {
       const data = await res.json();
@@ -62,9 +73,11 @@ export default function Step5Export({
     setDownloadingFormat(format);
     setErrorMsg("");
     try {
-      await downloadAuthorizedFile(reportId, reportTitle, format);
+      await downloadAuthorizedFile(reportId, reportTitle, format, tx);
     } catch (err: any) {
-      setErrorMsg(err.message || "Gagal mengunduh file.");
+      setErrorMsg(
+        err.message || tx("Gagal mengunduh file.", "Failed to download file."),
+      );
     } finally {
       setDownloadingFormat(null);
     }
@@ -98,13 +111,13 @@ export default function Step5Export({
       </div>
 
       <div className="space-y-2">
-        <h2 className="text-xl font-extrabold text-stone-900">
+        <h2 className="text-2xl font-extrabold text-stone-900">
           {tx(
             "Report Generated Successfully!",
             "Report Generated Successfully!",
           )}
         </h2>
-        <p className="text-xs text-stone-500 font-semibold">
+        <p className="text-sm text-stone-500 font-semibold">
           {tx(
             "Your report is now ready for download.",
             "Your report is now ready for download.",
@@ -124,7 +137,7 @@ export default function Step5Export({
           <button
             disabled={downloadingFormat !== null}
             onClick={() => handleDownload("pdf")}
-            className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors disabled:opacity-50"
+            className="flex flex-col items-center justify-center p-6 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors disabled:opacity-50"
           >
             {downloadingFormat === "pdf" ? (
               <div className="w-10 h-10 border-3 border-stone-200 border-t-red-600 rounded-full animate-spin"></div>
@@ -148,7 +161,7 @@ export default function Step5Export({
           <button
             disabled={downloadingFormat !== null}
             onClick={() => handleDownload("pptx")}
-            className="flex flex-col items-center justify-center p-5 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors disabled:opacity-50"
+            className="flex flex-col items-center justify-center p-6 bg-white border border-stone-200 rounded-2xl premium-card-hover group text-center space-y-3 w-full cursor-pointer transition-colors disabled:opacity-50"
           >
             {downloadingFormat === "pptx" ? (
               <div className="w-10 h-10 border-3 border-stone-200 border-t-amber-600 rounded-full animate-spin"></div>

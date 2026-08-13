@@ -24,6 +24,7 @@ interface CenterPreviewPanelProps {
   pages: ReportPage[];
   blocks: ReportBlock[];
   visualStyle?: VisualStyle;
+  themeColor?: string;
   blocksLoading: boolean;
   blocksError: string;
 }
@@ -43,6 +44,7 @@ export default function CenterPreviewPanel({
   pages,
   blocks,
   visualStyle,
+  themeColor,
   blocksLoading,
   blocksError,
 }: CenterPreviewPanelProps) {
@@ -209,7 +211,7 @@ export default function CenterPreviewPanel({
                       persis 16:9 & konten yang kepanjangan di-scroll di dalam kotaknya, bukan
                       bikin kotaknya melar. */}
                   <div className="aspect-video overflow-y-auto bg-white border border-stone-300 shadow-sm">
-                    <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} />
+                    <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} themeColor={themeColor} />
                   </div>
                 </div>
               )}
@@ -310,6 +312,7 @@ export default function CenterPreviewPanel({
               <ChartNarasiLayout
                 blocks={blocks}
                 visualStyle={visualStyle}
+                themeColor={themeColor}
                 blocksLoading={blocksLoading}
                 blocksError={blocksError}
                 tx={tx}
@@ -340,6 +343,7 @@ export default function CenterPreviewPanel({
         pages={pages}
         blocks={blocks}
         visualStyle={visualStyle}
+        themeColor={themeColor}
         blocksLoading={blocksLoading}
         blocksError={blocksError}
         inputFile={report?.input_file_name || "-"}

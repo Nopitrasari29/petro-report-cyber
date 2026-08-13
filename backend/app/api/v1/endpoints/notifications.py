@@ -93,3 +93,42 @@ def clear_read_notifications(
     ).delete(synchronize_session=False)
     db.commit()
     return {"status": "success", "deleted_count": deleted_count}
+
+@router.post("/bulk-delete")
+def bulk_delete_notifications(
+    notification_ids: List[int],
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Menghapus notifikasi terpilih (berdasarkan daftar ID) milik user yang sedang terotentikasi.
+    ID yang bukan milik user ini diabaikan begitu saja (bukan error), sama seperti pola
+    bulk-delete laporan di history.py.
+    """
+    if not notification_ids:
+        raise HTTPException(status_code=400, detail="Tidak ada notifikasi yang dipilih.")
+    deleted_count = db.query(Notification).filter(
+        Notification.id.in_(notification_ids),
+        Notification.user_id == current_user.id
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "success", "deleted_count": deleted_count}
+
+@router.delete("/{notification_id}")
+def delete_notification(
+    notification_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Menghapus satu notifikasi spesifik berdasarkan ID.
+    """
+    notif = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user.id
+    ).first()
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notifikasi tidak ditemukan.")
+    db.delete(notif)
+    db.commit()
+    return {"status": "success", "message": "Notifikasi berhasil dihapus."}

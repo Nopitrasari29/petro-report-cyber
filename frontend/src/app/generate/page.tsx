@@ -179,6 +179,8 @@ export default function GenerateReportPage() {
               setHeaderSubtitle={w.setHeaderSubtitle}
               themeColor={w.themeColor}
               setThemeColor={w.setThemeColor}
+              stylePreset={w.stylePreset}
+              setStylePreset={w.setStylePreset}
               tone={w.tone}
               setTone={w.setTone}
               defaultLevel={w.defaultLevel}
@@ -227,6 +229,7 @@ export default function GenerateReportPage() {
               pages={w.pages}
               blocks={w.blocks}
               visualStyle={w.visualStyle}
+              themeColor={w.resolvedThemeColor}
               blocksLoading={w.blocksLoading}
               blocksError={w.blocksError}
               getPageText={w.getPageText}

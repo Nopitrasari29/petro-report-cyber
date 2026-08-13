@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { t, getLanguage, setLanguage as setUiLanguage } from "@/utils/i18n";
+import { getLanguage, setLanguage as setUiLanguage } from "@/utils/i18n";
+import { useTx } from "@/hooks/useTx";
 import { API_BASE_URL, authHeaders } from "@/utils/api";
 import { useAppearance } from "@/hooks/useAppearance";
 import { APPEARANCE_STORAGE_KEY, type Appearance } from "@/utils/theme";
@@ -40,6 +41,7 @@ export default function SettingsPage() {
   const [notifySuccess, setNotifySuccess] = useState(true);
   const [notifyFailed, setNotifyFailed] = useState(true);
   const { appearance, setAppearance } = useAppearance();
+  const { tx } = useTx();
 
   // Fetch initial profile & settings on mount
   const loadData = async () => {
@@ -84,7 +86,9 @@ export default function SettingsPage() {
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMsg("Gagal memuat preferensi pengguna.");
+      setErrorMsg(
+        tx("Gagal memuat preferensi pengguna.", "Failed to load user preferences."),
+      );
     } finally {
       setLoading(false);
     }
@@ -111,7 +115,9 @@ export default function SettingsPage() {
     if (file) {
       // Batasi ukuran file maksimal 2MB untuk mencegah payload kebesaran
       if (file.size > 2 * 1024 * 1024) {
-        setErrorMsg("Ukuran foto maksimal adalah 2MB.");
+        setErrorMsg(
+          tx("Ukuran foto maksimal adalah 2MB.", "Maximum photo size is 2MB."),
+        );
         return;
       }
 
@@ -126,7 +132,12 @@ export default function SettingsPage() {
   // Reset to default preferences
   const handleResetToDefault = async () => {
     if (
-      !confirm("Apakah Anda yakin ingin mengatur ulang preferensi ke default?")
+      !confirm(
+        tx(
+          "Apakah Anda yakin ingin mengatur ulang preferensi ke default?",
+          "Are you sure you want to reset preferences to default?",
+        ),
+      )
     ) {
       return;
     }
@@ -149,11 +160,18 @@ export default function SettingsPage() {
 
       setUiLanguage("English");
       window.dispatchEvent(new Event("ui_language_changed"));
-      setSuccessMsg("Preferensi berhasil diatur ulang ke default.");
+      setSuccessMsg(
+        tx(
+          "Preferensi berhasil diatur ulang ke default.",
+          "Preferences successfully reset to default.",
+        ),
+      );
       setTimeout(() => setSuccessMsg(""), 3500);
     } catch (e) {
       console.error(e);
-      setErrorMsg("Gagal mengatur ulang preferensi.");
+      setErrorMsg(
+        tx("Gagal mengatur ulang preferensi.", "Failed to reset preferences."),
+      );
     }
   };
 
@@ -164,16 +182,29 @@ export default function SettingsPage() {
 
     if (newPassword || confirmNewPassword) {
       if (newPassword.length < 8) {
-        setErrorMsg("Password baru minimal terdiri dari 8 karakter.");
+        setErrorMsg(
+          tx(
+            "Password baru minimal terdiri dari 8 karakter.",
+            "New password must be at least 8 characters long.",
+          ),
+        );
         return;
       }
       if (newPassword !== confirmNewPassword) {
-        setErrorMsg("Konfirmasi password baru tidak cocok.");
+        setErrorMsg(
+          tx(
+            "Konfirmasi password baru tidak cocok.",
+            "New password confirmation does not match.",
+          ),
+        );
         return;
       }
       if (passwordSet && !currentPassword) {
         setErrorMsg(
-          "Password saat ini harus diisi untuk memperbarui password.",
+          tx(
+            "Password saat ini harus diisi untuk memperbarui password.",
+            "Current password is required to update the password.",
+          ),
         );
         return;
       }
@@ -209,7 +240,10 @@ export default function SettingsPage() {
 
       if (!profileRes.ok) {
         const errData = await profileRes.json();
-        throw new Error(errData.detail || "Gagal memperbarui profil pengguna.");
+        throw new Error(
+          errData.detail ||
+            tx("Gagal memperbarui profil pengguna.", "Failed to update user profile."),
+        );
       }
 
       const profileData = await profileRes.json();
@@ -227,12 +261,18 @@ export default function SettingsPage() {
 
       window.dispatchEvent(new Event("user_profile_updated"));
 
-      setSuccessMsg("Pengaturan berhasil disimpan.");
+      setSuccessMsg(
+        tx("Pengaturan berhasil disimpan.", "Settings saved successfully."),
+      );
       setTimeout(() => setSuccessMsg(""), 3500);
     } catch (err: any) {
       console.error(err);
       setErrorMsg(
-        err.message || "Terjadi kesalahan saat menyimpan pengaturan.",
+        err.message ||
+          tx(
+            "Terjadi kesalahan saat menyimpan pengaturan.",
+            "An error occurred while saving settings.",
+          ),
       );
     } finally {
       setIsSaving(false);
@@ -258,10 +298,13 @@ export default function SettingsPage() {
           <div className="flex justify-between items-center text-left animate-fadeInUp">
             <div>
               <h2 className="text-2xl font-extrabold text-stone-900">
-                {t("Settings")}
+                {tx("Settings", "Pengaturan")}
               </h2>
               <p className="text-sm text-stone-500 font-medium mt-1">
-                {t("Manage your settings and preferences.")}
+                {tx(
+                  "Manage your settings and preferences.",
+                  "Kelola pengaturan dan preferensi Anda.",
+                )}
               </p>
             </div>
 
@@ -283,14 +326,14 @@ export default function SettingsPage() {
                   d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
                 />
               </svg>
-              {t("Reset to Default")}
+              {tx("Reset to Default", "Atur Ulang ke Default")}
             </button>
           </div>
 
           {/* Error and Success alerts */}
           {errorMsg && (
             <div className="bg-red-50 border border-red-200 text-red-750 px-4 py-3 rounded-xl text-xs font-medium text-left animate-fadeIn">
-              <strong>Error:</strong> {t(errorMsg)}
+              <strong>{tx("Error:", "Error:")}</strong> {errorMsg}
             </div>
           )}
           {successMsg && (
@@ -311,7 +354,7 @@ export default function SettingsPage() {
                   />
                 </svg>
               </span>
-              {t(successMsg)}
+              {successMsg}
             </div>
           )}
 
@@ -329,7 +372,7 @@ export default function SettingsPage() {
                   : "text-stone-400 hover:text-stone-700"
               }`}
             >
-              {t("General")}
+              {tx("General", "General")}
               <span
                 className={`absolute bottom-0 left-0 right-0 h-0.5 bg-petro-yellow rounded-full transition-all duration-300 ${activeTab === "general" ? "opacity-100 scale-x-100" : "opacity-0 scale-x-0"}`}
               />
@@ -346,7 +389,7 @@ export default function SettingsPage() {
                   : "text-stone-400 hover:text-stone-700"
               }`}
             >
-              {t("Account")}
+              {tx("Account", "Akun")}
               <span
                 className={`absolute bottom-0 left-0 right-0 h-0.5 bg-petro-yellow rounded-full transition-all duration-300 ${activeTab === "account" ? "opacity-100 scale-x-100" : "opacity-0 scale-x-0"}`}
               />
@@ -438,10 +481,10 @@ export default function SettingsPage() {
                           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                         ></path>
                       </svg>
-                      {t("Saving...")}
+                      {tx("Saving...", "Saving...")}
                     </>
                   ) : (
-                    t("Save Change")
+                    tx("Save Change", "Simpan Perubahan")
                   )}
                 </button>
               </div>

@@ -12,6 +12,7 @@ const CHART_BLOCK_KINDS = [
 interface ChartNarasiLayoutProps {
   blocks: ReportBlock[];
   visualStyle?: VisualStyle;
+  themeColor?: string;
   blocksLoading: boolean;
   blocksError: string;
   tx: (key: string, fallback: string) => string;
@@ -28,6 +29,7 @@ interface ChartNarasiLayoutProps {
 export default function ChartNarasiLayout({
   blocks,
   visualStyle,
+  themeColor,
   blocksLoading,
   blocksError,
   tx,
@@ -71,7 +73,7 @@ export default function ChartNarasiLayout({
     <div className="space-y-6">
       {chartBlocks.map((block, idx) => (
         <div key={idx} className="rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
-          <ReportBlockRenderer block={block} visualStyle={visualStyle} />
+          <ReportBlockRenderer block={block} visualStyle={visualStyle} themeColor={themeColor} />
         </div>
       ))}
     </div>

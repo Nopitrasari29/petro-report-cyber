@@ -14,10 +14,11 @@ class ReportBase(BaseModel):
     include_raw_data_summary: Optional[bool] = True
     header_title: Optional[str] = "PT PETROKIMIA GRESIK"
     header_subtitle: Optional[str] = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
-    theme_color: Optional[str] = "green"
+    theme_color: Optional[str] = "auto"
     domain_type: Optional[str] = "general"
     tone: Optional[str] = "Professional"
     default_level: Optional[str] = "Standard"
+    style_preset: Optional[str] = "auto"
 
 class ReportCreate(ReportBase):
     input_file_name: Optional[str] = None
@@ -55,6 +56,7 @@ class ReportUpdate(BaseModel):
     domain_type: Optional[str] = None
     tone: Optional[str] = None
     default_level: Optional[str] = None
+    style_preset: Optional[str] = None
     ai_confidence: Optional[float] = None
     sla_met: Optional[bool] = None
     processing_time_sec: Optional[int] = None

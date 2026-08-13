@@ -38,6 +38,8 @@ interface Step2SettingsProps {
   setHeaderSubtitle?: (val: string) => void;
   themeColor?: string;
   setThemeColor?: (val: string) => void;
+  stylePreset?: string;
+  setStylePreset?: (val: string) => void;
   tone: string;
   setTone: (val: string) => void;
   defaultLevel: string;
@@ -68,8 +70,10 @@ export default function Step2Settings({
   setHeaderTitle,
   headerSubtitle = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
   setHeaderSubtitle,
-  themeColor = "green",
+  themeColor = "auto",
   setThemeColor,
+  stylePreset = "auto",
+  setStylePreset,
   tone,
   setTone,
   defaultLevel,
@@ -80,13 +84,43 @@ export default function Step2Settings({
 }: Step2SettingsProps) {
   const [customSectionInput, setCustomSectionInput] = React.useState("");
 
+  // BUG DIPERBAIKI (dilaporkan user, screenshot ke-3): CSS grid `align-items: stretch` biasa
+  // TIDAK bisa diandalkan di sini — begitu daftar section AI panjang (7-9+ item), tinggi
+  // ALAMI kartu "Include Sections" (kolom 3) sendiri ikut dipakai browser sebagai acuan tinggi
+  // BARIS grid (karena `grid-auto-rows: auto` dihitung dari max-content SEBELUM stretch
+  // diterapkan), jadi kartu ini malah ikut memanjang tanpa batas alih-alih discroll — pola yang
+  // sama seperti yang sudah diselesaikan di Step4PreviewEdit.tsx (lihat previewCardHeight di
+  // sana): tinggi kartu "Template & Theme" (kolom 2, isinya stabil/dikenal) diukur lewat
+  // ResizeObserver, lalu dipaksakan sebagai `height` tetap (px, BUKAN cuma CSS) ke kartu
+  // "Include Sections" — supaya kartu ini SELALU persis setinggi kolom 2 apa pun panjang
+  // daftarnya, dan overflow-y-auto di dalamnya BENAR-BENAR jadi satu-satunya jalan keluar
+  // kalau section-nya banyak (bukan si kartu yang melar).
+  const templateCardRef = React.useRef<HTMLDivElement>(null);
+  const [templateCardHeight, setTemplateCardHeight] = React.useState<
+    number | undefined
+  >(undefined);
+  React.useEffect(() => {
+    const el = templateCardRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const borderBoxSize = entry.borderBoxSize?.[0];
+        setTemplateCardHeight(
+          borderBoxSize ? borderBoxSize.blockSize : entry.contentRect.height,
+        );
+      }
+    });
+    ro.observe(el, { box: "border-box" });
+    return () => ro.disconnect();
+  }, []);
+
   const handleAddCustomSection = () => {
     if (!customSectionInput.trim() || !setDynamicSections) return;
     const newKey = `custom_${Date.now()}`;
     const newItem: DynamicSectionItem = {
       key: newKey,
       title: customSectionInput.trim(),
-      description: "Section kustom pengguna",
+      description: tx("Section kustom pengguna", "User-added custom section"),
       enabled: true,
     };
     setDynamicSections([...dynamicSections, newItem]);
@@ -102,7 +136,7 @@ export default function Step2Settings({
 
   return (
     <ScrollReveal animation="fadeInUp" className="space-y-6">
-      <div className="text-left -mt-4 mb-3">
+      <div className="text-left -mt-2 mb-3">
         <h2 className="text-2xl font-extrabold text-stone-900">
           {tx("Report Settings", "Report Settings")}
         </h2>
@@ -190,19 +224,24 @@ export default function Step2Settings({
           </div>
         </div>
 
-        {/* Column 2: Template Kop & Theme Selector */}
-        <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm space-y-4 premium-card-hover transition-colors">
+        {/* Column 2: Template Kop & Theme Selector — ref di sini dipakai ResizeObserver (lihat
+            templateCardHeight di atas) supaya tinggi kartu ini bisa "dipinjam" persis oleh
+            kartu Include Sections di kolom 3. */}
+        <div
+          ref={templateCardRef}
+          className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm space-y-4 premium-card-hover transition-colors"
+        >
           <h3 className="font-extrabold text-stone-850 text-sm border-b border-stone-100 pb-2 flex items-center justify-between">
             <span>{tx("Template & Theme", "Template & Theme")}</span>
             <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200">
-              Custom Kop
+              {tx("Custom Kop", "Kop Kustom")}
             </span>
           </h3>
 
           <div className="space-y-3">
             <div>
               <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1">
-                Kop Header Title
+                {tx("Kop Header Title", "Judul Kop")}
               </label>
               <input
                 type="text"
@@ -217,7 +256,7 @@ export default function Step2Settings({
 
             <div>
               <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1">
-                Kop Subtitle
+                {tx("Kop Subtitle", "Subjudul Kop")}
               </label>
               <input
                 type="text"
@@ -232,31 +271,61 @@ export default function Step2Settings({
 
             <div>
               <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1.5">
-                Theme Color
+                {tx("Theme Color", "Warna Tema")}
               </label>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-5 gap-1.5">
                 {[
                   {
+                    id: "auto",
+                    name: tx("Automatic", "Otomatis"),
+                    color: "",
+                    style: {
+                      background:
+                        "conic-gradient(from 0deg, #004D25, #0F172A, #111827, #78350F, #004D25)",
+                    },
+                  },
+                  {
                     id: "green",
-                    name: "Corporate Green",
+                    name: tx("Corporate Green", "Hijau Korporat"),
                     color: "bg-[#004D25]",
                   },
-                  { id: "navy", name: "Slate Navy", color: "bg-[#0F172A]" },
-                  { id: "dark", name: "Cyber Dark", color: "bg-[#111827]" },
-                  { id: "gold", name: "Amber Gold", color: "bg-[#78350F]" },
+                  {
+                    id: "navy",
+                    name: tx("Slate Navy", "Navy Gelap"),
+                    color: "bg-[#0F172A]",
+                  },
+                  {
+                    id: "dark",
+                    name: tx("Cyber Dark", "Gelap Siber"),
+                    color: "bg-[#111827]",
+                  },
+                  {
+                    id: "gold",
+                    name: tx("Amber Gold", "Emas Amber"),
+                    color: "bg-[#78350F]",
+                  },
                 ].map((tItem) => (
                   <button
                     type="button"
                     key={tItem.id}
                     onClick={() => setThemeColor && setThemeColor(tItem.id)}
-                    className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all cursor-pointer ${
+                    title={
+                      tItem.id === "auto"
+                        ? tx(
+                            "Warna diacak otomatis tiap generate (bisa jatuh ke tema apa saja, termasuk hijau)",
+                            "Color is randomly picked each time you generate (could land on any theme, including green)",
+                          )
+                        : tItem.name
+                    }
+                    className={`flex flex-col items-center justify-center p-1.5 rounded-xl border transition-all cursor-pointer ${
                       themeColor === tItem.id
                         ? "border-stone-900 bg-stone-50 ring-2 ring-stone-900/10 shadow-sm"
                         : "border-stone-200 bg-white hover:bg-stone-50"
                     }`}
                   >
                     <span
-                      className={`w-4 h-4 rounded-full ${tItem.color} shadow-sm mb-1`}
+                      className={`w-4 h-4 rounded-full shadow-sm mb-1 ${tItem.color}`}
+                      style={tItem.style}
                     ></span>
                     <span className="text-[9px] font-extrabold text-stone-700 truncate w-full text-center">
                       {tItem.name.split(" ")[0]}
@@ -265,19 +334,60 @@ export default function Step2Settings({
                 ))}
               </div>
             </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1.5">
+                {tx("Style Preset", "Preset Gaya")}
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: "auto", name: tx("Automatic", "Otomatis") },
+                  { id: "minimalist", name: tx("Simple", "Simpel") },
+                  { id: "corporate", name: tx("Professional", "Profesional") },
+                  { id: "executive", name: tx("Bold Executive", "Eksekutif Tegas") },
+                ].map((pItem) => (
+                  <button
+                    type="button"
+                    key={pItem.id}
+                    onClick={() => setStylePreset && setStylePreset(pItem.id)}
+                    className={`flex items-center justify-center px-2 py-2 rounded-xl border transition-all cursor-pointer ${
+                      stylePreset === pItem.id
+                        ? "border-stone-900 bg-stone-50 ring-2 ring-stone-900/10 shadow-sm"
+                        : "border-stone-200 bg-white hover:bg-stone-50"
+                    }`}
+                  >
+                    <span className="text-[9px] font-extrabold text-stone-700 truncate w-full text-center">
+                      {pItem.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Column 3: AI-Driven Include Sections */}
-        <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm space-y-4 premium-card-hover transition-colors">
-          <h3 className="font-extrabold text-stone-850 text-sm border-b border-stone-100 pb-2 flex items-center justify-between">
+        {/* Column 3: AI-Driven Include Sections — tinggi kartu ini DIPAKU (height, px, lewat
+            templateCardHeight hasil ResizeObserver di atas) ke tinggi kartu "Template & Theme"
+            di kolom 2, KONSTAN berapa pun panjang daftar section-nya (termasuk saat masih
+            loading/cuma 1 baris spinner, ATAU saat section-nya 9+ item) — BUKAN lewat CSS grid
+            stretch biasa (yang terbukti gagal begitu daftarnya panjang: tinggi ALAMI kartu ini
+            ikut menentukan tinggi baris grid duluan sebelum stretch diterapkan, jadi kartunya
+            malah ikut memanjang, bukan discroll). Dengan height tetap di sini, flex-1 min-h-0
+            pada daftar di bawah PASTI mengisi sisa ruang yang tersedia & overflow-y-auto BENAR2
+            jadi satu-satunya jalan keluar kalau section-nya banyak; tombol "+ Add" selalu
+            nempel di dasar kartu. */}
+        <div
+          className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm premium-card-hover transition-colors flex flex-col"
+          style={templateCardHeight ? { height: templateCardHeight } : undefined}
+        >
+          <h3 className="font-extrabold text-stone-850 text-sm border-b border-stone-100 pb-2 mb-4 flex items-center justify-between">
             <span>{tx("Include Sections", "Include Sections")}</span>
             <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-bold border border-emerald-200 flex items-center gap-1">
-              <span>✨</span> AI Suggested
+              <span>✨</span> {tx("AI Suggested", "AI Suggested")}
             </span>
           </h3>
 
-          <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+          <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
             {sectionsLoading && dynamicSections.length === 0 ? (
               <div className="flex items-center gap-2 py-4 text-stone-400">
                 <span className="w-3.5 h-3.5 border-2 border-stone-300 border-t-petro-green rounded-full animate-spin"></span>
@@ -349,13 +459,14 @@ export default function Step2Settings({
             )}
           </div>
 
-          {/* Add Custom Section Button */}
-          <div className="flex items-center gap-1.5 border-t border-stone-100 pt-2.5">
+          {/* Add Custom Section Button — shrink-0 supaya baris ini TIDAK ikut ditekan oleh
+              flex-1 pada daftar section di atasnya, selalu tetap di dasar kartu. */}
+          <div className="flex items-center gap-1.5 border-t border-stone-100 pt-2.5 mt-2.5 shrink-0">
             <input
               type="text"
               value={customSectionInput}
               onChange={(e) => setCustomSectionInput(e.target.value)}
-              placeholder="Custom Section Title..."
+              placeholder={tx("Custom Section Title...", "Judul Bagian Kustom...")}
               className="flex-1 bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5 text-xs text-stone-800 focus:outline-none focus:border-petro-green"
             />
             <button
@@ -363,7 +474,7 @@ export default function Step2Settings({
               onClick={handleAddCustomSection}
               className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold rounded-lg transition-all cursor-pointer shrink-0"
             >
-              + Add
+              + {tx("Add", "Tambah")}
             </button>
           </div>
         </div>
@@ -393,11 +504,13 @@ export default function Step2Settings({
             />
             <div className="flex flex-col text-left">
               <span className="text-xs font-bold text-stone-800">
-                PDF Document
+                {tx("PDF Document", "Dokumen PDF")}
               </span>
               <span className="text-[10px] text-stone-400 font-semibold">
-                Laporan cetak resmi format A4 dengan Kop Petrokimia & Lampiran
-                Log
+                {tx(
+                  "Laporan cetak resmi format A4 dengan Kop Petrokimia & Lampiran Log",
+                  "Official printable A4 report with Petrokimia letterhead & Log Attachment",
+                )}
               </span>
             </div>
           </label>
@@ -416,11 +529,16 @@ export default function Step2Settings({
             />
             <div className="flex flex-col text-left">
               <span className="text-xs font-bold text-stone-800">
-                PowerPoint Presentation (PPTX)
+                {tx(
+                  "PowerPoint Presentation (PPTX)",
+                  "Presentasi PowerPoint (PPTX)",
+                )}
               </span>
               <span className="text-[10px] text-stone-400 font-semibold">
-                Slide presentasi eksekutif Widescreen 16:9 dengan grafik & teks
-                visual
+                {tx(
+                  "Slide presentasi eksekutif Widescreen 16:9 dengan grafik & teks visual",
+                  "Widescreen 16:9 executive presentation slides with charts & visual text",
+                )}
               </span>
             </div>
           </label>

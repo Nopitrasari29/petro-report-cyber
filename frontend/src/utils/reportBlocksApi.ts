@@ -4,6 +4,7 @@ import { DEFAULT_VISUAL_STYLE, type ReportBlock, type VisualStyle } from "@/util
 export interface ReportBlocksResult {
   blocks: ReportBlock[];
   visualStyle: VisualStyle;
+  themeColor: string;
 }
 
 // Satu-satunya cara frontend mengambil "isi laporan yang akan dirender" — sumbernya SAMA
@@ -35,5 +36,6 @@ export async function fetchReportBlocks(
   return {
     blocks: data.blocks || [],
     visualStyle: { ...DEFAULT_VISUAL_STYLE, ...(data.visual_style || {}) },
+    themeColor: data.theme_color || "green",
   };
 }

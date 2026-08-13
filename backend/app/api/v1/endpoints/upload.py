@@ -204,10 +204,11 @@ def upload_security_file(
     included_sections: Optional[str] = Form(None),  # JSON string [{"key": "...", "title": "..."}, ...]
     header_title: Optional[str] = Form("PT PETROKIMIA GRESIK"),
     header_subtitle: Optional[str] = Form("Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"),
-    theme_color: Optional[str] = Form("green"),
+    theme_color: Optional[str] = Form("auto"),
     domain_type: Optional[str] = Form("general"),
     tone: Optional[str] = Form("Professional"),  # Professional, Technical, Executive
     default_level: Optional[str] = Form("Standard"),  # Standard, Detailed, Summary Only
+    style_preset: Optional[str] = Form("auto"),  # auto, minimalist, corporate, executive
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -338,7 +339,8 @@ def upload_security_file(
             theme_color=theme_color,
             domain_type=domain_type,
             tone=tone,
-            default_level=default_level
+            default_level=default_level,
+            style_preset=style_preset
         )
 
         

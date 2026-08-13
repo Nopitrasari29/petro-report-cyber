@@ -9,9 +9,9 @@ interface Step0OverviewProps {
 export default function Step0Overview({ onStart, tx }: Step0OverviewProps) {
   return (
     <ScrollReveal animation="fadeInUp" className="space-y-6">
-      <div className="text-left">
+      <div className="text-left -mt-2 mb-3">
         <h2 className="text-2xl font-extrabold text-stone-900">{tx("Generate Report", "Generate Report")}</h2>
-        <p className="text-sm text-stone-500 font-medium mt-1">
+        <p className="text-sm text-stone-500 font-semibold mt-1">
           {tx("Upload your data and let AI generate comprehensive reports automatically.", "Upload your data and let AI generate comprehensive reports automatically.")}
         </p>
       </div>

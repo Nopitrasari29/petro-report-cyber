@@ -27,6 +27,7 @@ interface FullscreenStudioModalProps {
   pages: ReportPage[];
   blocks: ReportBlock[];
   visualStyle?: VisualStyle;
+  themeColor?: string;
   blocksLoading: boolean;
   blocksError: string;
   inputFile?: string;
@@ -53,6 +54,7 @@ export default function FullscreenStudioModal({
   pages,
   blocks,
   visualStyle,
+  themeColor,
   blocksLoading,
   blocksError,
   inputFile = "-",
@@ -150,7 +152,11 @@ export default function FullscreenStudioModal({
                   : "text-stone-400 hover:text-stone-200 hover:bg-stone-800/50"
               }`}
             >
-              {tab === "edit" ? tx("Edit Text", "Edit Text") : tx(tab, tab)}
+              {tab === "edit"
+                ? tx("Edit Text", "Edit Text")
+                : tab === "preview"
+                  ? tx("Preview", "Pratinjau")
+                  : tx("Charts", "Grafik")}
             </button>
           ))}
         </div>
@@ -363,7 +369,7 @@ export default function FullscreenStudioModal({
                         melar. Kotak berukuran tetap (16:9 dalam max-w-3xl) jadi scroll ganda
                         dgn <main> nyaris tidak pernah kejadian dalam praktiknya. */}
                     <div className="aspect-video overflow-y-auto bg-white border border-stone-800 shadow-2xl shadow-black/80">
-                      <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} />
+                      <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} themeColor={themeColor} />
                     </div>
                   </div>
                 )}
@@ -446,6 +452,7 @@ export default function FullscreenStudioModal({
                   <ChartNarasiLayout
                     blocks={blocks}
                     visualStyle={visualStyle}
+                    themeColor={themeColor}
                     blocksLoading={blocksLoading}
                     blocksError={blocksError}
                     tx={tx}

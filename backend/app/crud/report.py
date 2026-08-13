@@ -157,7 +157,7 @@ def update_report(db: Session, report_id: int, report_update: ReportUpdate, user
     
     # RCA-02: Jika konten/pengaturan laporan berubah, hapus cache PDF & PPTX lama di disk
     # agar download berikutnya merender versi terbaru (bukan me-return file usang)
-    invalidate_keys = {"ai_summary", "title", "header_title", "header_subtitle", "included_sections", "theme_color", "chart_data"}
+    invalidate_keys = {"ai_summary", "title", "header_title", "header_subtitle", "included_sections", "theme_color", "style_preset", "chart_data"}
     if any(k in update_data for k in invalidate_keys):
         _delete_file_safely(db_report.file_pdf_path)
         _delete_file_safely(db_report.file_ppt_path)

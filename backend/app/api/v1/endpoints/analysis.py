@@ -297,7 +297,10 @@ def _run_analysis_job(report_id: int) -> None:
         # Varian tampilan (cover_style, category_style, dst) DIPILIH & DIKUNCI di sini, SEKALI
         # per analisis yang berhasil — lihat docstring pick_visual_style() utk alasan lengkapnya
         # (dulu di-random ulang tiap PPT/PDF diunduh, preview & hasil unduhan bisa beda bentuk).
-        db_report.visual_style = pick_visual_style()
+        # db_report.style_preset sudah tersimpan sejak upload (Report Settings Step 2) — kalau
+        # user pilih preset eksplisit, kombinasi TETAP dipakai; kalau "auto"/NULL, tetap acak
+        # seperti perilaku lama.
+        db_report.visual_style = pick_visual_style(db_report.style_preset)
         db.commit()
 
         # Auto-trigger notification — BUG DIPERBAIKI: dulu selalu dibuat, sekarang cek dulu
