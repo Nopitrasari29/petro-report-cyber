@@ -273,20 +273,11 @@ export default function Step2Settings({
               <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1.5">
                 {tx("Theme Color", "Warna Tema")}
               </label>
-              <div className="grid grid-cols-5 gap-1.5">
+              <div className="grid grid-cols-4 gap-1.5">
                 {[
                   {
-                    id: "auto",
-                    name: tx("Automatic", "Otomatis"),
-                    color: "",
-                    style: {
-                      background:
-                        "conic-gradient(from 0deg, #004D25, #0F172A, #111827, #78350F, #004D25)",
-                    },
-                  },
-                  {
                     id: "green",
-                    name: tx("Corporate Green", "Hijau Korporat"),
+                    name: tx("Petrokimia Green", "Hijau Petrokimia"),
                     color: "bg-[#004D25]",
                   },
                   {
@@ -309,14 +300,7 @@ export default function Step2Settings({
                     type="button"
                     key={tItem.id}
                     onClick={() => setThemeColor && setThemeColor(tItem.id)}
-                    title={
-                      tItem.id === "auto"
-                        ? tx(
-                            "Warna diacak otomatis tiap generate (bisa jatuh ke tema apa saja, termasuk hijau)",
-                            "Color is randomly picked each time you generate (could land on any theme, including green)",
-                          )
-                        : tItem.name
-                    }
+                    title={tItem.name}
                     className={`flex flex-col items-center justify-center p-1.5 rounded-xl border transition-all cursor-pointer ${
                       themeColor === tItem.id
                         ? "border-stone-900 bg-stone-50 ring-2 ring-stone-900/10 shadow-sm"
@@ -325,7 +309,6 @@ export default function Step2Settings({
                   >
                     <span
                       className={`w-4 h-4 rounded-full shadow-sm mb-1 ${tItem.color}`}
-                      style={tItem.style}
                     ></span>
                     <span className="text-[9px] font-extrabold text-stone-700 truncate w-full text-center">
                       {tItem.name.split(" ")[0]}

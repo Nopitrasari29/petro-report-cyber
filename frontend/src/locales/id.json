@@ -363,7 +363,6 @@
   "Kop Subtitle": "Subjudul Kop",
   "Theme Color": "Warna Tema",
   "Automatic": "Otomatis",
-  "Corporate Green": "Hijau Korporat",
   "Slate Navy": "Navy Gelap",
   "Cyber Dark": "Gelap Siber",
   "Amber Gold": "Emas Amber",
@@ -474,5 +473,6 @@
   "Select All": "Pilih Semua",
   "notification(s) selected": "notifikasi terpilih",
   "Apakah Anda yakin ingin menghapus {count} notifikasi terpilih? Tindakan ini tidak bisa dibatalkan.": "Apakah Anda yakin ingin menghapus {count} notifikasi terpilih? Tindakan ini tidak bisa dibatalkan.",
-  "Apakah Anda yakin ingin menghapus semua notifikasi yang sudah dibaca? Tindakan ini tidak bisa dibatalkan.": "Apakah Anda yakin ingin menghapus semua notifikasi yang sudah dibaca? Tindakan ini tidak bisa dibatalkan."
+  "Apakah Anda yakin ingin menghapus semua notifikasi yang sudah dibaca? Tindakan ini tidak bisa dibatalkan.": "Apakah Anda yakin ingin menghapus semua notifikasi yang sudah dibaca? Tindakan ini tidak bisa dibatalkan.",
+  "Petrokimia Green": "Hijau Petrokimia"
 }

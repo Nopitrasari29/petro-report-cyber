@@ -204,7 +204,7 @@ def upload_security_file(
     included_sections: Optional[str] = Form(None),  # JSON string [{"key": "...", "title": "..."}, ...]
     header_title: Optional[str] = Form("PT PETROKIMIA GRESIK"),
     header_subtitle: Optional[str] = Form("Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"),
-    theme_color: Optional[str] = Form("auto"),
+    theme_color: Optional[str] = Form("green"),
     domain_type: Optional[str] = Form("general"),
     tone: Optional[str] = Form("Professional"),  # Professional, Technical, Executive
     default_level: Optional[str] = Form("Standard"),  # Standard, Detailed, Summary Only

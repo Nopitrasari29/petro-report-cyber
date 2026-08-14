@@ -107,7 +107,7 @@ export function useGenerateWizard() {
   const [headerSubtitle, setHeaderSubtitle] = useState(
     "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
   );
-  const [themeColor, setThemeColor] = useState("auto");
+  const [themeColor, setThemeColor] = useState("green");
   const [stylePreset, setStylePreset] = useState("auto");
   const [domainType, setDomainType] = useState("general");
   const [dynamicSections, setDynamicSections] = useState<DynamicSectionItem[]>(
@@ -982,7 +982,7 @@ export function useGenerateWizard() {
     setHeaderSubtitle(
       "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
     );
-    setThemeColor("auto");
+    setThemeColor("green");
     setStylePreset("auto");
     setDomainType("general");
     setTone("Professional");

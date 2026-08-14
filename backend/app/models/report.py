@@ -54,11 +54,12 @@ class Report(Base):
     # Kustomisasi Template Kop & Tema Visual (Revisi Progress 2)
     header_title = Column(String, nullable=True, default="PT PETROKIMIA GRESIK")
     header_subtitle = Column(String, nullable=True, default="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI")
-    # "auto" (default) = warna diacak & DIKUNCI sekali saat analisis berhasil (lihat
-    # resolved_theme_color di pick_visual_style()/resolve_theme_color()), sama seperti
-    # style_preset="auto" mengacak gaya layout. Nilai eksplisit (green/navy/dark/gold) = warna
-    # tetap sesuai pilihan user, tidak pernah diacak.
-    theme_color = Column(String, nullable=True, default="auto")  # auto, green, navy, dark, gold
+    # Default "green" (Petrokimia) — opsi "auto" (warna diacak & DIKUNCI sekali saat analisis
+    # berhasil, lihat resolved_theme_color di pick_visual_style()/resolve_theme_color()) sudah
+    # dihapus dari picker UI, tapi resolve_theme_color() tetap menanganinya sebagai fallback
+    # utk laporan lama yang masih menyimpan "auto". Nilai eksplisit (green/navy/dark/gold) =
+    # warna tetap sesuai pilihan user, tidak pernah diacak.
+    theme_color = Column(String, nullable=True, default="green")  # green, navy, dark, gold (legacy: auto)
     domain_type = Column(String, nullable=True, default="general")  # soc_security, financial, kpi_hr, general
 
     # Preset gaya/layout laporan (cover, chart, kartu, dst) yang dipilih user di Report Settings.

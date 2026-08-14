@@ -363,7 +363,6 @@
   "Kop Subtitle": "Header Subtitle",
   "Theme Color": "Theme Color",
   "Automatic": "Automatic",
-  "Corporate Green": "Corporate Green",
   "Slate Navy": "Slate Navy",
   "Cyber Dark": "Cyber Dark",
   "Amber Gold": "Amber Gold",
@@ -474,5 +473,6 @@
   "Select All": "Select All",
   "notification(s) selected": "notification(s) selected",
   "Apakah Anda yakin ingin menghapus {count} notifikasi terpilih? Tindakan ini tidak bisa dibatalkan.": "Are you sure you want to delete {count} selected notification(s)? This action cannot be undone.",
-  "Apakah Anda yakin ingin menghapus semua notifikasi yang sudah dibaca? Tindakan ini tidak bisa dibatalkan.": "Are you sure you want to delete all read notifications? This action cannot be undone."
+  "Apakah Anda yakin ingin menghapus semua notifikasi yang sudah dibaca? Tindakan ini tidak bisa dibatalkan.": "Are you sure you want to delete all read notifications? This action cannot be undone.",
+  "Petrokimia Green": "Petrokimia Green"
 }
