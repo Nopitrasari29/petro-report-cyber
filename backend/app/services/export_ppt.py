@@ -34,7 +34,7 @@ from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
 
 from app.models.report import Report
-from app.services.report_render_logic import build_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
+from app.services.report_render_logic import build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
 
 # ============================================================================
 # Palet & font — persis sesuai brief, dipakai di SETIAP elemen (termasuk chart/tabel)
@@ -1926,6 +1926,211 @@ def _build_closing_slide(block: dict, ctx: _PptBlockContext):
     return None
 
 
+def _hex_to_rgb(hex_str: str) -> RGBColor:
+    hex_clean = hex_str.lstrip("#")
+    if len(hex_clean) == 3:
+        hex_clean = "".join(c * 2 for c in hex_clean)
+    if len(hex_clean) == 6:
+        r = int(hex_clean[0:2], 16)
+        g = int(hex_clean[2:4], 16)
+        b = int(hex_clean[4:6], 16)
+        return RGBColor(r, g, b)
+    return GREEN_MAIN
+
+
+def _build_management_kpi_grid_slide(block: dict, ctx: _PptBlockContext):
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    add_logo(slide, ctx.logo_path)
+    add_kicker(slide, block.get("kicker", ""), color=ctx.accent_main)
+    title_bottom = add_title(slide, block.get("title", ""))
+
+    items = block.get("items", [])
+    cols = 3
+    card_w = Inches(3.8)
+    card_h = Inches(2.1)
+    gap_x = Inches(0.4)
+    gap_y = Inches(0.4)
+    start_y = max(title_bottom + 0.25, 2.0)
+
+    color_map = {
+        "blue": RGBColor(0x25, 0x63, 0xEB),
+        "red": RED_CRIT,
+        "orange": RGBColor(0xEA, 0x58, 0x0C),
+        "green": GREEN_MAIN,
+        "amber": GOLD_MAIN,
+        "gray": GRAY_TEXT,
+    }
+
+    for i, it in enumerate(items[:6]):
+        r = i // cols
+        c = i % cols
+        cx = MARGIN_X + c * (card_w + gap_x)
+        cy = Inches(start_y) + r * (card_h + gap_y)
+
+        col = color_map.get(it.get("color", "blue"), ctx.accent_main)
+        # Background card
+        rect = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, cy, card_w, card_h)
+        rect.fill.solid()
+        rect.fill.fore_color.rgb = IVORY
+        rect.line.color.rgb = col
+        rect.line.width = Pt(1.5)
+
+        tb = slide.shapes.add_textbox(cx + Inches(0.2), cy + Inches(0.15), card_w - Inches(0.4), card_h - Inches(0.3))
+        tf = tb.text_frame
+        tf.word_wrap = True
+
+        p1 = tf.paragraphs[0]
+        p1.text = it.get("label", "").upper()
+        _set_font(p1, BODY_FONT, Pt(10), bold=True, color=col)
+
+        p2 = tf.add_paragraph()
+        p2.text = str(it.get("value", ""))
+        _set_font(p2, TITLE_FONT, Pt(26), bold=True, color=col)
+
+        if it.get("delta"):
+            p3 = tf.add_paragraph()
+            p3.text = it.get("delta", "")
+            _set_font(p3, BODY_FONT, Pt(9.5), color=GRAY_TEXT)
+
+    return slide
+
+
+def _build_management_risk_heatmap_slide(block: dict, ctx: _PptBlockContext):
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    add_logo(slide, ctx.logo_path)
+    add_kicker(slide, block.get("kicker", ""), color=ctx.accent_main)
+    title_bottom = add_title(slide, block.get("title", ""))
+
+    bars = block.get("severity_bars", [])
+    color_map = {
+        "red": RED_CRIT,
+        "orange": RGBColor(0xEA, 0x58, 0x0C),
+        "amber": GOLD_MAIN,
+        "blue": RGBColor(0x25, 0x63, 0xEB),
+        "gray": GRAY_TEXT,
+    }
+
+    start_y = max(title_bottom + 0.25, 2.0)
+    row_h = 0.65
+    bar_max_w = 6.5
+
+    for i, bar in enumerate(bars):
+        cy = Inches(start_y + i * row_h)
+        col = color_map.get(bar.get("color", "gray"), ctx.accent_main)
+
+        # Label
+        lb = slide.shapes.add_textbox(MARGIN_X, cy, Inches(2.0), Inches(0.5))
+        lp = lb.text_frame.paragraphs[0]
+        lp.text = bar.get("label", "")
+        _set_font(lp, BODY_FONT, Pt(12), bold=True, color=col)
+
+        # Bar background
+        bg_bar = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, MARGIN_X + Inches(2.2), cy + Inches(0.1), Inches(bar_max_w), Inches(0.3))
+        bg_bar.fill.solid()
+        bg_bar.fill.fore_color.rgb = RGBColor(0xEE, 0xF0, 0xEB)
+        bg_bar.line.fill.background()
+
+        # Fill bar
+        pct = max(bar.get("pct", 0), 2)
+        fw = (bar_max_w * pct) / 100.0
+        fg_bar = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, MARGIN_X + Inches(2.2), cy + Inches(0.1), Inches(fw), Inches(0.3))
+        fg_bar.fill.solid()
+        fg_bar.fill.fore_color.rgb = col
+        fg_bar.line.fill.background()
+
+        # Count text
+        cb = slide.shapes.add_textbox(MARGIN_X + Inches(2.2 + bar_max_w + 0.3), cy, Inches(2.0), Inches(0.5))
+        cp = cb.text_frame.paragraphs[0]
+        cp.text = f"{bar.get('count', 0)} ({bar.get('pct', 0)}%)"
+        _set_font(cp, BODY_FONT, Pt(11.5), bold=True, color=col)
+
+    if block.get("summary_text"):
+        sum_box = slide.shapes.add_textbox(MARGIN_X, Inches(start_y + len(bars) * row_h + 0.2), CONTENT_W, Inches(1.2))
+        stf = sum_box.text_frame
+        stf.word_wrap = True
+        sp = stf.paragraphs[0]
+        sp.text = block.get("summary_text", "")
+        _set_font(sp, BODY_FONT, Pt(11), color=GRAY_TEXT)
+
+    return slide
+
+
+def _build_management_trend_chart_slide(block: dict, ctx: _PptBlockContext):
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    add_logo(slide, ctx.logo_path)
+    add_kicker(slide, block.get("kicker", ""), color=ctx.accent_main)
+    title_bottom = add_title(slide, block.get("title", ""))
+
+    start_y = max(title_bottom + 0.2, 1.9)
+    if block.get("narrative"):
+        nb = slide.shapes.add_textbox(MARGIN_X, Inches(start_y), CONTENT_W, Inches(1.2))
+        ntf = nb.text_frame
+        ntf.word_wrap = True
+        np_ = ntf.paragraphs[0]
+        np_.text = block.get("narrative", "")
+        _set_font(np_, BODY_FONT, Pt(12), color=TEXT_DARK)
+        start_y += 1.4
+
+    for i, item in enumerate(block.get("trend_items", [])[:3]):
+        cy = Inches(start_y + i * 1.1)
+        tb = slide.shapes.add_textbox(MARGIN_X, cy, CONTENT_W, Inches(0.9))
+        ttf = tb.text_frame
+        ttf.word_wrap = True
+
+        p1 = ttf.paragraphs[0]
+        p1.text = item.get("category", "").upper()
+        _set_font(p1, BODY_FONT, Pt(10), bold=True, color=ctx.accent_main)
+
+        p2 = ttf.add_paragraph()
+        p2.text = " • ".join(item.get("top_values", []))
+        _set_font(p2, BODY_FONT, Pt(11.5), bold=True, color=TEXT_DARK)
+
+    return slide
+
+
+def _build_management_action_items_slide(block: dict, ctx: _PptBlockContext):
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    add_logo(slide, ctx.logo_path)
+    add_kicker(slide, block.get("kicker", ""), color=ctx.accent_main)
+    title_bottom = add_title(slide, block.get("title", ""))
+
+    items = block.get("items", [])[:4]
+    start_y = max(title_bottom + 0.2, 1.9)
+    card_h = 1.1
+
+    urgency_color = {
+        "critical": (RED_CRIT, RED_CRIT_BG),
+        "high": (RGBColor(0xEA, 0x58, 0x0C), RGBColor(0xFF, 0xF7, 0xED)),
+        "medium": (GOLD_MAIN, GOLD_CREAM_SOFT),
+        "low": (RGBColor(0x25, 0x63, 0xEB), RGBColor(0xEF, 0xF6, 0xFF)),
+    }
+
+    for i, it in enumerate(items):
+        cy = Inches(start_y + i * (card_h + 0.15))
+        fg, bg = urgency_color.get(it.get("urgency", "low"), (ctx.accent_main, IVORY))
+
+        rect = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, MARGIN_X, cy, CONTENT_W, Inches(card_h))
+        rect.fill.solid()
+        rect.fill.fore_color.rgb = bg
+        rect.line.color.rgb = fg
+        rect.line.width = Pt(1.2)
+
+        tb = slide.shapes.add_textbox(MARGIN_X + Inches(0.3), cy + Inches(0.1), CONTENT_W - Inches(0.6), Inches(card_h - 0.2))
+        tf = tb.text_frame
+        tf.word_wrap = True
+
+        p1 = tf.paragraphs[0]
+        p1.text = f"{it.get('number', i+1)}. {it.get('title', '')} [{it.get('urgency', '').upper()}]"
+        _set_font(p1, BODY_FONT, Pt(12), bold=True, color=TEXT_DARK)
+
+        if it.get("detail"):
+            p2 = tf.add_paragraph()
+            p2.text = it.get("detail", "")
+            _set_font(p2, BODY_FONT, Pt(10), color=GRAY_TEXT)
+
+    return slide
+
+
 _PPT_BLOCK_BUILDERS = {
     "cover": _build_cover_slide,
     "intro": _build_intro_slide,
@@ -1940,6 +2145,10 @@ _PPT_BLOCK_BUILDERS = {
     "recommendations": _build_recommendations_slide,
     "conclusion": _build_conclusion_slide,
     "closing": _build_closing_slide,
+    "management_kpi_grid": _build_management_kpi_grid_slide,
+    "management_risk_heatmap": _build_management_risk_heatmap_slide,
+    "management_trend_chart": _build_management_trend_chart_slide,
+    "management_action_items": _build_management_action_items_slide,
 }
 
 
@@ -1951,7 +2160,11 @@ class PPTXExporter:
         prs.slide_height = SLIDE_H
 
         logo_path = _resolve_logo_path()
-        blocks = build_report_blocks(report)
+        _template = (report.template_type or "").strip().lower()
+        if "management" in _template:
+            blocks = build_management_report_blocks(report)
+        else:
+            blocks = build_report_blocks(report)
 
         # Varian tampilan (cover_style, category_style, dst) DIBACA dari report.visual_style,
         # BUKAN di-random di sini lagi — BUG YANG DIPERBAIKI (dilaporkan user): dulu tiap kali
@@ -1976,11 +2189,15 @@ class PPTXExporter:
         kicker_ringkasan = "Executive Summary" if is_english(report) else "Ringkasan Eksekutif"
         kicker_analisis = "DATA ANALYSIS" if is_english(report) else "ANALISIS DATA"
 
-        # Palet warna tema (report.theme_color) — accent_bar_color TIDAK LAGI dipakai untuk
-        # warna aksen (dulu diacak hijau/emas lewat visual_style, independen dari pilihan user
-        # di Report Settings). Sekarang accent_bar_color = ctx.accent_main, konsisten dgn tema.
+        # Palet warna tema (report.theme_color)
         theme_key = resolve_theme_color(report)
-        palette = THEME_PALETTES[theme_key]
+        if theme_key in THEME_PALETTES:
+            palette = THEME_PALETTES[theme_key]
+        elif str(theme_key).startswith("#"):
+            c = _hex_to_rgb(str(theme_key))
+            palette = {"main": c, "bg": RGBColor(0x11, 0x18, 0x27), "chart": c, "light": GOLD_MAIN, "soft": RGBColor(0xF3, 0xF4, 0xF6)}
+        else:
+            palette = THEME_PALETTES["green"]
         accent_bar_color = palette["main"]
 
         content_slides: list = []  # dipakai utk stamping footer di akhir (kecuali cover/penutup)

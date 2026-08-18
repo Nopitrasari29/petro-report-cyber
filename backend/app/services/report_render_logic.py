@@ -180,6 +180,9 @@ def resolve_theme_color(report) -> str:
     key = str(getattr(report, "theme_color", None) or "auto").strip().lower()
     if key in VALID_THEME_COLORS:
         return key
+    # Support custom hex color (#RRGGBB) dari color picker frontend
+    if key.startswith("#") and len(key) in (4, 7):
+        return key  # Dikembalikan apa adanya — export_pdf/ppt akan map ke warna terdekat jika perlu
     resolved = get_visual_style(report).get("resolved_theme_color")
     return resolved if resolved in VALID_THEME_COLORS else "green"
 
@@ -1114,6 +1117,206 @@ def build_report_blocks(report) -> list[dict]:
         "thank_you": _L(report, "Terima Kasih", "Thank You"),
         "note": _L(report, "Diskusi dan pertanyaan dipersilakan.", "Questions and discussion are welcome."),
         "hero_stat": hero_stat,
+        "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
+    })
+
+    return blocks
+
+
+# ==============================================================================
+# Management Report Template
+# Template khusus untuk laporan eksekutif/manajemen — lebih banyak grafis,
+# KPI cards, risk heatmap, dan action items daripada narasi panjang.
+# Dipakai ketika report.template_type == "Management Report"
+# ==============================================================================
+
+def build_management_report_blocks(report) -> list[dict]:
+    """
+    Blok laporan untuk template Management Report.
+    Fokus pada:
+    - KPI grid dengan angka kunci (total events, critical, SLA %, resolved %)
+    - Risk heatmap summary (severity distribution visual)
+    - Trend analisis ringkas
+    - Action items dengan prioritas urgensi
+    - Minimal teks narasi panjang, maksimal visualisasi
+    """
+    parsed_data = get_parsed_data(report)
+    report_stats = compute_statistics(parsed_data, report.data_type) if parsed_data else {"total_records": 0}
+    ai_summary = report.ai_summary or {}
+
+    total_records = report_stats.get("total_records", 0)
+    severity = report_stats.get("severity_distribution") or {}
+    total_sev = sum(severity.values())
+    top_categories = report_stats.get("top_categories") or {}
+    recommendations = normalize_recommendations(ai_summary.get("recommendations"))
+    is_id = (getattr(report, "language", "Indonesian") or "Indonesian").strip().lower() == "indonesian"
+
+    def L(id_text: str, en_text: str) -> str:
+        return id_text if is_id else en_text
+
+    critical_count = report.threat_count_critical or severity.get("critical", 0)
+    high_count = report.threat_count_high or severity.get("high", 0)
+    medium_count = report.threat_count_medium or severity.get("medium", 0)
+    low_count = report.threat_count_low or severity.get("low", 0)
+    info_count = report.threat_count_info or severity.get("informational", 0)
+
+    # Hitung SLA met & resolved %
+    sla_met = getattr(report, "sla_met", True)
+    sla_pct = 100 if sla_met else max(0, 100 - round((getattr(report, "processing_time_sec", 0) or 0) / 3))
+
+    source_cols = report_stats.get("_source_columns") or {}
+    status_col = source_cols.get("status")
+    open_count = 0
+    resolved_count = 0
+    if status_col and parsed_data:
+        for row in parsed_data:
+            val = classify_open_status(row.get(status_col))
+            if val is True:
+                open_count += 1
+            elif val is False:
+                resolved_count += 1
+    resolved_pct = round(resolved_count / max(total_records, 1) * 100)
+
+    blocks = []
+
+    # ---- Cover ----
+    blocks.append({
+        "kind": "cover",
+        "title": report.title,
+        "subtitle": L("Laporan Eksekutif — Management Report", "Executive Report — Management Report"),
+        "date": format_report_date(report.created_at, report.language),
+        "period": format_period(report),
+        "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
+        "header_subtitle": report.header_subtitle or "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
+        "cover_style": "split",
+        "theme_color": resolve_theme_color(report),
+        "is_management": True,
+    })
+
+    # ---- KPI Grid — 6 kartu angka kunci ----
+    kpi_items = [
+        {
+            "label": L("Total Events", "Total Events"),
+            "value": str(total_records),
+            "icon": "shield",
+            "color": "blue",
+            "delta": None,
+        },
+        {
+            "label": L("Critical Threats", "Critical Threats"),
+            "value": str(critical_count),
+            "icon": "fire",
+            "color": "red",
+            "delta": L("Perlu tindakan segera", "Requires immediate action") if critical_count > 0 else L("Aman", "Safe"),
+        },
+        {
+            "label": L("High Severity", "High Severity"),
+            "value": str(high_count),
+            "icon": "warning",
+            "color": "orange",
+            "delta": None,
+        },
+        {
+            "label": L("SLA Terpenuhi", "SLA Met"),
+            "value": f"{sla_pct}%",
+            "icon": "clock",
+            "color": "green" if sla_pct >= 80 else "red",
+            "delta": L("Target: ≥ 80%", "Target: ≥ 80%"),
+        },
+        {
+            "label": L("Terselesaikan", "Resolved"),
+            "value": f"{resolved_pct}%",
+            "icon": "check",
+            "color": "green" if resolved_pct >= 70 else "amber",
+            "delta": f"{resolved_count} / {total_records}",
+        },
+        {
+            "label": L("Insiden Aktif", "Active Incidents"),
+            "value": str(open_count),
+            "icon": "alert",
+            "color": "red" if open_count > 0 else "green",
+            "delta": L("Butuh perhatian", "Needs attention") if open_count > 0 else L("Semua tertangani", "All handled"),
+        },
+    ]
+    blocks.append({
+        "kind": "management_kpi_grid",
+        "kicker": L("RINGKASAN EKSEKUTIF", "EXECUTIVE SUMMARY"),
+        "title": L("Indikator Kinerja Utama", "Key Performance Indicators"),
+        "items": kpi_items,
+    })
+
+    # ---- Risk Heatmap / Severity Distribution ----
+    severity_bars = []
+    for sev_key in ["critical", "high", "medium", "low", "informational"]:
+        count = severity.get(sev_key, 0)
+        pct = round(count / max(total_sev, 1) * 100)
+        severity_bars.append({
+            "label": sev_key.title(),
+            "count": count,
+            "pct": pct,
+            "color": {
+                "critical": "red",
+                "high": "orange",
+                "medium": "amber",
+                "low": "blue",
+                "informational": "gray",
+            }.get(sev_key, "gray"),
+        })
+    blocks.append({
+        "kind": "management_risk_heatmap",
+        "kicker": L("DISTRIBUSI RISIKO", "RISK DISTRIBUTION"),
+        "title": L("Peta Risiko Keamanan", "Security Risk Heatmap"),
+        "severity_bars": severity_bars,
+        "total_sev": total_sev,
+        "summary_text": sanitize_text(ai_summary.get("threat_analysis") or ai_summary.get("trend_analysis")),
+    })
+
+    # ---- Trend Chart Placeholder ----
+    trend_items = []
+    if top_categories:
+        for cat_key, cat_items in list(top_categories.items())[:3]:
+            if cat_items:
+                trend_items.append({
+                    "category": humanize_label(cat_key),
+                    "top_values": [str(v[0]) for v in (cat_items if isinstance(cat_items[0], (list, tuple)) else [(x, 0) for x in cat_items])[:5]],
+                })
+    blocks.append({
+        "kind": "management_trend_chart",
+        "kicker": L("TREN & POLA", "TRENDS & PATTERNS"),
+        "title": L("Analisis Tren Periode Ini", "Trend Analysis This Period"),
+        "trend_items": trend_items,
+        "narrative": sanitize_text(ai_summary.get("trend_analysis") or ai_summary.get("executive_summary")),
+        "chart_data": getattr(report, "chart_data", None),
+    })
+
+    # ---- Action Items / Rekomendasi dengan Urgensi ----
+    action_items = []
+    urgency_map = ["critical", "high", "medium", "low"]
+    for idx, rec in enumerate(recommendations[:6]):
+        title = sanitize_text(rec.get("title") or (rec.get("detail") or "").partition(". ")[0])
+        detail = sanitize_text(rec.get("detail") or "")
+        urgency = urgency_map[min(idx, len(urgency_map) - 1)]
+        action_items.append({
+            "number": idx + 1,
+            "title": title,
+            "detail": detail,
+            "urgency": urgency,
+        })
+    blocks.append({
+        "kind": "management_action_items",
+        "kicker": L("TINDAK LANJUT", "ACTION ITEMS"),
+        "title": L("Rekomendasi Prioritas", "Priority Recommendations"),
+        "items": action_items,
+    })
+
+    # ---- Closing ----
+    blocks.append({
+        "kind": "closing",
+        "dark": True,
+        "title": report.title,
+        "thank_you": L("Terima Kasih", "Thank You"),
+        "note": L("Laporan ini disiapkan untuk keperluan manajemen.", "This report is prepared for management use."),
+        "hero_stat": str(total_records),
         "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
     })
 

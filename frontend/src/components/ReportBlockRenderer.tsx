@@ -963,6 +963,178 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
         </>
       );
 
+
+    // ===== MANAGEMENT REPORT BLOCKS =====
+
+    case "management_kpi_grid": {
+      const URGENCY_COLORS: Record<string, string> = {
+        blue: "#2563EB",
+        red: "#DC2626",
+        orange: "#EA580C",
+        green: "#16A34A",
+        amber: "#D97706",
+        gray: "#6B7280",
+      };
+      return (
+        <>
+          {block.kicker && <Kicker text={block.kicker} color={theme.main} />}
+          <BlockTitle>{block.title}</BlockTitle>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
+            {(block.items || []).map((item: any, i: number) => {
+              const iconColor = URGENCY_COLORS[item.color] || theme.main;
+              return (
+                <div
+                  key={i}
+                  className="rounded-2xl border p-4 flex flex-col gap-1"
+                  style={{ borderColor: iconColor + "30", background: iconColor + "08" }}
+                >
+                  <div className="text-[10px] font-extrabold uppercase tracking-wider" style={{ color: iconColor }}>
+                    {item.label}
+                  </div>
+                  <div className="text-2xl font-black" style={{ color: iconColor }}>
+                    {item.value}
+                  </div>
+                  {item.delta && (
+                    <div className="text-[9px] font-semibold" style={{ color: C.grayText }}>
+                      {item.delta}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      );
+    }
+
+    case "management_risk_heatmap": {
+      const SEV_COLORS: Record<string, string> = {
+        red: "#DC2626",
+        orange: "#EA580C",
+        amber: "#D97706",
+        blue: "#2563EB",
+        gray: "#6B7280",
+      };
+      return (
+        <>
+          {block.kicker && <Kicker text={block.kicker} color={theme.main} />}
+          <BlockTitle>{block.title}</BlockTitle>
+          <div className="mt-4 space-y-2">
+            {(block.severity_bars || []).map((bar: any, i: number) => {
+              const col = SEV_COLORS[bar.color] || theme.main;
+              return (
+                <div key={i} className="flex items-center gap-3">
+                  <div className="w-20 text-[10px] font-extrabold shrink-0" style={{ color: col }}>
+                    {bar.label}
+                  </div>
+                  <div className="flex-1 h-5 rounded-full bg-stone-100 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${Math.max(bar.pct, 2)}%`, background: col }}
+                    />
+                  </div>
+                  <div className="w-16 text-right text-xs font-bold" style={{ color: col }}>
+                    {bar.count} <span className="text-[9px] font-normal text-stone-400">({bar.pct}%)</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {block.summary_text && (
+            <p className="mt-4 text-xs leading-relaxed" style={{ color: C.grayText }}>
+              {block.summary_text}
+            </p>
+          )}
+        </>
+      );
+    }
+
+    case "management_trend_chart": {
+      return (
+        <>
+          {block.kicker && <Kicker text={block.kicker} color={theme.main} />}
+          <BlockTitle>{block.title}</BlockTitle>
+          {block.narrative && (
+            <p className="text-xs leading-relaxed mt-2 mb-4" style={{ color: C.grayText }}>
+              {block.narrative}
+            </p>
+          )}
+          {(block.trend_items || []).length > 0 && (
+            <div className="mt-3 space-y-4">
+              {block.trend_items.map((ti: any, i: number) => (
+                <div key={i}>
+                  <div className="text-[10px] font-extrabold uppercase tracking-wider mb-2" style={{ color: theme.main }}>
+                    {ti.category}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(ti.top_values || []).map((v: string, j: number) => (
+                      <span
+                        key={j}
+                        className="px-2.5 py-1 rounded-full text-[10px] font-bold"
+                        style={{
+                          background: theme.soft,
+                          color: theme.main,
+                          border: `1px solid ${theme.light}40`,
+                        }}
+                      >
+                        {v}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    case "management_action_items": {
+      const URGENCY_BG: Record<string, [string, string]> = {
+        critical: ["#DC2626", "#FEF2F2"],
+        high: ["#EA580C", "#FFF7ED"],
+        medium: ["#D97706", "#FFFBEB"],
+        low: ["#2563EB", "#EFF6FF"],
+      };
+      return (
+        <>
+          {block.kicker && <Kicker text={block.kicker} color={theme.main} />}
+          <BlockTitle>{block.title}</BlockTitle>
+          <div className="mt-4 space-y-3">
+            {(block.items || []).map((item: any, i: number) => {
+              const [fg, bg] = URGENCY_BG[item.urgency] || [theme.main, theme.soft];
+              return (
+                <div key={i} className="rounded-2xl border p-3 flex gap-3" style={{ borderColor: fg + "25", background: bg }}>
+                  <div
+                    className="w-7 h-7 rounded-xl flex items-center justify-center font-black text-xs text-white shrink-0 mt-0.5"
+                    style={{ background: fg }}
+                  >
+                    {item.number}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-extrabold text-xs mb-0.5" style={{ color: C.textDark }}>
+                      {item.title}
+                    </div>
+                    {item.detail && (
+                      <div className="text-[10px] leading-relaxed" style={{ color: C.grayText }}>
+                        {item.detail}
+                      </div>
+                    )}
+                    <span
+                      className="inline-block mt-1 px-2 py-0.5 rounded-full text-[8px] font-extrabold uppercase tracking-wider"
+                      style={{ background: fg, color: "white" }}
+                    >
+                      {item.urgency}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      );
+    }
+
     default:
       return null;
   }

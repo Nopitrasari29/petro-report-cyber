@@ -99,7 +99,10 @@ def get_dashboard_stats(
             {"label": "Critical", "data": [rep.threat_count_critical or 0 for rep in trend_reports]},
             {"label": "High", "data": [rep.threat_count_high or 0 for rep in trend_reports]},
             {"label": "Medium", "data": [rep.threat_count_medium or 0 for rep in trend_reports]},
-            {"label": "Low", "data": [rep.threat_count_low or 0 for rep in trend_reports]}
+            {"label": "Low", "data": [rep.threat_count_low or 0 for rep in trend_reports]},
+            # RCA-B02: Sertakan Informational agar total trend_trend konsisten dengan
+            # total_events di severity_distribution (yang sudah menghitung sum_info).
+            {"label": "Informational", "data": [rep.threat_count_info or 0 for rep in trend_reports]},
         ]
     else:
         labels = []
@@ -118,11 +121,18 @@ def get_dashboard_stats(
         progress = 0
         q_status = "Waiting in Queue"
         if rep.status == "processing":
-            progress = 75
+            # RCA-B01: Hitung progress NYATA dari tokens_generated (bukan hardcoded 75%).
+            # Rata-rata laporan 6-section qwen3:8b menghasilkan ~2500-5000 token — pakai
+            # 3500 sebagai denominasi default supaya progress terasa realistis dan tidak
+            # langsung loncat ke 100 di awal job. Dibatasi 95% (tidak pernah 100 saat
+            # masih processing — biar tidak membingungkan user).
+            tokens = rep.tokens_generated or 0
+            progress = min(95, round((tokens / 3500) * 100)) if tokens > 0 else 15
             q_status = "Processing"
         elif rep.status == "draft":
-            progress = 100
-            q_status = "Completed Parsing"
+            # RCA-B01: Draft = sudah di-parse, BELUM dianalisis (bukan 100%!)
+            progress = 25
+            q_status = "Parsed — Ready for Analysis"
 
         queue_list.append({
             "report_name": rep.title,

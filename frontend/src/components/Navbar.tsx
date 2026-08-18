@@ -10,6 +10,7 @@ import { API_BASE_URL, getToken, authHeaders } from "@/utils/api";
 import { confirmNavAway } from "@/utils/navGuard";
 import NotificationsMenu from "@/components/navbar/NotificationsMenu";
 import { ConfirmModal } from "@/components/ToastModal";
+import UserGuideModal from "@/components/UserGuideModal";
 
 function formatRelativeTime(dateStr: string): string {
   if (!dateStr) return "";
@@ -27,6 +28,7 @@ export default function Navbar() {
   const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showUserGuideModal, setShowUserGuideModal] = useState(false);
   const [apiNotifications, setApiNotifications] = useState<any[]>([]);
   const [showPasswordSetupModal, setShowPasswordSetupModal] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -310,6 +312,18 @@ export default function Navbar() {
                   </svg>
                   {tx("Settings", "Settings")}
                 </Link>
+                {/* User Guide */}
+                <button
+                  type="button"
+                  onClick={() => { setShowUserMenu(false); setShowUserGuideModal(true); }}
+                  className="flex items-center gap-2.5 w-full px-4 py-2.5 text-xs text-stone-700 hover:bg-stone-50 transition-colors duration-150 font-bold text-left cursor-pointer"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4 text-stone-400">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                  </svg>
+                  {tx("User Guide", "Panduan Pengguna")}
+                  <span className="ml-auto text-[8px] bg-petro-green/10 text-petro-green font-extrabold px-1.5 py-0.5 rounded-full">PDF</span>
+                </button>
               </div>
               <div className="border-t border-stone-100 py-1">
                 <button
@@ -329,24 +343,31 @@ export default function Navbar() {
 
       {mounted &&
         createPortal(
-          <ConfirmModal
-            isOpen={showPasswordSetupModal}
-            title={tx("Lengkapi Password Akun Anda", "Complete Your Account Password")}
-            message={tx(
-              "Akun Anda terdaftar via Google dan belum memiliki password sendiri, sehingga belum bisa login lewat email & password biasa. Set password sekarang atau nanti?",
-              "Your account registered via Google and doesn't have its own password yet, so you can't log in with regular email & password. Set a password now or later?",
-            )}
-            confirmText={tx("Sekarang", "Now")}
-            cancelText={tx("Nanti", "Later")}
-            type="brand"
-            onConfirm={() => {
-              setShowPasswordSetupModal(false);
-              router.push("/settings?tab=account");
-            }}
-            onCancel={() => {
-              setShowPasswordSetupModal(false);
-            }}
-          />,
+          <>
+            <ConfirmModal
+              isOpen={showPasswordSetupModal}
+              title={tx("Lengkapi Password Akun Anda", "Complete Your Account Password")}
+              message={tx(
+                "Akun Anda terdaftar via Google dan belum memiliki password sendiri, sehingga belum bisa login lewat email & password biasa. Set password sekarang atau nanti?",
+                "Your account registered via Google and doesn't have its own password yet, so you can't log in with regular email & password. Set a password now or later?",
+              )}
+              confirmText={tx("Sekarang", "Now")}
+              cancelText={tx("Nanti", "Later")}
+              type="brand"
+              onConfirm={() => {
+                setShowPasswordSetupModal(false);
+                router.push("/settings?tab=account");
+              }}
+              onCancel={() => {
+                setShowPasswordSetupModal(false);
+              }}
+            />
+            <UserGuideModal
+              isOpen={showUserGuideModal}
+              onClose={() => setShowUserGuideModal(false)}
+              tx={tx}
+            />
+          </>,
           document.body,
         )}
     </header>

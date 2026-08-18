@@ -19,7 +19,7 @@ import math
 from dataclasses import dataclass
 
 from app.models.report import Report
-from app.services.report_render_logic import build_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
+from app.services.report_render_logic import build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
 
 logger = logging.getLogger(__name__)
 
@@ -1133,6 +1133,114 @@ def _build_closing_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         return (inner, True, ctx.flourish_corner, True)
 
 
+def _build_management_kpi_grid_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    items = block.get("items", [])
+    cell_htmls = []
+    color_map = {
+        "blue": "#2563EB",
+        "red": RED_CRIT,
+        "orange": "#EA580C",
+        "green": GREEN_MAIN,
+        "amber": GOLD_MAIN,
+        "gray": GRAY_TEXT,
+    }
+    for item in items:
+        col = color_map.get(item.get("color", "blue"), ctx.accent_main)
+        delta_html = f'<div style="font-size:8.5pt;font-weight:600;color:{GRAY_TEXT};margin-top:4px;">{_esc(item["delta"])}</div>' if item.get("delta") else ""
+        cell_htmls.append(
+            f'<table style="width:100%;margin-bottom:12pt;background:{IVORY};border:1.5px solid {col}35;border-radius:12px;"><tr><td style="vertical-align:top;padding:12pt;">'
+            f'<div style="font-size:9pt;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:{col};">{_esc(item["label"])}</div>'
+            f'<div style="font-family:{TITLE_FONT};font-size:24pt;font-weight:900;color:{col};margin-top:6px;">{_esc(item["value"])}</div>'
+            f'{delta_html}'
+            f'</td></tr></table>'
+        )
+    inner = _kicker(block.get("kicker", ""), ctx.accent_main) + _title(block.get("title", "")) + _card_grid(cell_htmls, 3)
+    return (inner, False, None, False)
+
+
+def _build_management_risk_heatmap_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    bars = block.get("severity_bars", [])
+    color_map = {
+        "red": RED_CRIT,
+        "orange": "#EA580C",
+        "amber": GOLD_MAIN,
+        "blue": "#2563EB",
+        "gray": GRAY_TEXT,
+    }
+    rows_html = ""
+    for bar in bars:
+        col = color_map.get(bar.get("color", "gray"), ctx.accent_main)
+        pct = max(bar.get("pct", 0), 2)
+        rows_html += (
+            f'<tr style="font-size:10pt;">'
+            f'<td style="width:110px;font-weight:800;color:{col};padding:8px 0;">{_esc(bar["label"])}</td>'
+            f'<td style="padding:8px 12px;">'
+            f'<div style="height:14px;background:#F0F2ED;border-radius:7px;overflow:hidden;">'
+            f'<div style="height:100%;width:{pct}%;background:{col};border-radius:7px;"></div>'
+            f'</div>'
+            f'</td>'
+            f'<td style="width:90px;text-align:right;font-weight:700;color:{col};padding:8px 0;">{bar["count"]} <span style="font-size:8.5pt;font-weight:400;color:{GRAY_TEXT};">({bar["pct"]}%)</span></td>'
+            f'</tr>'
+        )
+    summary_html = f'<div style="font-size:10pt;color:{GRAY_TEXT};line-height:1.6;margin-top:14pt;padding:10pt 14pt;background:{IVORY};border-left:3px solid {ctx.accent_main};border-radius:4px;">{_esc(block.get("summary_text", ""))}</div>' if block.get("summary_text") else ""
+    inner = (
+        _kicker(block.get("kicker", ""), ctx.accent_main) +
+        _title(block.get("title", "")) +
+        f'<table style="width:100%;border-collapse:collapse;margin-top:12pt;">{rows_html}</table>' +
+        summary_html
+    )
+    return (inner, False, None, False)
+
+
+def _build_management_trend_chart_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    narrative_html = f'<div style="font-size:10.5pt;color:{TEXT_DARK};line-height:1.6;margin-bottom:14pt;">{_esc(block.get("narrative", ""))}</div>' if block.get("narrative") else ""
+    trend_cards = ""
+    for item in block.get("trend_items", []):
+        pills = "".join(f'<span style="display:inline-block;padding:3px 8px;margin:2px 4px 2px 0;background:{ctx.accent_soft};color:{ctx.accent_main};border-radius:12px;font-size:8.5pt;font-weight:700;">{_esc(v)}</span>' for v in item.get("top_values", []))
+        trend_cards += (
+            f'<div style="margin-bottom:10pt;padding:10pt 12pt;background:{IVORY};border:1px solid {PANEL_BORDER};border-radius:10px;">'
+            f'<div style="font-size:9.5pt;font-weight:800;text-transform:uppercase;color:{ctx.accent_main};margin-bottom:6px;">{_esc(item.get("category", ""))}</div>'
+            f'<div>{pills}</div>'
+            f'</div>'
+        )
+    inner = (
+        _kicker(block.get("kicker", ""), ctx.accent_main) +
+        _title(block.get("title", "")) +
+        narrative_html +
+        f'<div>{trend_cards}</div>'
+    )
+    return (inner, False, None, False)
+
+
+def _build_management_action_items_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    urgency_color = {
+        "critical": (RED_CRIT, RED_CRIT_BG),
+        "high": ("#EA580C", "#FFF7ED"),
+        "medium": (GOLD_MAIN, GOLD_CREAM_SOFT),
+        "low": ("#2563EB", "#EFF6FF"),
+    }
+    cards_html = ""
+    for it in block.get("items", []):
+        fg, bg = urgency_color.get(it.get("urgency", "low"), (ctx.accent_main, IVORY))
+        detail = f'<div style="font-size:9pt;color:{GRAY_TEXT};margin-top:4px;line-height:1.4;">{_esc(it.get("detail", ""))}</div>' if it.get("detail") else ""
+        cards_html += (
+            f'<table style="width:100%;margin-bottom:8pt;background:{bg};border:1px solid {fg}35;border-radius:10px;"><tr>'
+            f'<td style="width:36px;vertical-align:middle;text-align:center;padding:8pt;">'
+            f'<div style="width:26px;height:26px;line-height:26px;border-radius:13px;background:{fg};color:#fff;font-weight:900;font-size:10pt;margin:0 auto;">{it.get("number", 1)}</div>'
+            f'</td>'
+            f'<td style="vertical-align:middle;padding:8pt 8pt 8pt 0;">'
+            f'<div style="font-weight:800;font-size:10.5pt;color:{TEXT_DARK};">{_esc(it.get("title", ""))}</div>'
+            f'{detail}'
+            f'</td>'
+            f'<td style="width:80px;vertical-align:middle;text-align:right;padding-right:12pt;">'
+            f'<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:{fg};color:#fff;font-size:7.5pt;font-weight:800;text-transform:uppercase;">{_esc(it.get("urgency", ""))}</span>'
+            f'</td>'
+            f'</tr></table>'
+        )
+    inner = _kicker(block.get("kicker", ""), ctx.accent_main) + _title(block.get("title", "")) + cards_html
+    return (inner, False, None, False)
+
+
 _PDF_BLOCK_BUILDERS = {
     "cover": _build_cover_block,
     "intro": _build_intro_block,
@@ -1147,6 +1255,10 @@ _PDF_BLOCK_BUILDERS = {
     "recommendations": _build_recommendations_block,
     "conclusion": _build_conclusion_block,
     "closing": _build_closing_block,
+    "management_kpi_grid": _build_management_kpi_grid_block,
+    "management_risk_heatmap": _build_management_risk_heatmap_block,
+    "management_trend_chart": _build_management_trend_chart_block,
+    "management_action_items": _build_management_action_items_block,
 }
 
 
@@ -1160,7 +1272,11 @@ class PDFExporter:
             )
 
         logo_b64 = _resolve_logo_b64()
-        blocks = build_report_blocks(report)
+        _template = (report.template_type or "").strip().lower()
+        if "management" in _template:
+            blocks = build_management_report_blocks(report)
+        else:
+            blocks = build_report_blocks(report)
 
         # Varian tampilan (cover_style, category_style, dst) DIBACA dari report.visual_style,
         # BUKAN di-random di sini lagi — lihat catatan sama di export_ppt.py generate_ppt_report
@@ -1182,12 +1298,14 @@ class PDFExporter:
         kicker_ringkasan = "Executive Summary" if is_english(report) else "Ringkasan Eksekutif"
         kicker_analisis = "DATA ANALYSIS" if is_english(report) else "ANALISIS DATA"
 
-        # Palet warna tema (report.theme_color) — accent_bar_color TIDAK LAGI dipakai untuk
-        # warna aksen (dulu diacak hijau/emas lewat visual_style, independen dari pilihan user
-        # di Report Settings — bisa kontradiksi dgn tema, mis. tema navy tapi bar random emas).
-        # Sekarang accent_bar_color = ctx.accent_main langsung, konsisten dgn tema yang dipilih.
+        # Palet warna tema (report.theme_color)
         theme_key = resolve_theme_color(report)
-        palette = THEME_PALETTES[theme_key]
+        if theme_key in THEME_PALETTES:
+            palette = THEME_PALETTES[theme_key]
+        elif str(theme_key).startswith("#"):
+            palette = {"main": theme_key, "bg": "#111827", "chart": theme_key, "light": "#C9A227", "soft": "#F3F4F6"}
+        else:
+            palette = THEME_PALETTES["green"]
         accent_bar_color = palette["main"]
 
         pages = []  # list of (html, dark, flourish, is_last)

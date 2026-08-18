@@ -40,6 +40,8 @@ interface Step2SettingsProps {
   setThemeColor?: (val: string) => void;
   stylePreset?: string;
   setStylePreset?: (val: string) => void;
+  templateType?: string;
+  setTemplateType?: (val: string) => void;
   tone: string;
   setTone: (val: string) => void;
   defaultLevel: string;
@@ -70,10 +72,12 @@ export default function Step2Settings({
   setHeaderTitle,
   headerSubtitle = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
   setHeaderSubtitle,
-  themeColor = "auto",
+  themeColor = "green",
   setThemeColor,
   stylePreset = "auto",
   setStylePreset,
+  templateType = "SOC Executive Summary",
+  setTemplateType,
   tone,
   setTone,
   defaultLevel,
@@ -83,6 +87,23 @@ export default function Step2Settings({
   tx,
 }: Step2SettingsProps) {
   const [customSectionInput, setCustomSectionInput] = React.useState("");
+  const [showColorPicker, setShowColorPicker] = React.useState(false);
+  const [customHex, setCustomHex] = React.useState(
+    themeColor && themeColor.startsWith("#") ? themeColor : "#004D25"
+  );
+  const colorPickerRef = React.useRef<HTMLDivElement>(null);
+
+  // Tutup color picker saat klik di luar
+  React.useEffect(() => {
+    if (!showColorPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
+        setShowColorPicker(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showColorPicker]);
 
   // BUG DIPERBAIKI (dilaporkan user, screenshot ke-3): CSS grid `align-items: stretch` biasa
   // TIDAK bisa diandalkan di sini — begitu daftar section AI panjang (7-9+ item), tinggi
@@ -238,7 +259,91 @@ export default function Step2Settings({
             </span>
           </h3>
 
-          <div className="space-y-3">
+          <div className="space-y-3.5">
+            {/* Tipe Template Laporan — Card Stack Vertikal agar teks judul & deskripsi tidak pernah terpotong (truncate) */}
+            <div>
+              <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1.5">
+                {tx("Report Template Type", "Tipe Template Laporan")}
+              </label>
+              <div className="space-y-2">
+                {[
+                  {
+                    id: "SOC Executive Summary",
+                    name: tx("SOC Technical Report", "Laporan Teknis SOC"),
+                    desc: tx("Analisis mendalam, ringkasan eksekutif & temuan komprehensif", "Analisis mendalam, ringkasan eksekutif & temuan komprehensif"),
+                    badge: "Standard",
+                    icon: (
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    id: "Management Report",
+                    name: tx("Management Report", "Laporan Manajemen"),
+                    desc: tx("Visual tinggi, KPI ringkas, peta risiko & action items eksekutif", "Visual tinggi, KPI ringkas, peta risiko & action items eksekutif"),
+                    badge: "Visual / KPI",
+                    icon: (
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
+                      </svg>
+                    ),
+                  },
+                ].map((tOption) => {
+                  const isSelected =
+                    (templateType || "SOC Executive Summary").toLowerCase() ===
+                    tOption.id.toLowerCase();
+                  return (
+                    <button
+                      type="button"
+                      key={tOption.id}
+                      onClick={() =>
+                        setTemplateType && setTemplateType(tOption.id)
+                      }
+                      className={`w-full flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer text-left ${
+                        isSelected
+                          ? "border-petro-green bg-emerald-50/60 ring-2 ring-petro-green/20 shadow-sm"
+                          : "border-stone-200 bg-white hover:bg-stone-50/80 hover:border-stone-300"
+                      }`}
+                    >
+                      <div
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                          isSelected
+                            ? "bg-petro-green text-white shadow-sm"
+                            : "bg-stone-100 text-stone-500"
+                        }`}
+                      >
+                        {tOption.icon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 mb-0.5">
+                          <span
+                            className={`text-xs font-black leading-tight ${
+                              isSelected ? "text-petro-green" : "text-stone-850"
+                            }`}
+                          >
+                            {tOption.name}
+                          </span>
+                          <span
+                            className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0 ${
+                              isSelected
+                                ? "bg-petro-green text-white shadow-xs"
+                                : "bg-stone-100 text-stone-500"
+                            }`}
+                          >
+                            {tOption.badge}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-stone-500 font-medium leading-relaxed">
+                          {tOption.desc}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div>
               <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1">
                 {tx("Kop Header Title", "Judul Kop")}
@@ -269,53 +374,198 @@ export default function Step2Settings({
               />
             </div>
 
-            <div>
-              <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1.5">
-                {tx("Theme Color", "Warna Tema")}
-              </label>
-              <div className="grid grid-cols-4 gap-1.5">
-                {[
-                  {
-                    id: "green",
-                    name: tx("Petrokimia Green", "Hijau Petrokimia"),
-                    color: "bg-[#004D25]",
-                  },
-                  {
-                    id: "navy",
-                    name: tx("Slate Navy", "Navy Gelap"),
-                    color: "bg-[#0F172A]",
-                  },
-                  {
-                    id: "dark",
-                    name: tx("Cyber Dark", "Gelap Siber"),
-                    color: "bg-[#111827]",
-                  },
-                  {
-                    id: "gold",
-                    name: tx("Amber Gold", "Emas Amber"),
-                    color: "bg-[#78350F]",
-                  },
-                ].map((tItem) => (
-                  <button
-                    type="button"
-                    key={tItem.id}
-                    onClick={() => setThemeColor && setThemeColor(tItem.id)}
-                    title={tItem.name}
-                    className={`flex flex-col items-center justify-center p-1.5 rounded-xl border transition-all cursor-pointer ${
-                      themeColor === tItem.id
-                        ? "border-stone-900 bg-stone-50 ring-2 ring-stone-900/10 shadow-sm"
-                        : "border-stone-200 bg-white hover:bg-stone-50"
-                    }`}
-                  >
-                    <span
-                      className={`w-4 h-4 rounded-full shadow-sm mb-1 ${tItem.color}`}
-                    ></span>
-                    <span className="text-[9px] font-extrabold text-stone-700 truncate w-full text-center">
-                      {tItem.name.split(" ")[0]}
-                    </span>
-                  </button>
-                ))}
+            {/* Theme Color — Inline Expandable Luxury Accordion (Never gets cut off or overlaps buttons!) */}
+            <div className="space-y-2" ref={colorPickerRef}>
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider">
+                  {tx("Theme Color", "Warna Tema Laporan")}
+                </label>
               </div>
+
+              {/* Compute Active Color Info */}
+              {(() => {
+                const colorMap: Record<string, { name: string; hex: string }> = {
+                  green: { name: tx("Petrokimia Green", "Hijau Petrokimia"), hex: "#004D25" },
+                  navy: { name: tx("Slate Navy", "Navy Gelap"), hex: "#0F172A" },
+                  dark: { name: tx("Cyber Dark", "Gelap Siber"), hex: "#111827" },
+                  gold: { name: tx("Amber Gold", "Emas Amber"), hex: "#78350F" },
+                  teal: { name: tx("Deep Teal", "Teal Gelap"), hex: "#0F766E" },
+                  ocean: { name: tx("Ocean Blue", "Biru Samudra"), hex: "#0284C7" },
+                  indigo: { name: tx("Royal Indigo", "Indigo Elegan"), hex: "#4338CA" },
+                  ruby: { name: tx("Ruby Red", "Merah Ruby"), hex: "#991B1B" },
+                };
+                const activeColor =
+                  themeColor && themeColor.startsWith("#")
+                    ? { name: tx("Custom Color", "Warna Kustom"), hex: themeColor }
+                    : colorMap[themeColor || "green"] || colorMap.green;
+
+                return (
+                  <div className="space-y-2.5">
+                    {/* The Sleek Single-Row Pill Trigger */}
+                    <button
+                      type="button"
+                      onClick={() => setShowColorPicker(!showColorPicker)}
+                      className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border transition-all duration-200 cursor-pointer group shadow-2xs ${
+                        showColorPicker
+                          ? "bg-white border-petro-green ring-2 ring-petro-green/20 shadow-xs"
+                          : "bg-stone-50/90 hover:bg-stone-100/90 border-stone-200"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span
+                          className="w-4 h-4 rounded-full shadow-inner border border-white/80 ring-1 ring-black/10 shrink-0 transition-transform group-hover:scale-110"
+                          style={{ backgroundColor: activeColor.hex }}
+                        />
+                        <span className="text-xs font-bold text-stone-850 truncate leading-tight">
+                          {activeColor.name}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] font-mono font-extrabold px-2 py-0.5 rounded-md bg-white border border-stone-200/90 text-stone-700 shadow-2xs">
+                          {activeColor.hex.toUpperCase()}
+                        </span>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                          className={`w-4 h-4 text-stone-400 transition-transform duration-300 ${
+                            showColorPicker ? "rotate-180 text-petro-green" : "group-hover:text-stone-600"
+                          }`}
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      </div>
+                    </button>
+
+                    {/* Smooth INLINE Expandable Palette (Never cuts off, cleanly pushes content down!) */}
+                    {showColorPicker && (
+                      <div className="bg-stone-50/80 border border-stone-200/90 rounded-2xl p-3.5 space-y-3 animate-fadeIn">
+                        {/* Section 1: 8 Clean Brand Presets */}
+                        <div>
+                          <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
+                            {tx("Choose Palette Preset", "Pilih Palet Warna")}
+                          </span>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {[
+                              { id: "green", name: "Petro Green", hex: "#004D25" },
+                              { id: "navy", name: "Slate Navy", hex: "#0F172A" },
+                              { id: "dark", name: "Cyber Dark", hex: "#111827" },
+                              { id: "gold", name: "Amber Gold", hex: "#78350F" },
+                              { id: "#0F766E", name: "Deep Teal", hex: "#0F766E" },
+                              { id: "#0284C7", name: "Ocean Blue", hex: "#0284C7" },
+                              { id: "#4338CA", name: "Royal Indigo", hex: "#4338CA" },
+                              { id: "#991B1B", name: "Ruby Crimson", hex: "#991B1B" },
+                            ].map((p) => {
+                              const isSelected =
+                                themeColor === p.id ||
+                                (themeColor && themeColor.toLowerCase() === p.hex.toLowerCase());
+                              return (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setCustomHex(p.hex);
+                                    setThemeColor && setThemeColor(p.id);
+                                  }}
+                                  className={`flex items-center gap-2 px-2.5 py-2 rounded-xl border text-left transition-all duration-150 cursor-pointer ${
+                                    isSelected
+                                      ? "bg-white border-petro-green ring-2 ring-petro-green/15 text-petro-green font-black shadow-xs"
+                                      : "bg-white/80 hover:bg-white border-stone-200 text-stone-700 font-bold hover:border-stone-300"
+                                  }`}
+                                >
+                                  <span
+                                    className="w-3.5 h-3.5 rounded-full shrink-0 shadow-2xs border border-white/80"
+                                    style={{ backgroundColor: p.hex }}
+                                  />
+                                  <span className="text-[11px] truncate leading-tight">
+                                    {p.name}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="h-px bg-stone-200/60" />
+
+                        {/* Section 2: Custom Color Wheel & Hex Input */}
+                        <div>
+                          <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
+                            {tx("Custom Hex / Color Wheel", "Warna Kustom")}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {/* Color Wheel Swatch Trigger */}
+                            <div
+                              className="relative w-9 h-9 rounded-xl shadow-xs border border-stone-300/80 overflow-hidden shrink-0 cursor-pointer group"
+                              title={tx("Click to open color wheel", "Klik untuk buka color wheel")}
+                            >
+                              <input
+                                type="color"
+                                value={customHex.startsWith("#") ? customHex : "#004D25"}
+                                onChange={(e) => {
+                                  const val = e.target.value.toUpperCase();
+                                  setCustomHex(val);
+                                  setThemeColor && setThemeColor(val);
+                                }}
+                                className="absolute -top-4 -left-4 w-20 h-20 cursor-pointer opacity-0 z-10"
+                              />
+                              <div
+                                className="w-full h-full rounded"
+                                style={{ backgroundColor: customHex }}
+                              />
+                              <div className="absolute inset-0 bg-black/15 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] transition-opacity">
+                                🎨
+                              </div>
+                            </div>
+
+                            {/* Hex Monospace Input */}
+                            <div className="relative flex-1">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 font-mono text-xs font-bold pointer-events-none">
+                                #
+                              </span>
+                              <input
+                                type="text"
+                                value={customHex.replace(/^#/, "")}
+                                maxLength={6}
+                                placeholder="004D25"
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+                                  const val = `#${raw}`;
+                                  setCustomHex(val);
+                                  if (raw.length === 6) {
+                                    setThemeColor && setThemeColor(val);
+                                  }
+                                }}
+                                className="w-full bg-white border border-stone-200 rounded-xl pl-7 pr-3 py-2 text-xs font-mono font-extrabold text-stone-850 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green uppercase tracking-wider shadow-2xs"
+                              />
+                            </div>
+
+                            {/* Done Button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const formatted = customHex.startsWith("#") ? customHex : `#${customHex}`;
+                                if (/^#[0-9A-Fa-f]{6}$/.test(formatted)) {
+                                  setThemeColor && setThemeColor(formatted.toUpperCase());
+                                }
+                                setShowColorPicker(false);
+                              }}
+                              className="px-3.5 py-2 bg-stone-900 hover:bg-black text-white text-xs font-extrabold rounded-xl transition-colors shadow-xs cursor-pointer shrink-0"
+                            >
+                              OK
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <div>

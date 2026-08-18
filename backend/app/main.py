@@ -48,7 +48,6 @@ def print_banner():
 +----------------------------------------------------------+
 |  {Y}Database {R}->  {W}PostgreSQL @ localhost:5432                   {G}|
 |  {Y}Auth     {R}->  {W}JWT + Google OAuth2                          {G}|
-|  {Y}Email    {R}->  {W}SMTP (Fallback: Terminal Log Mode)            {G}|
 +----------------------------------------------------------+{R}
 """)
     except Exception:
@@ -61,7 +60,51 @@ async def lifespan(app: FastAPI):
     from app.db.base import Base
     try:
         Base.metadata.create_all(bind=engine)
-        print(f"{G}[DB]{R} Database tables created or validated.")
+        
+        # Auto-sync missing columns for PostgreSQL (SQLAlchemy create_all does not add columns to existing tables)
+        cols_to_ensure = [
+            ("style_preset", "VARCHAR"),
+            ("visual_style", "JSON"),
+            ("tone", "VARCHAR"),
+            ("default_level", "VARCHAR"),
+            ("tokens_generated", "INTEGER DEFAULT 0"),
+            ("domain_type", "VARCHAR"),
+            ("theme_color", "VARCHAR"),
+            ("header_title", "VARCHAR"),
+            ("header_subtitle", "VARCHAR"),
+            ("included_sections", "JSON"),
+            ("total_file_size_bytes", "INTEGER"),
+            ("threat_count_critical", "INTEGER DEFAULT 0"),
+            ("threat_count_high", "INTEGER DEFAULT 0"),
+            ("threat_count_medium", "INTEGER DEFAULT 0"),
+            ("threat_count_low", "INTEGER DEFAULT 0"),
+            ("threat_count_info", "INTEGER DEFAULT 0"),
+            ("total_records_parsed", "INTEGER DEFAULT 0"),
+        ]
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            for col_name, col_type in cols_to_ensure:
+                try:
+                    conn.execute(text(f"ALTER TABLE reports ADD COLUMN IF NOT EXISTS {col_name} {col_type};"))
+                    conn.commit()
+                except Exception:
+                    pass
+
+            # RCA-C01: Index komposit audit_logs (user_id + created_at, action + created_at)
+            # RCA-C05: Index komposit notifications (user_id + is_read + created_at)
+            _indexes_to_ensure = [
+                "CREATE INDEX IF NOT EXISTS idx_audit_user_created ON audit_logs (user_id, created_at);",
+                "CREATE INDEX IF NOT EXISTS idx_audit_action_created ON audit_logs (action, created_at);",
+                "CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created ON notifications (user_id, is_read, created_at);",
+            ]
+            for idx_sql in _indexes_to_ensure:
+                try:
+                    conn.execute(text(idx_sql))
+                    conn.commit()
+                except Exception:
+                    pass
+
+        print(f"{G}[DB]{R} Database tables & columns created or validated.")
         
         # RCA-24: Bersihkan status 'processing' yang terhenti akibat restart server
         from app.db.session import SessionLocal
@@ -74,8 +117,14 @@ async def lifespan(app: FastAPI):
                     r.status = "failed"
                 db.commit()
                 print(f"{Y}[RECOVERY]{R} {len(stuck_reports)} laporan yang terhenti akibat restart di-reset ke status 'failed'.")
+
+            # RCA-B06: Bersihkan notifikasi yang sudah dibaca lebih dari 30 hari
+            from app.crud.notification import cleanup_old_read_notifications
+            purged_notifs = cleanup_old_read_notifications(db, max_age_days=30)
+            if purged_notifs > 0:
+                print(f"{G}[CLEANUP]{R} {purged_notifs} notifikasi lama yang telah dibaca dibersihkan dari database.")
         except Exception as rec_err:
-            print(f"{Y}[RECOVERY WARNING]{R} Gagal reset status processing: {rec_err}")
+            print(f"{Y}[RECOVERY WARNING]{R} Gagal recovery/cleanup database: {rec_err}")
         finally:
             db.close()
     except Exception as db_err:
@@ -103,6 +152,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

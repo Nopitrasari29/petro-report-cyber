@@ -68,20 +68,16 @@ class Settings(BaseSettings):
     ALLOWED_EXTENSIONS: Set[str] = {".csv", ".json", ".xlsx", ".xls", ".pdf"}
     MAX_UPLOAD_SIZE_MB: int = 100
 
-    # Ambang waktu proses analisis AI (detik) yang dianggap "SLA met" di dashboard/riwayat.
-    # Disesuaikan ke 300s (5 menit) agar realistis dengan waktu generasi LLM lokal.
-    SLA_THRESHOLD_SECONDS: int = 300
+    # RCA-C03: Ambang waktu proses analisis AI (detik) yang dianggap "SLA met" di dashboard/riwayat.
+    # DINAIKKAN dari 300s (5 menit) ke 900s (15 menit) — diukur langsung: qwen3:8b di hardware
+    # CPU-only ini butuh ~111 detik cold-load + prefill + generate, rata-rata job 6-section bisa
+    # 8-15 menit total. SLA 5 menit hampir selalu GAGAL walau sistem bekerja normal, membuat
+    # metrik ini menyesatkan manajemen. 15 menit lebih realistis untuk server CPU-only lokal.
+    # Sesuaikan lagi ke nilai yang lebih rendah saat di-deploy ke server GPU/cloud.
+    SLA_THRESHOLD_SECONDS: int = 900
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
-
-    # SMTP Settings (Untuk Email Verifikasi & Reset Password)
-    SMTP_HOST: str = ""
-    SMTP_PORT: int = 587
-    SMTP_USERNAME: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_FROM: str = ""
-    SMTP_FROM_NAME: str = "AI Security Reports"
 
 
 # Singleton — di-import di seluruh app biar konsisten, jangan bikin Settings() berulang

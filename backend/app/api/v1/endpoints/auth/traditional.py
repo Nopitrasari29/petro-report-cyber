@@ -36,26 +36,23 @@ async def register(user_in: UserCreate, db: Session = Depends(get_db)):
     new_user = create_user(db, user_in)
     logger.info(f"User berhasil dibuat: ID={new_user.id}, Username={new_user.username}")
 
-    # 2. Buat token verifikasi dengan format penulisan tanggal seragam (tz-naive UTC)
+    # 2. Auto-verifikasi akun — SMTP tidak digunakan, semua akun langsung aktif.
+    # Token verifikasi tetap dibuat dan dicatat ke log untuk audit trail.
     token = secrets.token_urlsafe(32)
-    from app.core.config import settings
-    if not settings.SMTP_HOST:
-        new_user.is_verified = True
-    else:
-        new_user.is_verified = False
+    new_user.is_verified = True
     new_user.verification_token = token
     new_user.verification_token_expiry = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=24)
 
     db.commit()
     db.refresh(new_user)
 
-    # 3. Kirim email verifikasi
+    # Catat token ke log terminal (untuk keperluan audit/debug lokal)
     try:
         await send_verification_email(email=new_user.email, token=token)
     except Exception as e:
-        logger.error(f"Gagal mengirim email verifikasi: {str(e)}")
+        logger.error(f"Gagal mencatat token verifikasi: {str(e)}")
 
-    logger.info("Registrasi selesai & link verifikasi dikirim/dicetak.")
+    logger.info("Registrasi selesai — akun aktif langsung (tanpa verifikasi email).")
     return new_user
 
 @router.post("/login", response_model=Token)

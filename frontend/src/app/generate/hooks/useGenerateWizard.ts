@@ -420,6 +420,7 @@ export function useGenerateWizard() {
   // daftar sampai baru ketahuan gagal di submit akhir (backend memang sudah menegakkan batas
   // ini, jadi bukan celah keamanan - murni gap UX, feedback yang telat).
   const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024;
+  const ALLOWED_EXTENSIONS = [".csv", ".json", ".xlsx", ".xls", ".pdf"];
 
   // Handle local file adding — backend sekarang menerima BEBERAPA file sekaligus (digabung
   // jadi satu daftar data di server), jadi file baru ditambahkan ke daftar, bukan mengganti.
@@ -427,14 +428,48 @@ export function useGenerateWizard() {
     const allFiles = Array.from(fileList);
     if (allFiles.length === 0) return;
 
-    const oversized = allFiles.filter((f) => f.size > MAX_UPLOAD_SIZE_BYTES);
-    const newFiles = allFiles.filter((f) => f.size <= MAX_UPLOAD_SIZE_BYTES);
+    // RCA-D02: Validasi format/ekstensi berkas di sisi klien
+    const invalidExtFiles = allFiles.filter((f) => {
+      const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
+      return !ALLOWED_EXTENSIONS.includes(ext);
+    });
+
+    if (invalidExtFiles.length > 0) {
+      setErrorMsg(
+        `${tx("Format berkas berikut tidak didukung (hanya .csv, .json, .xlsx, .xls, .pdf):", "The following file formats are not supported (only .csv, .json, .xlsx, .xls, .pdf):")} ${invalidExtFiles.map((f) => f.name).join(", ")}.`,
+      );
+    }
+
+    const validExtFiles = allFiles.filter((f) => {
+      const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
+      return ALLOWED_EXTENSIONS.includes(ext);
+    });
+
+    const oversized = validExtFiles.filter((f) => f.size > MAX_UPLOAD_SIZE_BYTES);
+    const newFiles = validExtFiles.filter((f) => f.size <= MAX_UPLOAD_SIZE_BYTES);
     if (oversized.length > 0) {
       setErrorMsg(
         `${tx("File berikut melebihi batas maksimum 100MB dan tidak ditambahkan:", "The following files exceed the 100MB limit and were not added:")} ${oversized.map((f) => f.name).join(", ")}.`,
       );
     }
     if (newFiles.length === 0) return;
+
+    // Validasi konsistensi format jika sudah ada berkas sebelumnya atau upload multi-file
+    const combinedFiles = [...rawFiles, ...newFiles];
+    if (combinedFiles.length > 1) {
+      const exts = new Set(
+        combinedFiles.map((f) => "." + (f.name.split(".").pop() || "").toLowerCase()),
+      );
+      if (exts.size > 1) {
+        setErrorMsg(
+          tx(
+            "Semua berkas yang diunggah harus memiliki format/ekstensi yang sama (contoh: semua .csv atau semua .xlsx).",
+            "All uploaded files must share the same format/extension (e.g. all .csv or all .xlsx).",
+          ),
+        );
+        return;
+      }
+    }
 
     const isFirstBatch = rawFiles.length === 0;
 
@@ -1034,6 +1069,8 @@ export function useGenerateWizard() {
     setThemeColor,
     stylePreset,
     setStylePreset,
+    templateType,
+    setTemplateType,
     tone,
     setTone,
     defaultLevel,
