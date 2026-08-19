@@ -33,12 +33,14 @@ export default function GoogleSignInButton({ onSuccess, onError, loading }: Goog
     };
 
     const initializeGoogle = () => {
+      if (initialized) return;
       if (!(window as any).google?.accounts?.id) return;
 
       const buttonDiv = document.getElementById("google-signin-btn");
       if (!buttonDiv) return;
 
       try {
+        initialized = true;
         (window as any).google.accounts.id.initialize({
           client_id: googleClientId,
           callback: handleCredentialResponse,
@@ -58,6 +60,7 @@ export default function GoogleSignInButton({ onSuccess, onError, loading }: Goog
           }
         );
       } catch (e) {
+        initialized = false;
         console.warn("[GOOGLE AUTH] Exception initializing Google Sign-In:", e);
       }
     };

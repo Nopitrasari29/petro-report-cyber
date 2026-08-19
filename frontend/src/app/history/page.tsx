@@ -103,7 +103,6 @@ export default function ReportHistoryPage() {
   }, [searchQuery, statusFilter]);
 
   useEffect(() => {
-    fetchReports();
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const urlSearch = params.get("search");

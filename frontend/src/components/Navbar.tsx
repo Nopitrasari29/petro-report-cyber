@@ -57,7 +57,7 @@ export default function Navbar() {
   const fetchNotifications = async () => {
     if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/notifications`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/notifications/`, {
         headers: authHeaders()
       });
       if (res.ok) {
@@ -126,6 +126,19 @@ export default function Navbar() {
       }
     } catch (err) {
       console.error("Failed to mark notifications as read:", err);
+    }
+  };
+
+  const handleMarkSingleRead = async (id: number) => {
+    if (!getToken()) return;
+    try {
+      setApiNotifications(prev => prev.map(n => n.id === id ? { ...n, unread: false } : n));
+      await fetch(`${API_BASE_URL}/api/v1/notifications/${id}/read`, {
+        method: "PUT",
+        headers: authHeaders()
+      });
+    } catch (err) {
+      console.error("Failed to mark notification as read:", err);
     }
   };
 
@@ -262,6 +275,7 @@ export default function Navbar() {
           showUserMenu={showUserMenu}
           setShowUserMenu={setShowUserMenu}
           onMarkAllRead={handleMarkAllRead}
+          onMarkSingleRead={handleMarkSingleRead}
           onDeleteNotification={handleDeleteNotification}
           onBulkDeleteNotifications={handleBulkDeleteNotifications}
           onDeleteAllRead={handleDeleteAllRead}

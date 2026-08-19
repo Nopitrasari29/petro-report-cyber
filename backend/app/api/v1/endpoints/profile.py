@@ -96,4 +96,18 @@ def update_profile(
     update_data.pop("new_password", None)
             
     updated_user = update_user(db, current_user.id, update_data)
+
+    # Catat aksi ke audit log
+    try:
+        from app.crud.audit_log import log_action
+        action_name = "change_password" if profile_in.new_password else "update_profile"
+        detail_msg = "Kata sandi akun diperbarui." if profile_in.new_password else f"Profil akun diperbarui (nama: {updated_user.full_name}, email: {updated_user.email})."
+        log_action(
+            db, user_id=current_user.id, action=action_name,
+            resource_type="user", resource_id=current_user.id,
+            detail=detail_msg,
+        )
+    except Exception:
+        pass
+
     return updated_user

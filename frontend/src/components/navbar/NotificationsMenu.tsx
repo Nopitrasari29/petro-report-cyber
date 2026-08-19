@@ -21,6 +21,7 @@ interface NotificationsMenuProps {
   showUserMenu: boolean;
   setShowUserMenu: (show: boolean) => void;
   onMarkAllRead?: () => void;
+  onMarkSingleRead?: (id: number) => void;
   onDeleteNotification?: (id: number) => void;
   onBulkDeleteNotifications?: (ids: number[]) => void;
   onDeleteAllRead?: () => void;
@@ -39,6 +40,7 @@ export default function NotificationsMenu({
   getNotifIcon,
   setShowUserMenu,
   onMarkAllRead,
+  onMarkSingleRead,
   onDeleteNotification,
   onBulkDeleteNotifications,
   onDeleteAllRead,
@@ -138,7 +140,10 @@ export default function NotificationsMenu({
                 <Link
                   href={n.href}
                   key={n.id}
-                  onClick={() => setShowNotif(false)}
+                  onClick={() => {
+                    setShowNotif(false);
+                    if (n.unread) onMarkSingleRead?.(n.id);
+                  }}
                   className="flex gap-3 px-4 py-3 hover:bg-stone-50/50 cursor-pointer transition-colors duration-150 text-left items-start relative block"
                 >
                   {getNotifIcon(n.type)}
@@ -256,7 +261,10 @@ export default function NotificationsMenu({
                     />
                     <Link
                       href={n.href}
-                      onClick={closeModal}
+                      onClick={() => {
+                        closeModal();
+                        if (n.unread) onMarkSingleRead?.(n.id);
+                      }}
                       className="flex gap-4 flex-1 min-w-0 text-left items-start"
                     >
                       {getNotifIcon(n.type)}

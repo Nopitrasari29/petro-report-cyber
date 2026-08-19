@@ -39,6 +39,7 @@ class AuditLogResponse(BaseModel):
 @router.get("/", response_model=List[AuditLogResponse])
 def get_audit_logs(
     action: Optional[str] = Query(None, description="Filter by action type (e.g. 'upload', 'delete', 'generate_analysis')"),
+    user_id: Optional[int] = Query(None, description="Filter by user ID (Admin only)"),
     resource_id: Optional[int] = Query(None, description="Filter by report ID"),
     from_date: Optional[str] = Query(None, description="Filter dari tanggal (format YYYY-MM-DD)"),
     to_date: Optional[str] = Query(None, description="Filter sampai tanggal (format YYYY-MM-DD)"),
@@ -59,9 +60,11 @@ def get_audit_logs(
 
     query = db.query(AuditLog)
 
-    # User biasa hanya bisa lihat log diri sendiri; admin bisa lihat semua
+    # User biasa hanya bisa lihat log diri sendiri; admin bisa lihat semua / filter spesifik user
     if not is_admin:
         query = query.filter(AuditLog.user_id == current_user.id)
+    elif user_id is not None:
+        query = query.filter(AuditLog.user_id == user_id)
 
     if action:
         query = query.filter(AuditLog.action == action)
@@ -79,7 +82,6 @@ def get_audit_logs(
     if to_date:
         try:
             dt_to = datetime.strptime(to_date, "%Y-%m-%d")
-            # Sampai akhir hari
             dt_to = dt_to.replace(hour=23, minute=59, second=59)
             query = query.filter(AuditLog.created_at <= dt_to)
         except ValueError:

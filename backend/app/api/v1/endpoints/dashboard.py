@@ -45,7 +45,12 @@ def get_dashboard_stats(
     pending_queue_count = base_query.filter(Report.status.in_(["processing", "queued", "waiting"])).count()
 
     crit_incidents = db.query(func.sum(Report.threat_count_critical)).filter(Report.user_id == current_user.id).scalar() or 0
-    avg_confidence = db.query(func.avg(Report.ai_confidence)).filter(Report.user_id == current_user.id).scalar() or 94.0
+    avg_confidence_val = db.query(func.avg(Report.ai_confidence)).filter(
+        Report.user_id == current_user.id,
+        Report.status.in_(["analyzed", "completed"]),
+        Report.ai_confidence.isnot(None)
+    ).scalar()
+    avg_confidence = float(avg_confidence_val) if avg_confidence_val is not None else 0.0
     available_reports = base_query.filter(Report.status.in_(["parsed", "analyzed", "completed"])).count()
 
     # Hitung persentase perubahan Critical Incidents (30 hari terakhir vs 30 s/d 60 hari yang lalu)
@@ -110,7 +115,8 @@ def get_dashboard_stats(
             {"label": "Critical", "data": []},
             {"label": "High", "data": []},
             {"label": "Medium", "data": []},
-            {"label": "Low", "data": []}
+            {"label": "Low", "data": []},
+            {"label": "Informational", "data": []}
         ]
 
     # 5. Antrean pemrosesan AI, di-scope ke user_id
@@ -122,15 +128,10 @@ def get_dashboard_stats(
         q_status = "Waiting in Queue"
         if rep.status == "processing":
             # RCA-B01: Hitung progress NYATA dari tokens_generated (bukan hardcoded 75%).
-            # Rata-rata laporan 6-section qwen3:8b menghasilkan ~2500-5000 token — pakai
-            # 3500 sebagai denominasi default supaya progress terasa realistis dan tidak
-            # langsung loncat ke 100 di awal job. Dibatasi 95% (tidak pernah 100 saat
-            # masih processing — biar tidak membingungkan user).
             tokens = rep.tokens_generated or 0
             progress = min(95, round((tokens / 3500) * 100)) if tokens > 0 else 15
             q_status = "Processing"
         elif rep.status == "draft":
-            # RCA-B01: Draft = sudah di-parse, BELUM dianalisis (bukan 100%!)
             progress = 25
             q_status = "Parsed — Ready for Analysis"
 
@@ -140,6 +141,8 @@ def get_dashboard_stats(
             "status": q_status,
             "timestamp": rep.updated_at.strftime("%d %b %Y, %H:%M") if rep.updated_at else "-"
         })
+
+    confidence_label = "High Confidence" if avg_confidence >= 85 else ("Medium Confidence" if avg_confidence > 0 else "No Reports Yet")
 
     return {
         "counters": {
@@ -153,8 +156,8 @@ def get_dashboard_stats(
                 "pending_queue": pending_queue_count
             },
             "ai_analysis_score": {
-                "value": round(avg_confidence),
-                "label": "High Confidence" if avg_confidence >= 85 else "Medium Confidence"
+                "value": round(avg_confidence) if avg_confidence > 0 else 0,
+                "label": confidence_label
             },
             "report_history": {
                 "value": available_reports,
