@@ -74,7 +74,7 @@ export interface ReportBlock {
 export interface VisualStyle {
   cover_style: "solid" | "split";
   category_style: "bar" | "donut" | "stacked";
-  status_style: "bar" | "donut" | "stacked";
+  status_style: "bar" | "donut" | "stacked" | "funnel";
   asset_style: "cards" | "podium" | "bars";
   recommendation_style: "cards" | "timeline" | "banners";
   panel_side: "left" | "right";

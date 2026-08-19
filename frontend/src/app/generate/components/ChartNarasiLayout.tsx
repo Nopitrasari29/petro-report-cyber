@@ -7,6 +7,9 @@ const CHART_BLOCK_KINDS = [
   "category_distribution",
   "severity_distribution",
   "status_distribution",
+  "kpi_radar",
+  "time_heatmap",
+  "period_compare",
 ];
 
 interface ChartNarasiLayoutProps {
@@ -54,7 +57,18 @@ export default function ChartNarasiLayout({
     );
   }
 
-  const chartBlocks = blocks.filter((b) => CHART_BLOCK_KINDS.includes(b.kind));
+  // Chart (category_distribution/status_distribution/kpi_radar/dst) sekarang bisa ada DI DALAM
+  // block "page" (beberapa panel digabung 1 halaman di tab Preview/PDF/PPTX, lihat
+  // report_render_logic.py tahap 2) — panel-panelnya sendiri masih berisi data chart UTUH
+  // seperti sebelum digabung, cuma field kind-nya bernama "panel_kind" (bukan "kind", supaya
+  // tidak bentrok dgn "kind" milik block pembungkusnya) — diratakan (flatten) & dipetakan balik
+  // ke "kind" di sini sebelum difilter, supaya ReportBlockRenderer bisa merender tiap panel
+  // langsung sebagai kartu terpisah seperti semula.
+  const flatBlocks = blocks.flatMap((b) => {
+    if (b.kind !== "page" || !Array.isArray(b.panels)) return [b];
+    return (b.panels as ReportBlock[]).map((p) => ({ ...p, kind: p.panel_kind }));
+  });
+  const chartBlocks = flatBlocks.filter((b) => CHART_BLOCK_KINDS.includes(b.kind));
 
   if (chartBlocks.length === 0) {
     return (

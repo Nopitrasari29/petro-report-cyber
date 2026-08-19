@@ -171,6 +171,63 @@ def coerce_finding_text(item) -> str:
     return str(item or "").strip()
 
 
+def coerce_narrative_text(value) -> str:
+    """Jaring pengaman KELAS BUG YANG SAMA dgn coerce_finding_text() di atas, tapi utk field
+    naratif top-level yang kontraknya STRING polos di prompts.py (trend_analysis/
+    severity_analysis/risk_assessment/executive_summary/conclusion/sections[].content) —
+    BUG NYATA (dilaporkan user, disertai contoh laporan): model kecil (qwen3:8b) kadang
+    "mengarang struktur" utk instruksi yang katanya SEGMENTASI/PENGELOMPOKAN (lihat
+    prompts.py) berupa objek/array JSON bersarang alih-alih kalimat, mis.
+    {"severity_levels": [{"level": "tinggi", "entities": [...]}, ...]} — begitu masuk
+    sanitize_text() (yang cuma str(text)), repr Python mentahnya ("{'severity_levels': ...")
+    tampil apa adanya di laporan. Fungsi ini meratakan struktur APAPUN jadi teks yang masih
+    bisa dibaca (bukan solusi sempurna/rapi bahasanya, tapi jauh lebih baik daripada repr
+    mentah) — dipanggil SEBELUM sanitize_text() di semua titik yang membaca field-field itu.
+    Prompt di prompts.py SUDAH diperjelas supaya ini idealnya tidak pernah terpicu, ini
+    murni jaring pengaman kalau model tetap menyimpang."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, dict):
+        for key in ("content", "text", "summary", "description", "analysis", "narrative", "detail"):
+            nested = value.get(key)
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
+        parts = []
+        for k, v in value.items():
+            flat = coerce_narrative_text(v)
+            if flat:
+                label = str(k).replace("_", " ").strip().capitalize()
+                parts.append(f"{label}: {flat}")
+        return ". ".join(parts)
+    if isinstance(value, list):
+        parts = [coerce_narrative_text(v) for v in value]
+        parts = [p for p in parts if p]
+        if not parts:
+            return ""
+        # BUG NYATA YANG DIPERBAIKI (dilaporkan user, disertai contoh laporan): dulu SELALU
+        # disambung ", " apa pun isi tiap elemennya — kalau elemennya ternyata sudah berupa
+        # KALIMAT UTUH ber-tanda-baca sendiri (bukan sekadar nama pendek), hasilnya tanda baca
+        # dobel yang aneh (mis. "...di atas 90%., Entitas yang..."). Sekarang dibedakan: elemen
+        # yang SEMUANYA sudah diakhiri . / ! / ? disambung SPASI biasa (masing2 sudah bawa
+        # tanda baca sendiri); elemen hasil perataan dict (biasanya "Label: nilai", belum
+        # berakhiran titik) disambung ". " (dipaksa berakhiran titik dulu) supaya tetap
+        # terbaca sebagai beberapa kalimat terpisah; sisanya (daftar nama/istilah pendek)
+        # tetap disambung ", " seperti semula.
+        if any(isinstance(v, dict) for v in value):
+            # Paksa tiap bagian berakhiran titik DULU, baru sambung SPASI (bukan ". " lagi) —
+            # supaya tidak dobel titik pada bagian yang kebetulan sudah diakhiri titik sendiri
+            # (mis. hasil perataan dict yang di dalamnya juga mengandung list kalimat utuh).
+            return " ".join(p if p[-1:] in ".!?" else p + "." for p in parts)
+        if all(p[-1:] in ".!?" for p in parts):
+            return " ".join(parts)
+        return ", ".join(parts)
+    return str(value).strip()
+
+
 def _split_recommendation_item(text: str) -> dict:
     """Pisah 'Judul singkat: detail' jadi {title, detail} kalau polanya jelas (judul pendek,
     diawali huruf kapital, diakhiri titik dua) — kalau tidak, semua masuk ke detail saja."""

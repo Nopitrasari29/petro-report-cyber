@@ -230,6 +230,52 @@ def _compute_time_pattern(date_series: "pd.Series") -> Dict[str, Any]:
     return result
 
 
+_MONTH_ABBR_ID = {
+    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "Mei", 6: "Jun",
+    7: "Jul", 8: "Agu", 9: "Sep", 10: "Okt", 11: "Nov", 12: "Des",
+}
+
+
+def _compute_time_series(date_series: "pd.Series", max_buckets: int = 12) -> Dict[str, Any]:
+    """Deret waktu asli per bucket (bulan/minggu/hari) — BEDA dari `trend` di
+    _compute_time_pattern (cuma "naik/turun X%" dari 2 titik paruh awal vs akhir, tidak cukup
+    utk digambar sbg chart tren sungguhan). Bucket dipilih otomatis dari rentang data (>=90
+    hari -> bulanan, >=21 hari -> mingguan, sisanya harian) supaya chart tetap padat-informasi
+    baik utk data 2 minggu maupun 1 tahun, dipotong ke `max_buckets` TERAKHIR kalau lebih
+    panjang. Dipakai `report_render_logic.py` utk chart tren Analisis Tren (fallback ke
+    `time_pattern.trend` yang sudah ada kalau ini kosong/rentang data terlalu pendek).
+
+    Index `date_series` MASIH index baris DataFrame asli (bukan DatetimeIndex) — `.resample()`
+    LANGSUNG di atasnya gagal (`TypeError: Only valid with DatetimeIndex`), jadi nilainya
+    dibungkus ulang dulu lewat `pd.Series(1, index=pd.DatetimeIndex(...))` sebelum resample."""
+    valid = date_series.dropna()
+    if valid.empty:
+        return {}
+    span_days = (valid.max() - valid.min()).days
+    if span_days >= 90:
+        freq, unit = "MS", "month"
+    elif span_days >= 21:
+        freq, unit = "W-MON", "week"
+    else:
+        freq, unit = "D", "day"
+
+    counts = pd.Series(1, index=pd.DatetimeIndex(valid.values)).resample(freq).sum().tail(max_buckets)
+    if counts.empty:
+        return {}
+
+    if unit == "month":
+        labels = [f"{_MONTH_ABBR_ID.get(ts.month, ts.strftime('%b'))} {ts.year}" for ts in counts.index]
+    else:
+        labels = [ts.strftime("%d/%m") for ts in counts.index]
+
+    return {
+        "unit": unit,
+        "labels": labels,
+        "counts": [int(v) for v in counts.tolist()],
+        "cumulative": [int(v) for v in counts.cumsum().tolist()],
+    }
+
+
 def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dict[str, Any]:
     """
     Entry point poin 1. Mengembalikan dict statistik terhitung (deterministik, pandas) siap
@@ -267,6 +313,9 @@ def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dic
 
     if date_col and date_series is not None:
         stats["time_pattern"] = _compute_time_pattern(date_series)
+        time_series = _compute_time_series(date_series)
+        if time_series:
+            stats["time_series"] = time_series
 
     exclude_for_numeric = exclude_for_top + list(category_cols.values())
     numeric_summary = _compute_numeric_summary(df, exclude=exclude_for_numeric)

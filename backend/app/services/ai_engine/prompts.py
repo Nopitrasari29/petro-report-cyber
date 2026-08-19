@@ -32,6 +32,13 @@ PENTING:
 - Respon HARUS ditulis menggunakan bahasa yang diminta pengguna (default: Bahasa Indonesia yang formal, taktis, dan profesional).
 - Jangan menambahkan teks penjelasan, pengantar, atau penutup di luar objek JSON tersebut. Hasilkan HANYA kode JSON valid.
 - TULIS DENGAN KADAR TEKNIS/EKSEKUTIF YANG PAS, HINDARI FRASA FILLER KLISE (misal: JANGAN gunakan 'Secara keseluruhan', 'Berdasarkan analisis di atas', 'Perlu dicatat bahwa', 'Dapat disimpulkan bahwa'). Langsung sampaikan temuan & implikasinya.
+- "executive_summary", "trend_analysis", "severity_analysis", "risk_assessment", "conclusion", dan
+  "sections[].content" NILAINYA HARUS STRING TEKS NARATIF BIASA (kalimat/paragraf mengalir) —
+  JANGAN PERNAH berupa object/array JSON bersarang, walau instruksi topiknya menyebut
+  "segmentasi"/"pengelompokan"/"per entitas". Kalau perlu mengelompokkan beberapa entitas ke
+  beberapa tingkat/kategori, TULISKAN SEBAGAI KALIMAT, contoh BENAR: "Entitas dengan pencapaian
+  tinggi meliputi A, B, dan C; sementara D dan E masih di tingkat rendah." — contoh SALAH (jangan
+  pernah lakukan ini): {"level": "tinggi", "entities": ["A","B","C"]}.
 
 KONTRAK "recommendations" (WAJIB DIPATUHI PERSIS):
 - HARUS array of OBJECT {"title": "...", "detail": "..."} - BUKAN array of string polos.

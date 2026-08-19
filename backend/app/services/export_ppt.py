@@ -23,13 +23,14 @@ SELALU menampilkan bentuk yang identik utk laporan yang sama, tapi tetap dalam i
 visual (palet/font/makna warna) yang sama.
 """
 import math
+import re
 from dataclasses import dataclass
 
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
 
@@ -558,15 +559,19 @@ def add_dark_panel(slide, x, y, w, h, theme: dict | None = None):
     return panel
 
 
-def add_critical_highlight_panel(slide, x, y, w, h, pct_text, sub_text, detail_text=None, theme: dict | None = None):
+def add_critical_highlight_panel(slide, x, y, w, h, pct_text, sub_text, detail_text=None, theme: dict | None = None, value_color=None):
+    """`value_color` opsional (default None = t["light"] spt semula) — dipakai kartu tren
+    berarah panah (dynamic_section "Trend Analysis", lihat _build_dynamic_section_slide) utk
+    mewarnai angka besar sesuai arah naik/turun/datar, TANPA mengubah tampilan pemanggil lain."""
     t = theme or THEME_PALETTES["green"]
+    value_color = value_color or t["light"]
     add_dark_panel(slide, x, y, w, h, theme=t)
     pad = Inches(0.3)
     big_box = slide.shapes.add_textbox(x + pad, y + Inches(0.35), w - pad * 2, Inches(1.0))
     bp = big_box.text_frame.paragraphs[0]
     bp.text = pct_text
     bp.alignment = PP_ALIGN.CENTER
-    _set_font(bp, TITLE_FONT, Pt(42), bold=True, color=t["light"])
+    _set_font(bp, TITLE_FONT, Pt(42), bold=True, color=value_color)
 
     sub_top_in = 1.35
     sub_box = slide.shapes.add_textbox(x + pad, y + Inches(sub_top_in), w - pad * 2, Inches(0.7))
@@ -635,17 +640,74 @@ def add_priority_panel(slide, x, y, w, h, title_text, items, theme: dict | None 
         cur_y += Inches(max(row_min_in, text_height_in * scale + 0.2 * scale))
 
 
-def add_ai_insight_strip(slide, x, y, w, text):
-    """Kotak singkat "Insight AI" di bawah chart — menampilkan chart_captions dari AI, yang
-    SEBELUMNYA dihasilkan AI (lihat prompts.py) tapi tidak pernah ditampilkan di PDF/PPT
-    sama sekali. Cuma dipanggil kalau ai_caption benar-benar ada isinya."""
-    box = slide.shapes.add_textbox(x, y, w, Inches(0.6))
-    tf = box.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    p.text = f"\U0001F4A1 {text}"
-    _set_font(p, BODY_FONT, Pt(10), italic=True, color=GRAY_TEXT)
-    return box
+def add_bullet_lines(slide, x, y, w, text, theme: dict | None = None, font_pt: float = 9.5) -> float:
+    """Baris bullet polos (titik warna aksen + teks), TANPA bungkus kotak/judul — dipakai
+    add_note_box di bawah (mode penuh, kotak+judul "Catatan:") DAN tile insight_dashboard
+    (mode ringkas, tile-nya sudah dibungkus kartu bordered sendiri, jadi kotak-dalam-kotak
+    kalau dipakaikan add_note_box utuh lagi di situ). Return tinggi total (inci) yang
+    terpakai, supaya pemanggil bisa menaruh elemen berikutnya tepat di bawahnya."""
+    t = theme or THEME_PALETTES["green"]
+    lines = [l for l in re.split(r"(?<=[.!?])\s+", (text or "").strip()) if l]
+    if not lines:
+        return 0.0
+    bullet_w_in = 0.15
+    text_w_in = Emu(w).inches - bullet_w_in
+    cur_y_in = Emu(y).inches
+    for line in lines:
+        lh = _estimate_wrapped_height_in(line, font_pt, text_w_in) + 0.05
+        bullet_box = slide.shapes.add_textbox(x, Inches(cur_y_in), Inches(bullet_w_in), Inches(lh))
+        bp = bullet_box.text_frame.paragraphs[0]
+        bp.text = "•"
+        _set_font(bp, BODY_FONT, Pt(font_pt), bold=True, color=t["main"])
+        line_box = slide.shapes.add_textbox(x + Inches(bullet_w_in), Inches(cur_y_in), w - Inches(bullet_w_in), Inches(lh))
+        ltf = line_box.text_frame
+        ltf.word_wrap = True
+        lp = ltf.paragraphs[0]
+        lp.text = line
+        _set_font(lp, BODY_FONT, Pt(font_pt), color=GRAY_TEXT)
+        cur_y_in += lh
+    return cur_y_in - Emu(y).inches
+
+
+def add_note_box(slide, x, y, w, text, theme: dict | None = None, title: str = "Catatan"):
+    """Kotak "Catatan:" (garis kiri warna aksen + bullet per kalimat, lewat add_bullet_lines
+    di atas) — GANTI dari add_ai_insight_strip lama (1 baris italic polos) supaya caption AI
+    terasa seperti kotak catatan di laporan referensi, BUKAN paragraf mengalir biasa (temuan
+    user: laporan masih terasa "berat kata-kata" meski chart-nya sudah ada). Tinggi kotak
+    dihitung dari estimasi wrap tiap baris (_estimate_wrapped_height_in) supaya tidak
+    overflow/kependekan kalau captionnya panjang. Return tinggi kotak (inci) supaya
+    pemanggil bisa menaruh elemen berikutnya tepat di bawahnya."""
+    t = theme or THEME_PALETTES["green"]
+    lines = [l for l in re.split(r"(?<=[.!?])\s+", (text or "").strip()) if l]
+    if not lines:
+        return 0.0
+    pad_in = 0.15
+    body_font_pt = 10
+    text_w_in = Emu(w).inches - pad_in * 2 - 0.15
+    line_heights_sum = sum(_estimate_wrapped_height_in(line, body_font_pt, text_w_in) + 0.05 for line in lines)
+    box_h_in = 0.14 + 0.24 + line_heights_sum + 0.1
+
+    box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, w, Inches(box_h_in))
+    box.fill.solid()
+    box.fill.fore_color.rgb = IVORY
+    box.line.fill.background()
+    _no_shadow(box)
+    accent = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, Inches(0.045), Inches(box_h_in))
+    accent.fill.solid()
+    accent.fill.fore_color.rgb = t["main"]
+    accent.line.fill.background()
+    _no_shadow(accent)
+
+    title_box = slide.shapes.add_textbox(x + Inches(pad_in), y + Inches(0.09), w - Inches(pad_in * 2), Inches(0.22))
+    tp = title_box.text_frame.paragraphs[0]
+    tp.text = f"{title}:"
+    _set_font(tp, BODY_FONT, Pt(8.5), bold=True, color=t["main"])
+
+    add_bullet_lines(
+        slide, x + Inches(pad_in), y + Inches(0.14 + 0.24), w - Inches(pad_in * 2), text,
+        theme=t, font_pt=body_font_pt,
+    )
+    return box_h_in
 
 
 def add_pill_stat(slide, x, y, w, h, text, theme: dict | None = None):
@@ -1030,6 +1092,52 @@ def add_native_doughnut_chart(slide, x, y, cx, cy, categories, values, colors=No
     return gframe
 
 
+_GAUGE_REMAINDER_COLOR = RGBColor(0xEE, 0xEE, 0xEE)
+
+
+def add_native_gauge(slide, x, y, cx, cy, value, max_value=100, label="", color=None, theme: dict | None = None):
+    """Gauge/ring persentase — panel pendukung kecil (dynamic_section/key_findings, lihat
+    _build_dynamic_section_slide/_build_key_findings_slide di bawah). python-pptx TIDAK punya
+    tipe chart gauge native, jadi didekati dgn doughnut 2-slice (terisi sebesar value/max_value
+    + sisa abu-abu) PERSIS pola add_native_doughnut_chart di atas, legend & data label
+    dimatikan (beda dari doughnut biasa yang nyalakan data label per slice — di sini angkanya
+    ditumpuk sbg textbox besar di tengah, doughnut native tidak punya slot teks tengah)."""
+    t = theme or THEME_PALETTES["green"]
+    pct = max(0.0, min(1.0, (value / max_value) if max_value else 0.0))
+    chart_data = CategoryChartData()
+    chart_data.categories = ["Value", "Remainder"]
+    chart_data.add_series("Gauge", (pct * 100, (1 - pct) * 100))
+    gframe = slide.shapes.add_chart(XL_CHART_TYPE.DOUGHNUT, x, y, cx, cy, chart_data)
+    chart = gframe.chart
+    chart.has_legend = False
+    chart.has_title = False
+
+    plot = chart.plots[0]
+    plot.has_data_labels = False
+
+    series = plot.series[0]
+    ring_color = color or t["main"]
+    for pt, fill_color in ((series.points[0], ring_color), (series.points[1], _GAUGE_REMAINDER_COLOR)):
+        pt.format.fill.solid()
+        pt.format.fill.fore_color.rgb = fill_color
+        pt.format.line.color.rgb = WHITE
+        pt.format.line.width = Pt(1)
+
+    value_box = slide.shapes.add_textbox(x, y + Emu(int(cy * 0.36)), cx, Emu(int(cy * 0.3)))
+    vp = value_box.text_frame.paragraphs[0]
+    vp.text = f"{round(value):g}%"
+    vp.alignment = PP_ALIGN.CENTER
+    _set_font(vp, TITLE_FONT, Pt(22), bold=True, color=TEXT_DARK)
+
+    if label:
+        label_box = slide.shapes.add_textbox(x, y + cy + Inches(0.05), cx, Inches(0.3))
+        lp = label_box.text_frame.paragraphs[0]
+        lp.text = label
+        lp.alignment = PP_ALIGN.CENTER
+        _set_font(lp, BODY_FONT, Pt(9), color=GRAY_TEXT)
+    return gframe
+
+
 def add_stacked_proportion_bar(slide, x, y, w, values, colors=None, height=Inches(0.5)):
     """Alternatif visual KETIGA (selain add_native_bar_chart/add_native_doughnut_chart) — satu
     batang penuh dibagi proporsional per kategori (gaya "100% stacked bar") — titik variasi
@@ -1091,6 +1199,201 @@ def add_native_table(slide, x, y, w, h, headers, rows, highlight_indices=None, t
                 color=(RED_CRIT if (is_open and is_status_col) else TEXT_DARK),
             )
     return gframe
+
+
+# ============================================================================
+# 5 chart BARU — mirror svg_bar_line/svg_radar/svg_heatmap_grid/svg_grouped_bar/svg_funnel di
+# export_pdf.py, versi PPTX (python-pptx TIDAK punya tipe chart combo/heatmap/funnel native,
+# jadi digambar tangan pakai shape spt add_stacked_proportion_bar; radar & grouped bar
+# tersedia native lewat XL_CHART_TYPE, dipakai langsung spt add_native_bar_chart).
+# ============================================================================
+def add_native_radar_chart(slide, x, y, cx, cy, axes, values, color=None):
+    """Skor multi-indikator — python-pptx PUNYA tipe chart RADAR native (beda dari gauge yang
+    harus didekati doughnut 2-slice, lihat add_native_gauge), dipakai langsung."""
+    chart_data = CategoryChartData()
+    chart_data.categories = axes
+    chart_data.add_series("Skor", values)
+    gframe = slide.shapes.add_chart(XL_CHART_TYPE.RADAR_MARKERS, x, y, cx, cy, chart_data)
+    chart = gframe.chart
+    chart.has_legend = False
+    chart.has_title = False
+    plot = chart.plots[0]
+    plot.has_data_labels = False
+    series = plot.series[0]
+    line_color = color or GREEN_MAIN
+    series.format.line.color.rgb = line_color
+    series.format.line.width = Pt(2)
+    try:
+        chart.category_axis.tick_labels.font.size = Pt(9)
+        chart.category_axis.tick_labels.font.name = BODY_FONT
+        chart.value_axis.visible = False
+        chart.value_axis.minimum_scale = 0
+        chart.value_axis.maximum_scale = 100
+    except Exception:
+        pass
+    return gframe
+
+
+def add_grouped_bar_chart(slide, x, y, cx, cy, categories, series_a, series_b, label_a="", label_b="", color_a=None, color_b=None):
+    """Perbandingan 2 periode/seri per kategori — python-pptx mendukung multi-series NATIVE
+    lewat CategoryChartData.add_series() dipanggil 2x, dipakai langsung spt add_native_bar_chart
+    (beda dari add_native_bar_chart yang cuma 1 series)."""
+    chart_data = CategoryChartData()
+    chart_data.categories = categories
+    chart_data.add_series(label_a or "A", series_a)
+    chart_data.add_series(label_b or "B", series_b)
+    gframe = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, x, y, cx, cy, chart_data)
+    chart = gframe.chart
+    chart.has_legend = True
+    chart.legend.include_in_layout = False
+    chart.legend.font.size = Pt(9)
+    chart.legend.font.name = BODY_FONT
+    chart.has_title = False
+    plot = chart.plots[0]
+    plot.has_data_labels = False
+    colors = [color_a or GREEN_MAIN, color_b or GOLD_MAIN]
+    for i, series in enumerate(plot.series):
+        series.format.fill.solid()
+        series.format.fill.fore_color.rgb = colors[i % len(colors)]
+    try:
+        chart.category_axis.has_major_gridlines = False
+        chart.value_axis.has_major_gridlines = False
+        chart.category_axis.tick_labels.font.size = Pt(9)
+        chart.category_axis.tick_labels.font.name = BODY_FONT
+        chart.value_axis.visible = False
+    except Exception:
+        pass
+    return gframe
+
+
+def add_bar_line_chart(slide, x, y, cx, cy, categories, values, cumulative=None, color=None):
+    """Deret waktu -> batang (nilai per periode) + garis kumulatif — python-pptx TIDAK punya
+    tipe chart combo (bar+line) native tanpa manipulasi XML manual, jadi batang digambar lewat
+    shape (pola sama dgn add_stacked_proportion_bar) & garis lewat add_connector (segmen garis
+    lurus antar titik berurutan) + titik bulat kecil di tiap simpul."""
+    bar_color = color or GREEN_MAIN
+    line_color = GOLD_MAIN
+    n = len(categories) or 1
+    x_in, y_in, w_in, h_in = Emu(x).inches, Emu(y).inches, Emu(cx).inches, Emu(cy).inches
+    label_h_in = 0.22
+    plot_h_in = h_in - label_h_in
+    col_w_in = w_in / n
+    max_val = max(values) if values and max(values) else 1
+    max_cum = max(cumulative) if cumulative and max(cumulative) else 0
+    points = []
+    for i, val in enumerate(values):
+        bar_h_in = (val / max_val) * (plot_h_in - 0.1) if max_val else 0
+        bx_in = x_in + i * col_w_in + col_w_in * 0.18
+        bw_in = col_w_in * 0.64
+        by_in = y_in + (plot_h_in - bar_h_in)
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(bx_in), Inches(by_in), Inches(max(bw_in, 0.02)), Inches(max(bar_h_in, 0.02)))
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = bar_color
+        bar.line.fill.background()
+        _no_shadow(bar)
+        if max_cum:
+            cy_in = y_in + plot_h_in - ((cumulative[i] / max_cum) * (plot_h_in - 0.05))
+            points.append((x_in + i * col_w_in + col_w_in / 2, cy_in))
+        label_box = slide.shapes.add_textbox(Inches(x_in + i * col_w_in), Inches(y_in + plot_h_in + 0.02), Inches(col_w_in), Inches(label_h_in))
+        lp = label_box.text_frame.paragraphs[0]
+        lp.text = str(categories[i])
+        lp.alignment = PP_ALIGN.CENTER
+        _set_font(lp, BODY_FONT, Pt(7), color=GRAY_TEXT)
+    for i in range(len(points) - 1):
+        (x1, y1), (x2, y2) = points[i], points[i + 1]
+        conn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x1), Inches(y1), Inches(x2), Inches(y2))
+        conn.line.color.rgb = line_color
+        conn.line.width = Pt(2.25)
+    for px, py in points:
+        dot = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(px - 0.045), Inches(py - 0.045), Inches(0.09), Inches(0.09))
+        dot.fill.solid()
+        dot.fill.fore_color.rgb = line_color
+        dot.line.fill.background()
+        _no_shadow(dot)
+
+
+def add_heatmap_grid(slide, x, y, cx, cy, day_labels, hour_labels, grid, color=None):
+    """Pola kejadian per hari/blok jam — grid sel warna (RECTANGLE), warna makin pekat makin
+    sering kejadian di kombinasi itu (blended warna dgn putih, BUKAN opacity shape — properti
+    transparency shape python-pptx tidak selalu didukung utk semua versi PowerPoint)."""
+    base = color or GREEN_MAIN
+    max_val = max((v for row in grid for v in row), default=0) or 1
+    n_rows, n_cols = len(day_labels), len(hour_labels)
+    x_in, y_in, w_in, h_in = Emu(x).inches, Emu(y).inches, Emu(cx).inches, Emu(cy).inches
+    label_w_in = 0.55
+    header_h_in = 0.2
+    cell_w_in = (w_in - label_w_in) / max(n_cols, 1)
+    cell_h_in = (h_in - header_h_in) / max(n_rows, 1)
+    for c, hl in enumerate(hour_labels):
+        hb = slide.shapes.add_textbox(Inches(x_in + label_w_in + c * cell_w_in), Inches(y_in), Inches(cell_w_in), Inches(header_h_in))
+        hp = hb.text_frame.paragraphs[0]
+        hp.text = str(hl)
+        hp.alignment = PP_ALIGN.CENTER
+        _set_font(hp, BODY_FONT, Pt(6.5), color=GRAY_TEXT)
+    for r, day_label in enumerate(day_labels):
+        row_y_in = y_in + header_h_in + r * cell_h_in
+        lb = slide.shapes.add_textbox(Inches(x_in), Inches(row_y_in), Inches(label_w_in - 0.05), Inches(cell_h_in))
+        lbp = lb.text_frame.paragraphs[0]
+        lbp.text = str(day_label)
+        lbp.alignment = PP_ALIGN.RIGHT
+        _set_font(lbp, BODY_FONT, Pt(7), color=TEXT_DARK)
+        for c in range(n_cols):
+            val = grid[r][c]
+            frac = 0.12 + 0.8 * (val / max_val)
+            r0, g0, b0 = base[0], base[1], base[2]
+            blended = RGBColor(
+                round(r0 * frac + 255 * (1 - frac)),
+                round(g0 * frac + 255 * (1 - frac)),
+                round(b0 * frac + 255 * (1 - frac)),
+            )
+            cell_x_in = x_in + label_w_in + c * cell_w_in
+            cell = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(cell_x_in), Inches(row_y_in), Inches(cell_w_in - 0.02), Inches(cell_h_in - 0.02))
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = blended
+            cell.line.fill.background()
+            _no_shadow(cell)
+            _modest_corner(cell)
+            if val:
+                vb = slide.shapes.add_textbox(Inches(cell_x_in), Inches(row_y_in), Inches(cell_w_in - 0.02), Inches(cell_h_in - 0.02))
+                vp = vb.text_frame.paragraphs[0]
+                vp.text = str(val)
+                vp.alignment = PP_ALIGN.CENTER
+                _set_font(vp, BODY_FONT, Pt(7), color=(WHITE if frac > 0.5 else TEXT_DARK))
+
+
+def add_funnel_chart(slide, x, y, cx, cy, categories, values, color=None):
+    """Alur bertingkat (mis. status penanganan Open -> Investigating -> Resolved) — batang
+    melebar/menyempit sesuai proporsi tiap tahap, ditumpuk vertikal dari terbesar ke terkecil
+    (RECTANGLE mengecil lebarnya per baris, pola sama dgn add_stacked_proportion_bar)."""
+    base = color or GREEN_MAIN
+    n = len(categories) or 1
+    x_in, y_in, w_in, h_in = Emu(x).inches, Emu(y).inches, Emu(cx).inches, Emu(cy).inches
+    max_val = max(values) if values else 1
+    row_h_in = h_in / n
+    for i, (cat, val) in enumerate(zip(categories, values)):
+        frac = (val / max_val) if max_val else 0
+        seg_w_in = max(w_in * 0.22, w_in * frac)
+        seg_x_in = x_in + (w_in - seg_w_in) / 2
+        seg_y_in = y_in + i * row_h_in
+        shade = 0.45 + 0.55 * (1 - i / max(n - 1, 1))
+        blended = RGBColor(
+            round(base[0] * shade + 255 * (1 - shade)),
+            round(base[1] * shade + 255 * (1 - shade)),
+            round(base[2] * shade + 255 * (1 - shade)),
+        )
+        seg = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(seg_x_in), Inches(seg_y_in), Inches(seg_w_in), Inches(max(row_h_in - 0.06, 0.1)))
+        seg.fill.solid()
+        seg.fill.fore_color.rgb = blended
+        seg.line.fill.background()
+        _no_shadow(seg)
+        _modest_corner(seg)
+        tb = slide.shapes.add_textbox(Inches(x_in), Inches(seg_y_in), Inches(w_in), Inches(max(row_h_in - 0.06, 0.1)))
+        tf = tb.text_frame
+        tp = tf.paragraphs[0]
+        tp.text = f"{cat} · {val:g}"
+        tp.alignment = PP_ALIGN.CENTER
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        _set_font(tp, BODY_FONT, Pt(10), bold=True, color=WHITE)
 
 
 def add_split_cover_slide(prs, block, flourish_corner, logo_path, theme: dict | None = None):
@@ -1441,123 +1744,212 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     return exec_slide
 
 
-def _build_dynamic_section_slide(block: dict, ctx: _PptBlockContext):
-    dyn_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
-    add_logo(dyn_slide, ctx.logo_path)
-    add_kicker(dyn_slide, block["kicker"], color=ctx.accent_main)
-    title_bottom = add_title(dyn_slide, block["title"])
-    content_top = max(title_bottom + 0.2, 1.6)
+def _add_mini_legend(slide, x, y, w, categories, ramp):
+    """Legend ringkas (kotak warna kecil + nama, tanpa persentase) utk chart "donut"/"stacked"
+    di _add_mini_chart — add_native_doughnut_chart/add_stacked_proportion_bar sendiri TIDAK
+    menyertakan legend (lihat docstring add_stacked_proportion_bar: legend memang tanggung
+    jawab pemanggil), tanpa ini pembaca tidak tahu warna mana mewakili kategori apa di panel
+    kecil ini. Kotak warna pakai add_shape RECTANGLE, pola sama persis dgn segmen
+    add_stacked_proportion_bar di atas (bukan API baru)."""
+    row_h = Inches(0.24)
+    swatch = Inches(0.1)
+    for i, cat in enumerate(categories):
+        row_y = y + row_h * i
+        sq = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, row_y + Inches(0.05), swatch, swatch)
+        sq.fill.solid()
+        sq.fill.fore_color.rgb = ramp[i % len(ramp)]
+        sq.line.color.rgb = WHITE
+        sq.line.width = Pt(0.5)
+        _no_shadow(sq)
+        label_box = slide.shapes.add_textbox(x + swatch + Inches(0.08), row_y, w - swatch - Inches(0.08), row_h)
+        lp = label_box.text_frame.paragraphs[0]
+        lp.text = str(cat)
+        _set_font(lp, BODY_FONT, Pt(9), color=GRAY_TEXT)
 
-    # Panel angka/daftar di samping teks (kalau tersedia) — supaya slide narasi
-    # tidak cuma "judul + 1 paragraf" mubazir ruang kosong (temuan user), dan
-    # berselang-seling 2 pola (angka besar vs daftar ringkas) via layout_variant
-    # yang sudah ditentukan report_render_logic.py.
-    has_aux = bool(block.get("aux_stat") or block.get("aux_list"))
-    text_w = Inches(7.3) if has_aux else CONTENT_W
-    # panel_side menentukan teks di kiri+panel di kanan (default) atau dibalik —
-    # titik variasi tampilan yang sama dipakai halaman lain (lihat komentar atas).
-    if has_aux and ctx.panel_side == "left":
-        panel_w = CONTENT_W - text_w - Inches(0.4)
-        panel_x = MARGIN_X
-        text_x = panel_x + panel_w + Inches(0.4)
+
+def _add_mini_chart(slide, chart: dict, x, y, w, h, ctx: "_PptBlockContext"):
+    """Chart kecil pendukung (block["chart"], lihat _build_dynamic_section_slide/
+    _build_key_findings_slide di bawah) — dipakai BERSAMA keduanya, mirror _mini_chart_html
+    di export_pdf.py. Ukuran SENGAJA lebih kecil dari slide chart full-size (severity/category
+    slide pakai tinggi 4.0-4.6in) — panel pendukung harus terasa sekunder."""
+    colors = [SEVERITY_COLOR[k] for k in chart["severity_keys"]] if chart.get("severity_keys") else None
+    ramp = colors or CATEGORY_COLOR_RAMP
+    if chart["type"] == "gauge":
+        side = min(Emu(w).inches, Emu(h).inches)
+        add_native_gauge(
+            slide, x, y, Inches(side), Inches(side),
+            chart["value"], chart.get("max", 100), chart.get("label", ""),
+            color=(colors[0] if colors else None), theme=ctx.theme,
+        )
+    elif chart["type"] == "donut":
+        # Sisakan ~25% tinggi panel utk legend di bawah ring — add_native_doughnut_chart
+        # sendiri TIDAK menampilkan nama kategori (cuma angka per slice, lihat docstring-nya).
+        side = min(Emu(w).inches, Emu(h).inches * 0.72)
+        add_native_doughnut_chart(slide, x, y, Inches(side), Inches(side), chart["categories"], chart["values"], colors=colors, theme=ctx.theme)
+        _add_mini_legend(slide, x, y + Inches(side) + Inches(0.08), w, chart["categories"], ramp)
+    elif chart["type"] == "stacked":
+        bar_h = Inches(0.4)
+        add_stacked_proportion_bar(slide, x, y, w, chart["values"], colors=colors, height=bar_h)
+        _add_mini_legend(slide, x, y + bar_h + Inches(0.12), w, chart["categories"], ramp)
+    elif chart["type"] == "bar_line":
+        add_bar_line_chart(slide, x, y, w, h, chart["categories"], chart["values"], chart.get("cumulative"), color=ctx.accent_main)
     else:
-        text_x = MARGIN_X
-        panel_x = MARGIN_X + text_w + Inches(0.4)
-        panel_w = SLIDE_W - MARGIN_X - panel_x
-    text_box = dyn_slide.shapes.add_textbox(text_x, Inches(content_top), text_w, Inches(4.9))
-    ttf3 = text_box.text_frame
-    ttf3.word_wrap = True
-    tp4 = ttf3.paragraphs[0]
-    tp4.text = block["text"]
-    _set_font(tp4, BODY_FONT, Pt(13), color=GRAY_TEXT)
-
-    if has_aux:
-        if block.get("aux_stat"):
-            value, label = block["aux_stat"]
-            add_critical_highlight_panel(dyn_slide, panel_x, Inches(content_top), panel_w, Inches(2.6), value, label, theme=ctx.theme)
-        else:
-            rows = [(it["label"], it["value"]) for it in block["aux_list"]]
-            panel_title = "Data Highlight" if is_english(ctx.report) else "Sorotan Data"
-            add_ivory_panel(dyn_slide, panel_x, Inches(content_top), panel_w, Inches(3.4), "i", panel_title, rows, mode="kv", theme=ctx.theme)
-    return dyn_slide
+        add_native_bar_chart(slide, x, y, w, h, chart["categories"], chart["values"], colors=colors or [ctx.accent_main], horizontal=True)
 
 
-def _build_category_distribution_slide(block: dict, ctx: _PptBlockContext):
-    cat_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
-    add_logo(cat_slide, ctx.logo_path)
-    add_kicker(cat_slide, ctx.kicker_analisis, color=ctx.accent_main)
-    title_bottom = add_title(cat_slide, block["title"])
+def _draw_insight_tile(slide, panel: dict, ctx: "_PptBlockContext", x, y, w, h):
+    """Kartu ringkas dipakai BERSAMA oleh panel_kind "insight_tile" (Trend/Severity/Risk
+    bawaan AI) DAN "dynamic_section" (section kustom AI) — keduanya bertema "insight" (lihat
+    report_render_logic.py) & bisa berbagi 1 slide berdampingan sampai 4 kartu. Menggambar
+    LANGSUNG ke `slide` yang SUDAH ADA pada bounding box (x,y,w,h) — BEDA dari builder "slide
+    mandiri" lain di file ini yang membuat slide sendiri, supaya bisa dipanggil N kali di 1
+    slide yang sama oleh _build_page_slide (lihat di bawah)."""
+    card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h)
+    card.fill.solid()
+    card.fill.fore_color.rgb = WHITE
+    card.line.color.rgb = PANEL_BORDER
+    card.line.width = Pt(0.75)
+    _no_shadow(card)
+    _modest_corner(card)
 
-    intro_y = max(title_bottom + 0.15, 1.45)
-    intro_box = cat_slide.shapes.add_textbox(MARGIN_X, Inches(intro_y), CONTENT_W, Inches(0.5))
-    itf2 = intro_box.text_frame
-    itf2.word_wrap = True
-    ip = itf2.paragraphs[0]
-    ip.text = block["intro"]
-    _set_font(ip, BODY_FONT, Pt(12), color=GRAY_TEXT)
+    pad = Inches(0.22)
+    label = panel.get("label") or panel.get("title") or ""
+    label_box = slide.shapes.add_textbox(x + pad, y + Inches(0.16), w - pad * 2, Inches(0.4))
+    lp = label_box.text_frame.paragraphs[0]
+    lp.text = label
+    _set_font(lp, BODY_FONT, Pt(9.5), bold=True, color=ctx.accent_main)
 
-    body_y = intro_y + 0.65
-    cat_has_caption = bool(block.get("ai_caption"))
-    cat_body_h = Inches(4.0) if cat_has_caption else Inches(4.6)
-    # Ramp warna kategori/status DITURUNKAN dari tema (report.theme_color), bukan konstanta
-    # hijau/emas tetap — sama seperti export_pdf.py. GRAY_TEXT tetap warna ke-5 (netral).
+    visual_top_in = Emu(y).inches + 0.65
+    w_in = Emu(w).inches
+    if panel.get("trend_stat"):
+        ts = panel["trend_stat"]
+        direction_color = {"up": GREEN_CHART, "down": RED_CRIT, "flat": GRAY_TEXT}[ts["direction"]]
+        vbox = slide.shapes.add_textbox(x, Inches(visual_top_in + 0.25), w, Inches(0.6))
+        vp = vbox.text_frame.paragraphs[0]
+        vp.text = ts["value"]
+        vp.alignment = PP_ALIGN.CENTER
+        _set_font(vp, TITLE_FONT, Pt(20), bold=True, color=direction_color)
+        sub_box = slide.shapes.add_textbox(x + pad, Inches(visual_top_in + 0.85), w - pad * 2, Inches(0.45))
+        sp = sub_box.text_frame.paragraphs[0]
+        sp.text = ts["label"]
+        sp.alignment = PP_ALIGN.CENTER
+        _set_font(sp, BODY_FONT, Pt(8.5), color=GRAY_TEXT)
+    elif panel.get("chart"):
+        _add_mini_chart(slide, panel["chart"], x + pad, Inches(visual_top_in), w - pad * 2, Inches(2.0), ctx)
+    elif panel.get("aux_stat"):
+        value, aux_label = panel["aux_stat"]
+        vbox = slide.shapes.add_textbox(x, Inches(visual_top_in + 0.25), w, Inches(0.6))
+        vp = vbox.text_frame.paragraphs[0]
+        vp.text = value
+        vp.alignment = PP_ALIGN.CENTER
+        _set_font(vp, TITLE_FONT, Pt(20), bold=True, color=ctx.accent_main)
+        sub_box = slide.shapes.add_textbox(x + pad, Inches(visual_top_in + 0.85), w - pad * 2, Inches(0.45))
+        sp = sub_box.text_frame.paragraphs[0]
+        sp.text = aux_label
+        sp.alignment = PP_ALIGN.CENTER
+        _set_font(sp, BODY_FONT, Pt(8.5), color=GRAY_TEXT)
+    elif panel.get("aux_list"):
+        rows = [(it["label"], it["value"]) for it in panel["aux_list"]]
+        _draw_kv_rows(slide, x + pad, Inches(visual_top_in), w - pad * 2, rows)
+
+    caption_text = panel.get("caption") or panel.get("text") or ""
+    caption_top_in = Emu(y).inches + Emu(h).inches - 1.2
+    add_bullet_lines(slide, x + pad, Inches(max(caption_top_in, visual_top_in + 2.05)), w - pad * 2, caption_text, theme=ctx.theme, font_pt=8.5)
+
+
+def _draw_kv_rows(slide, x, y, w, rows):
+    """Daftar label-nilai ringkas TANPA bingkai (dipakai _draw_insight_tile utk aux_list) —
+    versi sangat ringkas dari add_ivory_panel(mode="kv") tanpa kartu pembungkus, supaya muat
+    di ruang kecil dalam kartu insight."""
+    row_h_in = 0.3
+    for i, (label, value) in enumerate(rows[:4]):
+        row_y = y + Inches(i * row_h_in)
+        lb = slide.shapes.add_textbox(x, row_y, w, Inches(row_h_in))
+        lp = lb.text_frame.paragraphs[0]
+        lp.text = f"{label}: {value}"
+        _set_font(lp, BODY_FONT, Pt(9), color=TEXT_DARK)
+
+
+def _draw_distribution_panel(slide, panel: dict, ctx: "_PptBlockContext", x, y, w, h):
+    """Panel "mandiri" (judul sendiri di dalam kontennya) dipakai oleh SEMUA panel_kind
+    bertema "distribution": category_distribution, status_distribution, kpi_radar,
+    time_heatmap, period_compare — bisa berbagi 1 slide berdampingan sampai 3 kolom, ATAU
+    dipanggil sendirian selebar CONTENT_W kalau kandidat lain di temanya tidak ada. Menggambar
+    LANGSUNG ke `slide` yang sudah ada (lihat catatan sama di _draw_insight_tile)."""
     ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
-    legend_rows = [
-        (ramp[l["color_index"] % len(ramp)], l["name"], f'{l["pct"]}%')
-        for l in block["legend"]
-    ]
-    # Titik variasi tampilan: bar horizontal (warna accent hijau/emas gantian),
-    # donut chart NATIVE PowerPoint, ATAU batang proporsi 100% bersegmen (lihat
-    # category_style/accent_bar_color di atas) — datanya identik, cuma cara
-    # visualnya beda tiap generate.
-    cat_content_bottom_in = body_y + Emu(cat_body_h).inches
-    if ctx.category_style == "stacked":
-        # Ditumpuk VERTIKAL (batang pendek lalu panel legend penuh di bawahnya),
-        # BUKAN dipasangkan sejajar seperti bar/donut — batang cuma ~0.55in, kalau
-        # dipaksa sejajar dgn panel setinggi cat_body_h bakal menyisakan ruang
-        # kosong besar di sampingnya (kelas masalah yang sudah diperbaiki di
-        # tempat lain di file ini). Tinggi panel legend di sini SEKARANG mengikuti
-        # jumlah baris sebenarnya (bukan sisa ruang cat_body_h yang longgar) — panel
-        # add_ivory_panel PPT tidak menyusut sendiri ke kontennya (beda dari versi
-        # PDF), jadi kalau dikasih tinggi generus, hasilnya kartu besar nyaris kosong.
-        bar_h = Inches(0.55)
-        seg_colors = [ramp[l["color_index"] % len(ramp)] for l in block["legend"]]
-        add_stacked_proportion_bar(cat_slide, MARGIN_X, Inches(body_y), CONTENT_W, block["values"], colors=seg_colors, height=bar_h)
-        legend_y_in = body_y + Emu(bar_h).inches + 0.35
-        legend_h_in = 0.85 + 0.4 * len(legend_rows) + (0.35 if block["footnote"] else 0)
-        add_ivory_panel(
-            cat_slide, MARGIN_X, Inches(legend_y_in), CONTENT_W, Inches(legend_h_in),
-            "%", block["legend_panel_title"], legend_rows, mode="legend",
-            footnote=block["footnote"], theme=ctx.theme,
-        )
-        cat_content_bottom_in = legend_y_in + legend_h_in
-    else:
-        chart_w = Inches(7.3) if ctx.panel_side == "right" else Inches(4.9)
-        chart_x = MARGIN_X if ctx.panel_side == "right" else MARGIN_X + Inches(4.9) + Inches(0.4)
-        panel_x2 = MARGIN_X + Inches(7.3) + Inches(0.4) if ctx.panel_side == "right" else MARGIN_X
-        if ctx.category_style == "donut":
-            donut_side = min(Emu(chart_w).inches, Emu(cat_body_h).inches)
-            donut_x = chart_x + Inches((Emu(chart_w).inches - donut_side) / 2)
-            donut_y = Inches(body_y + (Emu(cat_body_h).inches - donut_side) / 2)
-            add_native_doughnut_chart(
-                cat_slide, donut_x, donut_y, Inches(donut_side), Inches(donut_side),
-                block["categories"], block["values"],
-                colors=[ramp[l["color_index"] % len(ramp)] for l in block["legend"]], theme=ctx.theme,
-            )
+    w_in = Emu(w).inches
+    h_in = Emu(h).inches
+    y_in = Emu(y).inches
+
+    title_box = slide.shapes.add_textbox(x, y, w, Inches(0.45))
+    ttf = title_box.text_frame
+    ttf.word_wrap = True
+    tp = ttf.paragraphs[0]
+    tp.text = panel["title"]
+    _set_font(tp, TITLE_FONT, Pt(13), bold=True, color=TEXT_DARK)
+
+    intro_top_in = y_in + 0.5
+    if panel.get("intro"):
+        intro_box = slide.shapes.add_textbox(x, Inches(intro_top_in), w, Inches(0.5))
+        itf = intro_box.text_frame
+        itf.word_wrap = True
+        ip = itf.paragraphs[0]
+        ip.text = panel["intro"]
+        _set_font(ip, BODY_FONT, Pt(9.5), color=GRAY_TEXT)
+    chart_top_in = intro_top_in + (0.55 if panel.get("intro") else 0.1)
+
+    kind = panel["panel_kind"]
+    visual_bottom_in = chart_top_in
+    if kind in ("category_distribution", "status_distribution"):
+        cats = panel["categories"][:4]
+        vals = panel["values"][:4]
+        total = sum(vals) or 1
+        colors = [ramp[j % len(ramp)] for j in range(len(vals))]
+        legend_rows = [(colors[j], name, f"{round(val / total * 100, 1)}%") for j, (name, val) in enumerate(zip(cats, vals))]
+        style = ctx.category_style if kind == "category_distribution" else ctx.status_style
+        if style == "funnel" and kind == "status_distribution":
+            order = sorted(range(len(vals)), key=lambda i: -vals[i])
+            funnel_h_in = min(2.3, h_in - (chart_top_in - y_in) - 0.3)
+            add_funnel_chart(slide, x, Inches(chart_top_in), w, Inches(funnel_h_in), [cats[i] for i in order], [vals[i] for i in order], color=ctx.accent_main)
+            visual_bottom_in = chart_top_in + funnel_h_in
+        elif style == "donut":
+            side = min(w_in, 1.9)
+            side_x = x + Inches((w_in - side) / 2)
+            add_native_doughnut_chart(slide, side_x, Inches(chart_top_in), Inches(side), Inches(side), cats, vals, colors=colors, theme=ctx.theme)
+            visual_bottom_in = chart_top_in + side
+        elif style == "stacked":
+            bar_h_in = 0.4
+            add_stacked_proportion_bar(slide, x, Inches(chart_top_in), w, vals, colors=colors, height=Inches(bar_h_in))
+            visual_bottom_in = chart_top_in + bar_h_in
         else:
-            add_native_bar_chart(
-                cat_slide, chart_x, Inches(body_y), chart_w, cat_body_h,
-                list(reversed(block["categories"])), list(reversed(block["values"])),
-                horizontal=True, colors=[ctx.accent_bar_color],
-            )
-        add_ivory_panel(
-            cat_slide, panel_x2, Inches(body_y), Inches(4.9), cat_body_h,
-            "%", block["legend_panel_title"], legend_rows, mode="legend",
-            footnote=block["footnote"], theme=ctx.theme,
+            chart_h_in = 1.8
+            add_native_bar_chart(slide, x, Inches(chart_top_in), w, Inches(chart_h_in), list(reversed(cats)), list(reversed(vals)), horizontal=True, colors=[ctx.accent_bar_color])
+            visual_bottom_in = chart_top_in + chart_h_in
+        legend_top_in = visual_bottom_in + 0.2
+        legend_h_in = 0.4 + 0.26 * len(legend_rows)
+        legend_title = panel.get("legend_panel_title") or ("Proportion" if is_english(ctx.report) else "Proporsi")
+        add_ivory_panel(slide, x, Inches(legend_top_in), w, Inches(legend_h_in), "%", legend_title, legend_rows, mode="legend", theme=ctx.theme)
+        visual_bottom_in = legend_top_in + legend_h_in
+    elif kind == "kpi_radar":
+        radar_h_in = min(2.6, h_in - (chart_top_in - y_in) - 0.2)
+        add_native_radar_chart(slide, x, Inches(chart_top_in), w, Inches(radar_h_in), panel["axes"], panel["values"], color=ctx.accent_main)
+        visual_bottom_in = chart_top_in + radar_h_in
+    elif kind == "time_heatmap":
+        heat_h_in = min(2.6, h_in - (chart_top_in - y_in) - 0.2)
+        add_heatmap_grid(slide, x, Inches(chart_top_in), w, Inches(heat_h_in), panel["day_labels"], panel["hour_labels"], panel["grid"], color=ctx.accent_main)
+        visual_bottom_in = chart_top_in + heat_h_in
+    elif kind == "period_compare":
+        cmp_h_in = min(2.6, h_in - (chart_top_in - y_in) - 0.2)
+        add_grouped_bar_chart(
+            slide, x, Inches(chart_top_in), w, Inches(cmp_h_in),
+            panel["categories"], panel["series_a"], panel["series_b"],
+            label_a=panel["label_a"], label_b=panel["label_b"],
+            color_a=ctx.accent_main, color_b=ctx.accent_light,
         )
-    if cat_has_caption:
-        add_ai_insight_strip(cat_slide, MARGIN_X, Inches(cat_content_bottom_in + 0.12), CONTENT_W, block["ai_caption"])
-    return cat_slide
+        visual_bottom_in = chart_top_in + cmp_h_in
+
+    if panel.get("ai_caption"):
+        add_note_box(slide, x, Inches(visual_bottom_in + 0.1), w, panel["ai_caption"], theme=ctx.theme)
 
 
 def _build_severity_distribution_slide(block: dict, ctx: _PptBlockContext):
@@ -1591,76 +1983,8 @@ def _build_severity_distribution_slide(block: dict, ctx: _PptBlockContext):
         f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"], theme=ctx.theme,
     )
     if sev_has_caption:
-        add_ai_insight_strip(sev_slide, MARGIN_X, Inches(sev_body_y) + sev_body_h + Inches(0.12), CONTENT_W, block["ai_caption"])
+        add_note_box(sev_slide, MARGIN_X, Inches(sev_body_y) + sev_body_h + Inches(0.12), CONTENT_W, block["ai_caption"], theme=ctx.theme)
     return sev_slide
-
-
-def _build_status_distribution_slide(block: dict, ctx: _PptBlockContext):
-    status_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
-    add_logo(status_slide, ctx.logo_path)
-    add_kicker(status_slide, ctx.kicker_analisis, color=ctx.accent_main)
-    title_bottom = add_title(status_slide, block["title"])
-
-    intro_y = max(title_bottom + 0.15, 1.45)
-    intro_box = status_slide.shapes.add_textbox(MARGIN_X, Inches(intro_y), CONTENT_W, Inches(0.5))
-    itf4 = intro_box.text_frame
-    itf4.word_wrap = True
-    ip4 = itf4.paragraphs[0]
-    ip4.text = block["intro"]
-    _set_font(ip4, BODY_FONT, Pt(12), color=GRAY_TEXT)
-
-    status_body_y = intro_y + 0.65
-    status_has_caption = bool(block.get("ai_caption"))
-    status_body_h = Inches(4.0) if status_has_caption else Inches(4.6)
-    status_content_bottom_in = status_body_y + Emu(status_body_h).inches
-    # Titik variasi tampilan (independen dari category_style — lihat status_style di
-    # atas): donut/stacked butuh panel legend (segmen tidak ber-label nama sendiri,
-    # beda dari bar chart yang sumbu kategorinya otomatis jadi label) — dipola sama
-    # persis seperti category_distribution.
-    ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
-    if ctx.status_style in ("donut", "stacked"):
-        status_total = sum(block["values"]) or 1
-        status_colors = [ramp[i % len(ramp)] for i in range(len(block["values"]))]
-        status_legend_rows = [
-            (status_colors[i], name, f"{round(val / status_total * 100, 1)}%")
-            for i, (name, val) in enumerate(zip(block["categories"], block["values"]))
-        ]
-        status_legend_title = "Status Proportion" if is_english(ctx.report) else "Proporsi Status"
-        if ctx.status_style == "donut":
-            status_chart_w = Inches(7.3) if ctx.panel_side == "right" else Inches(4.9)
-            status_chart_x = MARGIN_X if ctx.panel_side == "right" else MARGIN_X + Inches(4.9) + Inches(0.4)
-            status_panel_x = MARGIN_X + Inches(7.3) + Inches(0.4) if ctx.panel_side == "right" else MARGIN_X
-            donut_side = min(Emu(status_chart_w).inches, Emu(status_body_h).inches)
-            donut_x = status_chart_x + Inches((Emu(status_chart_w).inches - donut_side) / 2)
-            donut_y = Inches(status_body_y + (Emu(status_body_h).inches - donut_side) / 2)
-            add_native_doughnut_chart(
-                status_slide, donut_x, donut_y, Inches(donut_side), Inches(donut_side),
-                block["categories"], block["values"], colors=status_colors, theme=ctx.theme,
-            )
-            add_ivory_panel(
-                status_slide, status_panel_x, Inches(status_body_y), Inches(4.9), status_body_h,
-                "%", status_legend_title, status_legend_rows, mode="legend", theme=ctx.theme,
-            )
-        else:
-            # "stacked" ditumpuk vertikal — lihat catatan sama di category_distribution
-            # soal kenapa tinggi panel mengikuti jumlah baris, bukan sisa ruang.
-            bar_h = Inches(0.55)
-            add_stacked_proportion_bar(status_slide, MARGIN_X, Inches(status_body_y), CONTENT_W, block["values"], colors=status_colors, height=bar_h)
-            legend_y_in = status_body_y + Emu(bar_h).inches + 0.35
-            legend_h_in = 0.85 + 0.4 * len(status_legend_rows)
-            add_ivory_panel(
-                status_slide, MARGIN_X, Inches(legend_y_in), CONTENT_W, Inches(legend_h_in),
-                "%", status_legend_title, status_legend_rows, mode="legend", theme=ctx.theme,
-            )
-            status_content_bottom_in = legend_y_in + legend_h_in
-    else:
-        add_native_bar_chart(
-            status_slide, MARGIN_X, Inches(status_body_y), CONTENT_W, status_body_h,
-            block["categories"], block["values"], colors=[ctx.accent_bar_color],
-        )
-    if status_has_caption:
-        add_ai_insight_strip(status_slide, MARGIN_X, Inches(status_content_bottom_in + 0.12), CONTENT_W, block["ai_caption"])
-    return status_slide
 
 
 def _build_critical_table_slide(block: dict, ctx: _PptBlockContext):
@@ -1734,11 +2058,28 @@ def _build_key_findings_slide(block: dict, ctx: _PptBlockContext):
     def _finding_color(idx, item, _items=block["items"]):
         return RED_CRIT if _items[idx]["is_critical"] else ctx.accent_main
 
+    content_top = max(title_bottom + 0.2, 1.7)
+    has_chart = bool(block.get("chart"))
+    # Panel chart pendukung di samping (kalau ada, lihat build_report_blocks) — sempitkan
+    # lebar daftar temuan, pola panel_x/panel_w sama dgn _build_dynamic_section_slide.
+    findings_w = Inches(7.3) if has_chart else CONTENT_W
+    if has_chart and ctx.panel_side == "left":
+        panel_w = CONTENT_W - findings_w - Inches(0.4)
+        panel_x = MARGIN_X
+        findings_x = panel_x + panel_w + Inches(0.4)
+    else:
+        findings_x = MARGIN_X
+        panel_x = MARGIN_X + findings_w + Inches(0.4)
+        panel_w = SLIDE_W - MARGIN_X - panel_x
+
     # Keluhan nyata dari pengguna: 1 kolom penuh CONTENT_W bikin baris ~11.8in
     # lebar (nyaris selebar slide) sekaligus font kekecilan (9.3pt) kalau itemnya
     # banyak — grid 2 kolom dipakai begitu item > 2 (lihat catatan di add_badge_list).
-    findings_cols = 2 if len(findings_items) > 2 else 1
-    add_badge_list(find_slide, MARGIN_X, Inches(max(title_bottom + 0.2, 1.7)), CONTENT_W, findings_items, badge_color=_finding_color, row_h=Inches(1.0), max_y=SLIDE_H - Inches(0.4), cols=findings_cols)
+    # Dipaksa 1 kolom saat ada chart pendukung (lebar cuma 7.3in, 2 kolom di situ terlalu sempit).
+    findings_cols = 1 if has_chart else (2 if len(findings_items) > 2 else 1)
+    add_badge_list(find_slide, findings_x, Inches(content_top), findings_w, findings_items, badge_color=_finding_color, row_h=Inches(1.0), max_y=SLIDE_H - Inches(0.4), cols=findings_cols)
+    if has_chart:
+        _add_mini_chart(find_slide, block["chart"], panel_x, Inches(content_top), panel_w, Inches(2.8), ctx)
     return find_slide
 
 
@@ -1926,19 +2267,63 @@ def _build_closing_slide(block: dict, ctx: _PptBlockContext):
     return None
 
 
-_PPT_BLOCK_BUILDERS = {
-    "cover": _build_cover_slide,
-    "intro": _build_intro_slide,
+# Panel yang PRAKTIS SELALU sendirian di halamannya (lihat bobot per panel_kind di
+# report_render_logic.py: executive_summary/severity_distribution/critical_table/asset_cards/
+# key_findings/recommendations/conclusion bobotnya sengaja tinggi) — kalau memang muncul
+# sendirian, dipakai LANGSUNG builder "slide mandiri" aslinya (kualitas visual penuh, sama
+# persis sblm refactor ini) alih-alih jalur kolom sempit generik di bawah.
+_PPT_PANEL_STANDALONE_BUILDERS = {
     "executive_summary": _build_executive_summary_slide,
-    "dynamic_section": _build_dynamic_section_slide,
-    "category_distribution": _build_category_distribution_slide,
     "severity_distribution": _build_severity_distribution_slide,
-    "status_distribution": _build_status_distribution_slide,
     "critical_table": _build_critical_table_slide,
     "asset_cards": _build_asset_cards_slide,
     "key_findings": _build_key_findings_slide,
     "recommendations": _build_recommendations_slide,
     "conclusion": _build_conclusion_slide,
+}
+
+_PPT_DISTRIBUTION_KINDS = {"category_distribution", "status_distribution", "kpi_radar", "time_heatmap", "period_compare"}
+_PPT_INSIGHT_KINDS = {"insight_tile", "dynamic_section"}
+
+
+def _build_page_slide(block: dict, ctx: _PptBlockContext):
+    """Composer generik: 1 slide = 1-4 panel (block["panels"], lihat report_render_logic.py
+    tahap 2). 1 panel dari _PPT_PANEL_STANDALONE_BUILDERS -> dipakai LANGSUNG builder aslinya
+    (slide sendiri, kualitas penuh). Selain itu (1 panel ATAU beberapa panel bertema sama,
+    "distribution" atau "insight") -> 1 slide baru dibuat di sini, panel digambar berdampingan
+    N kolom lewat _draw_distribution_panel/_draw_insight_tile (mirror _build_page_block di
+    export_pdf.py, sudah menjamin campur "distribution"+"insight" TIDAK PERNAH terjadi di 1
+    halaman yang sama — lihat _group_candidates_into_pages)."""
+    panels = block["panels"]
+    if len(panels) == 1 and panels[0]["panel_kind"] in _PPT_PANEL_STANDALONE_BUILDERS:
+        return _PPT_PANEL_STANDALONE_BUILDERS[panels[0]["panel_kind"]](panels[0], ctx)
+
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    dark = block["dark"]
+    if dark:
+        add_dark_bg(slide, theme=ctx.theme)
+    add_logo(slide, ctx.logo_path)
+    add_kicker(slide, block.get("kicker") or "", color=(ctx.accent_light if dark else ctx.accent_main))
+    title_bottom = add_title(slide, block.get("title") or "", color=(WHITE if dark else TEXT_DARK))
+    content_top_in = max(title_bottom + 0.25, 1.7)
+    content_h_in = max(2.0, 6.9 - content_top_in)
+
+    n = len(panels)
+    gap = Inches(0.35)
+    col_w = (CONTENT_W - gap * (n - 1)) / n
+    for i, panel in enumerate(panels):
+        col_x = MARGIN_X + i * (col_w + gap)
+        if panel["panel_kind"] in _PPT_INSIGHT_KINDS:
+            _draw_insight_tile(slide, panel, ctx, col_x, Inches(content_top_in), col_w, Inches(content_h_in))
+        elif panel["panel_kind"] in _PPT_DISTRIBUTION_KINDS:
+            _draw_distribution_panel(slide, panel, ctx, col_x, Inches(content_top_in), col_w, Inches(content_h_in))
+    return slide
+
+
+_PPT_BLOCK_BUILDERS = {
+    "cover": _build_cover_slide,
+    "intro": _build_intro_slide,
+    "page": _build_page_slide,
     "closing": _build_closing_slide,
 }
 

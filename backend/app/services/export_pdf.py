@@ -16,6 +16,7 @@ import html
 import io
 import logging
 import math
+import re
 from dataclasses import dataclass
 
 from app.models.report import Report
@@ -34,6 +35,13 @@ try:
     XHTML2PDF_AVAILABLE = True
 except ImportError:
     XHTML2PDF_AVAILABLE = False
+
+# xhtml2pdf (fallback engine kalau WeasyPrint tak tersedia di sistem) tidak bisa merender
+# <svg> inline dgn andal — 5 chart BARU (bar+line, radar, heatmap grid, grouped bar, funnel,
+# lihat svg_radar dkk di bawah) SENGAJA punya jalur non-SVG (tabel/div HTML polos) yang dipakai
+# kalau SVG_SUPPORTED False. Chart LAMA (bar/donut/gauge) TIDAK disentuh/tidak diberi fallback
+# ini — sudah berjalan apa adanya sebelum perubahan ini, di luar cakupan.
+SVG_SUPPORTED = WEASYPRINT_AVAILABLE
 
 # ============================================================================
 # Palet & font — persis sama dgn export_ppt.py
@@ -205,6 +213,39 @@ def _bar_chart_html(categories, values, colors=None) -> str:
     return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
 
 
+def _vertical_bar_chart_html(categories, values, color=None, height_pt=90) -> str:
+    """Kolom vertikal per periode (mis. per bulan/minggu) — BEDA dari _bar_chart_html di atas
+    (baris horizontal, cocok utk ranking kategori) karena data deret waktu lebih wajar dibaca
+    kiri-ke-kanan mengikuti urutan waktu, bukan ditumpuk per baris. Tinggi tiap bar dihitung
+    eksplisit dlm PT (bukan CSS %) — angkanya dihitung di Python lalu ditempel sbg nilai
+    literal, pola yang sama dipakai konsisten di seluruh file ini, supaya tidak butuh flexbox
+    (tidak didukung xhtml2pdf) atau parent dgn height eksplisit yang rumit di table cell."""
+    max_val = max(values) if values else 1
+    bar_color = color or GREEN_MAIN
+    n = len(categories) or 1
+    col_w = round(100 / n, 3)
+    bar_cells = []
+    label_cells = []
+    for cat, val in zip(categories, values):
+        bar_h = round((val / max_val) * (height_pt - 16), 1) if max_val else 0
+        bar_h = max(bar_h, 2) if val else 0
+        bar_cells.append(
+            f'<td style="width:{col_w}%;text-align:center;vertical-align:bottom;height:{height_pt}pt;padding:0 3pt;">'
+            f'<div style="font-size:7.5pt;font-weight:700;color:{TEXT_DARK};margin-bottom:3pt;">{val:g}</div>'
+            f'<div style="background:{bar_color};height:{bar_h}pt;border-radius:3px 3px 0 0;"></div>'
+            f'</td>'
+        )
+        label_cells.append(
+            f'<td style="width:{col_w}%;text-align:center;font-size:7pt;color:{GRAY_TEXT};padding-top:4pt;">{_esc(cat)}</td>'
+        )
+    return (
+        f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">'
+        f'<tr>{"".join(bar_cells)}</tr>'
+        f'<tr>{"".join(label_cells)}</tr>'
+        f'</table>'
+    )
+
+
 def _stacked_proportion_bar_html(values, colors=None, height_px=46) -> str:
     """Alternatif visual KETIGA (selain _bar_chart_html/_donut_chart_svg) — satu batang
     penuh dibagi proporsional per kategori (gaya "100% stacked bar"), dipasangkan dengan
@@ -266,6 +307,271 @@ def _donut_chart_svg(values, colors=None, size=210, stroke_w=36) -> str:
         f'xmlns="http://www.w3.org/2000/svg">{"".join(segments)}{labels}</svg>'
     )
     return f'<div style="text-align:center;padding:14pt 0;">{svg}</div>'
+
+
+def _gauge_chart_svg(value, max_value=100, label="", color=None, size=150, stroke_w=22) -> str:
+    """Gauge/ring persentase — panel pendukung kecil (dynamic_section/key_findings, lihat
+    _build_dynamic_section_block/_build_key_findings_block di bawah), TEKNIK SAMA PERSIS dgn
+    _donut_chart_svg di atas (SVG circle + stroke-dasharray), cuma 2 segmen TETAP (terisi
+    sebesar value/max_value + sisa abu-abu), bukan N kategori, dan label tengahnya angka
+    persen besar (bukan total)."""
+    pct = max(0.0, min(1.0, (value / max_value) if max_value else 0.0))
+    r = (size - stroke_w) / 2
+    cx = cy = size / 2
+    circumference = 2 * math.pi * r
+    dash = pct * circumference
+    ring_color = color or GREEN_MAIN
+    segments = (
+        f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="#EEEEEE" stroke-width="{stroke_w}" />'
+        f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="{ring_color}" stroke-width="{stroke_w}" '
+        f'stroke-linecap="round" stroke-dasharray="{dash:.2f} {circumference - dash:.2f}" '
+        f'transform="rotate(-90 {cx} {cy})" />'
+    )
+    value_text = (
+        f'<text x="{cx}" y="{cy + 8}" text-anchor="middle" font-size="26" font-weight="700" '
+        f'fill="{TEXT_DARK}" font-family="{BODY_FONT}">{round(value):g}%</text>'
+    )
+    svg = (
+        f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" '
+        f'xmlns="http://www.w3.org/2000/svg">{segments}{value_text}</svg>'
+    )
+    label_html = (
+        f'<div style="font-size:9pt;color:{GRAY_TEXT};margin-top:4pt;">{_esc(label)}</div>' if label else ""
+    )
+    return f'<div style="text-align:center;padding:10pt 0;">{svg}{label_html}</div>'
+
+
+# ============================================================================
+# 5 chart BARU — bentuk visual dipilih sesuai KARAKTER data (bukan default bar/donut utk
+# semua, lihat report_render_logic.py): deret waktu -> bar+line kumulatif, skor multi-domain
+# -> radar, pola per hari/jam -> heatmap grid, perbandingan 2 periode -> grouped bar, alur
+# bertingkat -> funnel. Tiap fungsi punya jalur non-SVG (SVG_SUPPORTED=False, lihat definisi
+# di atas) utk xhtml2pdf yang tidak bisa merender <svg> inline dgn andal.
+# ============================================================================
+def _blend_with_white(hex_color: str, frac: float) -> str:
+    """Campur `hex_color` dgn putih sebesar (1-frac) jadi warna solid baru — dipakai fallback
+    heatmap non-SVG (warna blended SUNGGUHAN, bukan CSS `opacity` yang tidak selalu didukung
+    xhtml2pdf)."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    frac = max(0.0, min(1.0, frac))
+    r = round(r * frac + 255 * (1 - frac))
+    g = round(g * frac + 255 * (1 - frac))
+    b = round(b * frac + 255 * (1 - frac))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _bar_line_chart_html_fallback(categories, values, cumulative, color) -> str:
+    return _vertical_bar_chart_html(categories, values, color=color or GREEN_MAIN, height_pt=90)
+
+
+def _bar_line_chart_svg(categories, values, cumulative=None, color=None, size_w=480, size_h=180) -> str:
+    """Deret waktu -> batang (nilai per periode) + garis kumulatif. Kedua seri dinormalisasi
+    ke tinggi chart yang SAMA scr independen (bukan 2 sumbu numerik sungguhan) — cukup utk
+    menunjukkan bentuk tren & akumulasi bersamaan tanpa kerumitan sumbu ganda."""
+    if not SVG_SUPPORTED:
+        return _bar_line_chart_html_fallback(categories, values, cumulative, color)
+    bar_color = color or GREEN_MAIN
+    line_color = GOLD_MAIN
+    n = len(categories) or 1
+    pad_l, pad_r, pad_t, pad_b = 8, 8, 12, 22
+    plot_w, plot_h = size_w - pad_l - pad_r, size_h - pad_t - pad_b
+    col_w = plot_w / n
+    max_val = max(values) if values and max(values) else 1
+    max_cum = max(cumulative) if cumulative and max(cumulative) else 0
+    bars, points, labels = [], [], []
+    for i, (cat, val) in enumerate(zip(categories, values)):
+        bar_h = (val / max_val) * (plot_h - 8) if max_val else 0
+        x = pad_l + i * col_w
+        y = pad_t + (plot_h - bar_h)
+        bars.append(f'<rect x="{x + col_w*0.18:.1f}" y="{y:.1f}" width="{col_w*0.64:.1f}" height="{bar_h:.1f}" fill="{bar_color}" rx="2" />')
+        if max_cum:
+            cy = pad_t + plot_h - ((cumulative[i] / max_cum) * (plot_h - 4))
+            points.append((x + col_w / 2, cy))
+        labels.append(f'<text x="{x + col_w/2:.1f}" y="{size_h - 6}" text-anchor="middle" font-size="7.5" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(cat)}</text>')
+    line_html = dots = ""
+    if points:
+        poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+        line_html = f'<polyline points="{poly}" fill="none" stroke="{line_color}" stroke-width="2.5" />'
+        dots = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.6" fill="{line_color}" />' for x, y in points)
+    svg = (
+        f'<svg width="{size_w}" height="{size_h}" viewBox="0 0 {size_w} {size_h}" xmlns="http://www.w3.org/2000/svg">'
+        f'{"".join(bars)}{line_html}{dots}{"".join(labels)}</svg>'
+    )
+    return f'<div style="text-align:center;">{svg}</div>'
+
+
+def _radar_chart_html_fallback(axes, values, color=None) -> str:
+    return _bar_chart_html(axes, values, colors=[color or GREEN_MAIN] * len(values))
+
+
+def _radar_chart_svg(axes, values, color=None, size=360) -> str:
+    """Skor multi-indikator (nilai 0-100, sudah dinormalisasi di report_render_logic.py) —
+    tiap sumbu ditarik dari pusat, poligon menghubungkan titik nilai tiap sumbu. Margin label
+    (size/2 - r_max) SENGAJA lapang (100px) — label sumbu (mis. "Skor Ketepatan Waktu") bisa
+    cukup panjang & SVG tidak membungkus teks otomatis, kalau margin terlalu sempit teks
+    kepotong di tepi viewBox (bug nyata yang pernah terjadi sebelum nilai ini diperbesar)."""
+    if not SVG_SUPPORTED:
+        return _radar_chart_html_fallback(axes, values, color)
+    n = len(axes)
+    if n < 3:
+        return ""
+    ring_color = color or GREEN_MAIN
+    cx = cy = size / 2
+    r_max = size / 2 - 100
+
+    def _angle(i):
+        return (-90 + i * 360 / n) * math.pi / 180
+
+    rings = "".join(
+        f'<polygon points="{" ".join(f"{cx + r_max*frac*math.cos(_angle(i)):.1f},{cy + r_max*frac*math.sin(_angle(i)):.1f}" for i in range(n))}" '
+        f'fill="none" stroke="{PANEL_BORDER}" stroke-width="1" />'
+        for frac in (0.25, 0.5, 0.75, 1.0)
+    )
+    spokes = "".join(
+        f'<line x1="{cx:.1f}" y1="{cy:.1f}" x2="{cx + r_max*math.cos(_angle(i)):.1f}" y2="{cy + r_max*math.sin(_angle(i)):.1f}" '
+        f'stroke="{PANEL_BORDER}" stroke-width="1" />'
+        for i in range(n)
+    )
+    pts = [(cx + r_max * (max(0.0, min(100.0, v)) / 100) * math.cos(_angle(i)), cy + r_max * (max(0.0, min(100.0, v)) / 100) * math.sin(_angle(i))) for i, v in enumerate(values)]
+    poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    shape = f'<polygon points="{poly}" fill="{ring_color}" fill-opacity="0.25" stroke="{ring_color}" stroke-width="2" />'
+    dots = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{ring_color}" />' for x, y in pts)
+    labels = []
+    for i, ax in enumerate(axes):
+        lx, ly = cx + (r_max + 20) * math.cos(_angle(i)), cy + (r_max + 20) * math.sin(_angle(i))
+        anchor = "start" if math.cos(_angle(i)) > 0.3 else ("end" if math.cos(_angle(i)) < -0.3 else "middle")
+        labels.append(f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anchor}" font-size="8.5" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(ax)}</text>')
+    svg = (
+        f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">'
+        f'{rings}{spokes}{shape}{dots}{"".join(labels)}</svg>'
+    )
+    return f'<div style="text-align:center;padding:6pt 0;">{svg}</div>'
+
+
+def _heatmap_grid_html_fallback(day_labels, hour_labels, grid, color=None) -> str:
+    base = color or GREEN_MAIN
+    max_val = max((v for row in grid for v in row), default=0) or 1
+    header = "".join(f'<th style="font-size:7pt;color:{GRAY_TEXT};padding:2pt;font-weight:400;">{_esc(hl)}</th>' for hl in hour_labels)
+    rows = []
+    for day_label, row_vals in zip(day_labels, grid):
+        cells = []
+        for val in row_vals:
+            blended = _blend_with_white(base, 0.15 + 0.85 * (val / max_val))
+            text_color = "#fff" if (val / max_val) > 0.45 else TEXT_DARK
+            cells.append(f'<td style="background:{blended};text-align:center;font-size:7pt;color:{text_color};padding:6pt 2pt;border-radius:3px;">{val or ""}</td>')
+        rows.append(f'<tr><td style="font-size:7.5pt;color:{TEXT_DARK};padding:2pt 6pt 2pt 0;text-align:right;white-space:nowrap;">{_esc(day_label)}</td>{"".join(cells)}</tr>')
+    return f'<table style="border-collapse:separate;border-spacing:2px;margin:0 auto;"><tr><td></td>{header}</tr>{"".join(rows)}</table>'
+
+
+def _heatmap_grid_svg(day_labels, hour_labels, grid, color=None, cell=32) -> str:
+    """Grid hari x blok jam — warna sel makin pekat makin sering kejadian di kombinasi
+    hari/jam itu (skala linear thd nilai maksimum grid), dipakai utk pola per hari/jam."""
+    if not SVG_SUPPORTED:
+        return _heatmap_grid_html_fallback(day_labels, hour_labels, grid, color)
+    base = color or GREEN_MAIN
+    max_val = max((v for row in grid for v in row), default=0) or 1
+    label_w, n_cols, n_rows = 46, len(hour_labels), len(day_labels)
+    w, h = label_w + n_cols * cell, 16 + n_rows * cell
+    parts = [f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg">']
+    for c, hl in enumerate(hour_labels):
+        x = label_w + c * cell + cell / 2
+        parts.append(f'<text x="{x:.1f}" y="10" text-anchor="middle" font-size="7" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(hl)}</text>')
+    for r, day_label in enumerate(day_labels):
+        y = 16 + r * cell
+        parts.append(f'<text x="{label_w - 6}" y="{y + cell/2 + 3:.1f}" text-anchor="end" font-size="7.5" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(day_label)}</text>')
+        for c in range(n_cols):
+            val = grid[r][c]
+            opacity = 0.1 + 0.8 * (val / max_val)
+            x = label_w + c * cell
+            parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cell-2}" height="{cell-2}" rx="3" fill="{base}" fill-opacity="{opacity:.2f}" />')
+            if val:
+                tc = "#fff" if opacity > 0.5 else TEXT_DARK
+                parts.append(f'<text x="{x+cell/2-1:.1f}" y="{y+cell/2+2:.1f}" text-anchor="middle" font-size="7.5" fill="{tc}" font-family="{BODY_FONT}">{val}</text>')
+    parts.append("</svg>")
+    return f'<div style="text-align:center;">{"".join(parts)}</div>'
+
+
+def _grouped_bar_chart_html_fallback(categories, series_a, series_b, label_a, label_b, color_a, color_b) -> str:
+    ca, cb = color_a or GREEN_MAIN, color_b or GOLD_MAIN
+    max_val = max([*series_a, *series_b], default=0) or 1
+    rows = []
+    for cat, a, b in zip(categories, series_a, series_b):
+        pa = max(round(a / max_val * 100, 1), 2) if a else 0
+        pb = max(round(b / max_val * 100, 1), 2) if b else 0
+        rows.append(
+            f'<tr><td style="font-size:8pt;color:{TEXT_DARK};padding:8pt 8pt 0 0;">{_esc(cat)}</td></tr>'
+            f'<tr><td style="padding:0 0 6pt 0;">'
+            f'<div style="background:{ca};height:10px;width:{pa}%;border-radius:3px;margin-bottom:2px;"></div>'
+            f'<div style="background:{cb};height:10px;width:{pb}%;border-radius:3px;"></div>'
+            f'</td></tr>'
+        )
+    legend = (
+        f'<div style="font-size:8pt;color:{GRAY_TEXT};margin-top:4pt;">'
+        f'<span style="display:inline-block;width:8px;height:8px;background:{ca};margin-right:4px;"></span>{_esc(label_a)}'
+        f'<span style="display:inline-block;width:8px;height:8px;background:{cb};margin:0 4px 0 14px;"></span>{_esc(label_b)}</div>'
+    )
+    return f'<table style="width:100%;border-collapse:collapse;">{"".join(rows)}</table>{legend}'
+
+
+def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="", color_a=None, color_b=None, size_w=480, size_h=190) -> str:
+    """Perbandingan 2 periode/seri per kategori (mis. paruh awal vs paruh akhir) — 2 batang
+    berdampingan per kategori, BUKAN ditumpuk (stacked), supaya perbandingan besarannya
+    langsung terlihat sejajar."""
+    if not SVG_SUPPORTED:
+        return _grouped_bar_chart_html_fallback(categories, series_a, series_b, label_a, label_b, color_a, color_b)
+    ca, cb = color_a or GREEN_MAIN, color_b or GOLD_MAIN
+    n = len(categories) or 1
+    pad_l, pad_r, pad_t, pad_b = 8, 8, 10, 22
+    plot_w, plot_h = size_w - pad_l - pad_r, size_h - pad_t - pad_b
+    group_w = plot_w / n
+    bar_w = group_w * 0.32
+    max_val = max([*series_a, *series_b], default=0) or 1
+    parts = [f'<svg width="{size_w}" height="{size_h}" viewBox="0 0 {size_w} {size_h}" xmlns="http://www.w3.org/2000/svg">']
+    for i, cat in enumerate(categories):
+        gx = pad_l + i * group_w
+        ha = (series_a[i] / max_val) * (plot_h - 6) if max_val else 0
+        hb = (series_b[i] / max_val) * (plot_h - 6) if max_val else 0
+        xa = gx + group_w * 0.14
+        xb = xa + bar_w + 4
+        parts.append(f'<rect x="{xa:.1f}" y="{pad_t + plot_h - ha:.1f}" width="{bar_w:.1f}" height="{ha:.1f}" fill="{ca}" rx="2" />')
+        parts.append(f'<rect x="{xb:.1f}" y="{pad_t + plot_h - hb:.1f}" width="{bar_w:.1f}" height="{hb:.1f}" fill="{cb}" rx="2" />')
+        parts.append(f'<text x="{gx + group_w/2:.1f}" y="{size_h - 6}" text-anchor="middle" font-size="7.5" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(cat)}</text>')
+    parts.append("</svg>")
+    legend = (
+        f'<div style="font-size:8pt;color:{GRAY_TEXT};margin-top:4pt;">'
+        f'<span style="display:inline-block;width:8px;height:8px;background:{ca};margin-right:4px;"></span>{_esc(label_a)}'
+        f'<span style="display:inline-block;width:8px;height:8px;background:{cb};margin:0 4px 0 14px;"></span>{_esc(label_b)}</div>'
+    )
+    return f'<div style="text-align:center;">{"".join(parts)}{legend}</div>'
+
+
+def _funnel_chart_html_fallback(categories, values, color=None) -> str:
+    return _bar_chart_html(categories, values, colors=[color or GREEN_MAIN] * len(values))
+
+
+def _funnel_chart_svg(categories, values, color=None, size_w=320, size_h=200) -> str:
+    """Alur bertingkat (mis. status penanganan Open -> Investigating -> Resolved) — batang
+    melebar/menyempit sesuai proporsi tiap tahap, ditumpuk vertikal dari terbesar ke terkecil."""
+    if not SVG_SUPPORTED:
+        return _funnel_chart_html_fallback(categories, values, color)
+    base = color or GREEN_MAIN
+    n = len(categories) or 1
+    max_val = max(values) if values else 1
+    row_h = (size_h - 10) / n
+    parts = [f'<svg width="{size_w}" height="{size_h}" viewBox="0 0 {size_w} {size_h}" xmlns="http://www.w3.org/2000/svg">']
+    for i, (cat, val) in enumerate(zip(categories, values)):
+        frac = (val / max_val) if max_val else 0
+        w = max(size_w * 0.22, size_w * frac)
+        x, y = (size_w - w) / 2, i * row_h
+        opacity = 0.45 + 0.55 * (1 - i / max(n - 1, 1))
+        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{row_h - 6:.1f}" fill="{base}" fill-opacity="{opacity:.2f}" rx="4" />')
+        parts.append(
+            f'<text x="{size_w/2:.1f}" y="{y + row_h/2 - 1:.1f}" text-anchor="middle" font-size="9" font-weight="700" '
+            f'fill="#fff" font-family="{BODY_FONT}">{_esc(cat)} &#183; {val:g}</text>'
+        )
+    parts.append("</svg>")
+    return f'<div style="text-align:center;">{"".join(parts)}</div>'
 
 
 def _ivory_panel(icon_text, title_text, rows_html, footnote=None, theme: dict | None = None) -> str:
@@ -347,21 +653,57 @@ def _dark_panel(inner_html, w="100%", theme: dict | None = None) -> str:
     )
 
 
-def _critical_highlight_panel(pct_text, sub_text, detail_text=None, theme: dict | None = None) -> str:
+def _critical_highlight_panel(pct_text, sub_text, detail_text=None, theme: dict | None = None, value_color=None) -> str:
+    """`value_color` opsional (default None = t["light"] spt semula) — dipakai kartu tren
+    berarah panah (dynamic_section "Trend Analysis", lihat _build_dynamic_section_block) utk
+    mewarnai angka besar sesuai arah naik/turun/datar, TANPA mengubah tampilan pemanggil lain
+    (severity_distribution, aux_stat biasa) yang tetap pakai t["light"] default."""
     t = theme or THEME_PALETTES["green"]
+    value_color = value_color or t["light"]
     detail_html = f'<div style="font-size:9.5pt;color:{t["soft"]};margin-top:14px;">{_esc(detail_text)}</div>' if detail_text else ""
     inner = (
-        f'<div style="text-align:center;font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:{t["light"]};">{_esc(pct_text)}</div>'
+        f'<div style="text-align:center;font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:{value_color};">{_esc(pct_text)}</div>'
         f'<div style="text-align:center;font-size:10.5pt;color:#fff;margin-top:6px;">{_esc(sub_text)}</div>'
         f'{detail_html}'
     )
     return _dark_panel(inner, theme=theme)
 
 
-def _ai_insight_strip(text) -> str:
+def _bullet_lines_html(text, theme: dict | None = None, font_pt=9) -> str:
+    """Baris bullet polos (titik warna aksen + teks), TANPA bungkus kotak/judul — dipakai
+    _note_box_html di bawah (mode penuh) DAN tile insight_dashboard (mode ringkas, sudah
+    dibungkus kartu bordered sendiri, kotak-dalam-kotak kalau dipakaikan _note_box_html utuh
+    lagi di situ)."""
+    t = theme or THEME_PALETTES["green"]
+    lines = [l for l in re.split(r"(?<=[.!?])\s+", (text or "").strip()) if l]
+    if not lines:
+        return ""
+    rows = "".join(
+        f'<tr>'
+        f'<td style="width:11pt;vertical-align:top;padding:2pt 4pt 2pt 0;color:{t["main"]};font-weight:700;font-size:{font_pt}pt;">&#8226;</td>'
+        f'<td style="vertical-align:top;padding:2pt 0;font-size:{font_pt}pt;color:{GRAY_TEXT};">{_esc(line)}</td>'
+        f'</tr>'
+        for line in lines
+    )
+    return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{rows}</table>'
+
+
+def _note_box_html(text, theme: dict | None = None, title: str | None = None) -> str:
+    """Kotak "Catatan:" (border kiri warna aksen + bullet per kalimat) — GANTI dari
+    _ai_insight_strip lama (1 baris italic polos) supaya caption AI terasa seperti kotak
+    catatan di laporan referensi, BUKAN paragraf mengalir biasa (temuan user: laporan masih
+    terasa "berat kata-kata" meski chart-nya sudah ada). Dipakai di SEMUA titik caption chart
+    (kategori/severity/status) & dynamic_section."""
+    t = theme or THEME_PALETTES["green"]
+    rows_html = _bullet_lines_html(text, theme=t)
+    if not rows_html:
+        return ""
+    label = title or "Catatan"
     return (
-        f'<div style="font-size:9.5pt;font-style:italic;color:{GRAY_TEXT};margin-top:10px;">'
-        f'\U0001F4A1 {_esc(text)}</div>'
+        f'<div style="background:{IVORY};border-left:3px solid {t["main"]};border-radius:6px;padding:9pt 12pt;margin-top:10pt;">'
+        f'<div style="font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:{t["main"]};margin-bottom:4pt;">{_esc(label)}:</div>'
+        f'{rows_html}'
+        f'</div>'
     )
 
 
@@ -748,7 +1090,7 @@ def _split_closing_td(block, flourish_corner="bottom_right", theme: dict | None 
     return left_td + right_td
 
 
-def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None, logo_b64=None, last=False, raw=False, theme: dict | None = None) -> str:
+def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None, logo_b64=None, last=False, raw=False, theme: dict | None = None, center=False) -> str:
     t = theme or THEME_PALETTES["green"]
     break_style = "" if last else "page-break-after:always;"
     if raw:
@@ -786,9 +1128,16 @@ def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None
     # kena bug penggandaan di atas. Elemen dekoratif (flourish sudut, logo, nomor halaman)
     # sengaja DILUAR div inset ini, tetap dekat tepi fisik kertas asli (mis. logo pojok,
     # bukan mundur dua kali dari marginnya sendiri).
+    # `center=True` (dipakai halaman "page"/"intro", lihat generate_pdf_report) — konten
+    # ditengahkan VERTIKAL di dalam <td> (bukan nempel atas) supaya halaman yang kontennya
+    # secara wajar tidak sampai memenuhi tinggi 6.5in (mis. cuma 1-2 panel ringkas) tidak
+    # menyisakan area kosong raksasa di bawah, tanpa perlu memaksa halaman lain digabung lagi
+    # cuma demi mengisi ruang. Cover/Penutup TIDAK dipengaruhi (selalu `center=False`, lihat
+    # docstring atas) — layout keduanya sudah bespoke posisi absolut dari tepi atas/bawah.
+    valign = "middle" if center else "top"
     return (
         f'<table style="width:13.333in;{break_style}" cellpadding="0" cellspacing="0">'
-        f'<tr><td style="position:relative;background:{bg};color:{color};height:7.5in;vertical-align:top;'
+        f'<tr><td style="position:relative;background:{bg};color:{color};height:7.5in;vertical-align:{valign};'
         f'font-family:{BODY_FONT};">'
         f'{flourish_html}{logo_html}'
         f'<div style="margin:0.5in;">{inner_html}</div>'
@@ -904,20 +1253,126 @@ def _build_executive_summary_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     return (inner, True, None, False)
 
 
-def _build_dynamic_section_block(block: dict, ctx: _PdfBlockContext) -> tuple:
-    text_html = f'<div style="font-size:11.5pt;color:{GRAY_TEXT};max-width:9.5in;">{_esc(block["text"])}</div>'
-    if block.get("aux_stat"):
-        value, label = block["aux_stat"]
-        panel_html = _critical_highlight_panel(value, label, theme=ctx.theme)
-        body = _main_panel_pair(text_html, panel_html, 62, ctx.panel_side)
-    elif block.get("aux_list"):
-        rows_html = _ivory_kv_rows([(it["label"], it["value"]) for it in block["aux_list"]], theme=ctx.theme)
-        panel_title = "Data Highlight" if is_english(ctx.report) else "Sorotan Data"
-        panel_html = _ivory_panel("i", panel_title, rows_html, theme=ctx.theme)
-        body = _main_panel_pair(text_html, panel_html, 62, ctx.panel_side)
+def _mini_legend_html(categories, ramp) -> str:
+    """Legend ringkas (titik warna + nama, tanpa persentase) utk chart "donut"/"stacked" di
+    _mini_chart_html — _donut_chart_svg/_stacked_proportion_bar_html sendiri MURNI grafik
+    (beda dari React DonutChart/StackedBar yang legend-nya sudah menyatu di komponennya),
+    tanpa ini pembaca tidak tahu warna mana mewakili kategori apa di panel kecil ini."""
+    dots = "".join(
+        f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{ramp[i % len(ramp)]};margin-right:4px;"></span>'
+        f'<span style="font-size:8pt;color:{GRAY_TEXT};margin-right:10px;">{_esc(cat)}</span>'
+        for i, cat in enumerate(categories)
+    )
+    return f'<div style="margin-top:8pt;line-height:2;">{dots}</div>'
+
+
+def _mini_chart_html(chart: dict, ctx: "_PdfBlockContext") -> str:
+    """Chart kecil pendukung (block["chart"], lihat _build_dynamic_section_block/
+    _build_key_findings_block di bawah) — dipakai BERSAMA keduanya supaya dispatch
+    bar/donut/stacked/gauge tidak diduplikasi 2x. Ukuran SENGAJA lebih kecil dari chart
+    full-size (_build_category_distribution_block dkk pakai size=210) — panel pendukung
+    harus terasa sekunder, bukan bersaing dgn chart analisis utama di halaman lain."""
+    colors = [SEVERITY_COLOR[k] for k in chart["severity_keys"]] if chart.get("severity_keys") else None
+    if chart["type"] == "gauge":
+        gauge_color = colors[0] if colors else None
+        return _gauge_chart_svg(chart["value"], chart.get("max", 100), chart.get("label", ""), color=gauge_color, size=150, stroke_w=22)
+    ramp = colors or CATEGORY_COLOR_RAMP
+    if chart["type"] == "donut":
+        return _donut_chart_svg(chart["values"], colors=colors, size=140, stroke_w=24) + _mini_legend_html(chart["categories"], ramp)
+    if chart["type"] == "stacked":
+        return _stacked_proportion_bar_html(chart["values"], colors=colors, height_px=28) + _mini_legend_html(chart["categories"], ramp)
+    if chart["type"] == "bar_line":
+        return _bar_line_chart_svg(chart["categories"], chart["values"], chart.get("cumulative"), color=ctx.accent_main, size_w=300, size_h=130)
+    return _bar_chart_html(chart["categories"], chart["values"], colors=colors or [ctx.accent_main] * len(chart["values"]))
+
+
+_DIRECTION_COLOR = {"up": GREEN_CHART, "down": RED_CRIT, "flat": GRAY_TEXT}
+
+
+def _panel_insight_card(panel: dict, ctx: _PdfBlockContext) -> tuple:
+    """Kartu ringkas dipakai BERSAMA oleh 2 panel_kind ("insight_tile" — Trend/Severity/Risk
+    bawaan AI, DAN "dynamic_section" — section kustom AI): keduanya bertema "insight" (lihat
+    report_render_logic.py) & bisa berbagi 1 halaman berdampingan sampai 3 kartu, jadi
+    kontennya SENGAJA kompak (label kecil + chart/kartu-panah/angka + catatan pendek) alih-alih
+    asumsi lebar 1 halaman penuh — supaya tetap aman & terbaca di lebar kolom sempit."""
+    label = panel.get("label") or panel.get("title") or ""
+    if panel.get("trend_stat"):
+        ts = panel["trend_stat"]
+        visual_html = (
+            f'<div style="text-align:center;">'
+            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:22pt;color:{_DIRECTION_COLOR[ts["direction"]]};">{_esc(ts["value"])}</div>'
+            f'<div style="font-size:8.5pt;color:{GRAY_TEXT};margin-top:4pt;">{_esc(ts["label"])}</div>'
+            f'</div>'
+        )
+    elif panel.get("chart"):
+        visual_html = _mini_chart_html(panel["chart"], ctx)
+    elif panel.get("aux_stat"):
+        value, aux_label = panel["aux_stat"]
+        visual_html = (
+            f'<div style="text-align:center;">'
+            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:22pt;color:{ctx.accent_main};">{_esc(value)}</div>'
+            f'<div style="font-size:8.5pt;color:{GRAY_TEXT};margin-top:4pt;">{_esc(aux_label)}</div>'
+            f'</div>'
+        )
+    elif panel.get("aux_list"):
+        visual_html = _ivory_kv_rows([(it["label"], it["value"]) for it in panel["aux_list"]], theme=ctx.theme)
     else:
-        body = text_html
-    inner = _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) + body
+        visual_html = ""
+    # Tengah horizontal+vertikal via <table><td valign=middle> (BUKAN flexbox — tidak didukung
+    # xhtml2pdf, konvensi yang sama dipakai di seluruh file ini).
+    visual_wrap = (
+        f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">'
+        f'<tr><td style="height:1.4in;text-align:center;vertical-align:middle;">{visual_html}</td></tr></table>'
+        if visual_html else ""
+    )
+    caption_text = panel.get("caption") or panel.get("text") or ""
+    inner = (
+        f'<div style="border:1px solid {PANEL_BORDER};border-radius:12px;padding:14pt;height:100%;">'
+        f'<div style="font-size:8pt;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:{ctx.accent_main};margin-bottom:10pt;">{_esc(label)}</div>'
+        f'{visual_wrap}'
+        f'<div style="margin-top:10pt;">{_bullet_lines_html(caption_text, theme=ctx.theme, font_pt=8.5)}</div>'
+        f'</div>'
+    )
+    return (inner, False, None, False)
+
+
+def _build_kpi_radar_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    """Skor multi-indikator (radar) — panel MANDIRI (judul sendiri di dalam kontennya, lihat
+    catatan di _build_page_block), sama pola dgn category_distribution dkk."""
+    chart_html = _radar_chart_svg(block["axes"], block["values"], color=ctx.accent_main)
+    caption_html = _note_box_html(block.get("ai_caption") or block.get("intro"), theme=ctx.theme) if (block.get("ai_caption") or block.get("intro")) else ""
+    inner = (
+        _kicker(ctx.kicker_analisis, ctx.accent_main) + _title(block["title"]) +
+        f'<div style="text-align:center;">{chart_html}</div>' + caption_html
+    )
+    return (inner, False, None, False)
+
+
+def _build_time_heatmap_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    """Pola kejadian per hari/jam (heatmap grid) — panel MANDIRI, sama pola dgn
+    category_distribution dkk."""
+    chart_html = _heatmap_grid_svg(block["day_labels"], block["hour_labels"], block["grid"], color=ctx.accent_main)
+    caption_html = _note_box_html(block.get("intro"), theme=ctx.theme) if block.get("intro") else ""
+    inner = (
+        _kicker(ctx.kicker_analisis, ctx.accent_main) + _title(block["title"]) +
+        f'<div style="text-align:center;">{chart_html}</div>' + caption_html
+    )
+    return (inner, False, None, False)
+
+
+def _build_period_compare_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    """Perbandingan antar paruh periode (grouped bar) — panel MANDIRI, sama pola dgn
+    category_distribution dkk."""
+    chart_html = _grouped_bar_chart_svg(
+        block["categories"], block["series_a"], block["series_b"],
+        label_a=block["label_a"], label_b=block["label_b"],
+        color_a=ctx.accent_main, color_b=ctx.accent_light,
+    )
+    caption_html = _note_box_html(block.get("intro"), theme=ctx.theme) if block.get("intro") else ""
+    inner = (
+        _kicker(ctx.kicker_analisis, ctx.accent_main) + _title(block["title"]) +
+        f'<div style="text-align:center;">{chart_html}</div>' + caption_html
+    )
     return (inner, False, None, False)
 
 
@@ -941,7 +1396,7 @@ def _build_category_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
         chart_html = _stacked_proportion_bar_html(block["values"], colors=seg_colors)
     else:
         chart_html = _bar_chart_html(block["categories"], block["values"], colors=[ctx.accent_bar_color] * len(block["values"]))
-    caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
+    caption_html = _note_box_html(block["ai_caption"], theme=ctx.theme) if block.get("ai_caption") else ""
     # "stacked" DITUMPUK VERTIKAL (batang lebar penuh, lalu panel legend penuh di
     # bawahnya) — BUKAN dipasangkan 2-kolom seperti bar/donut. Batang proporsi cuma
     # setinggi ~46px, kalau dipaksa sejajar dgn panel legend yang jauh lebih tinggi
@@ -965,7 +1420,7 @@ def _build_severity_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
     sev_colors = [SEVERITY_COLOR[k] for k in block["severity_keys"]]
     chart_html = _bar_chart_html(block["categories"], block["values"], colors=sev_colors)
     panel = _critical_highlight_panel(f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"], theme=ctx.theme)
-    caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
+    caption_html = _note_box_html(block["ai_caption"], theme=ctx.theme) if block.get("ai_caption") else ""
     inner = (
         _kicker(ctx.kicker_analisis, ctx.accent_main) + _title(block["title"]) +
         f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;max-width:9.5in;">{_esc(block["intro"])}</div>' +
@@ -975,14 +1430,22 @@ def _build_severity_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
 
 
 def _build_status_distribution_block(block: dict, ctx: _PdfBlockContext) -> tuple:
-    caption_html = _ai_insight_strip(block["ai_caption"]) if block.get("ai_caption") else ""
+    caption_html = _note_box_html(block["ai_caption"], theme=ctx.theme) if block.get("ai_caption") else ""
     intro_html = f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;max-width:9.5in;">{_esc(block["intro"])}</div>'
     ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
     # Titik variasi tampilan (independen dari category_style — lihat status_style di
     # generate_pdf_report): donut butuh panel legend berdampingan (warna donut tidak
     # ber-label sendiri, beda dari bar chart yang sumbu kategorinya sudah jadi label),
     # jadi strukturnya digeser ke pola _main_panel_pair yang sama dgn category_distribution.
-    if ctx.status_style in ("donut", "stacked"):
+    if ctx.status_style == "funnel":
+        # Status penanganan = alur bertingkat (Open -> Investigating -> Resolved, dst) —
+        # funnel cocok scr karakter data (bukan cuma proporsi kategori lepas), diurutkan dari
+        # jumlah terbesar ke terkecil supaya bentuk funnel-nya wajar (mengecil ke bawah).
+        order = sorted(range(len(block["values"])), key=lambda i: -block["values"][i])
+        cats_sorted = [block["categories"][i] for i in order]
+        vals_sorted = [block["values"][i] for i in order]
+        body = _funnel_chart_svg(cats_sorted, vals_sorted, color=ctx.accent_main)
+    elif ctx.status_style in ("donut", "stacked"):
         status_total = sum(block["values"]) or 1
         status_colors = [ramp[i % len(ramp)] for i in range(len(block["values"]))]
         legend_rows_html = _legend_rows([
@@ -1065,7 +1528,13 @@ def _build_key_findings_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         _badge_row(it["num"], it["title"], it["detail"], RED_CRIT if it["is_critical"] else ctx.accent_main)
         for it in block["items"]
     ]
-    inner = _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) + "".join(findings_html_parts)
+    findings_html = "".join(findings_html_parts)
+    if block.get("chart"):
+        chart_html = _mini_chart_html(block["chart"], ctx)
+        body = _main_panel_pair(findings_html, chart_html, 62, ctx.panel_side)
+    else:
+        body = findings_html
+    inner = _kicker(block["kicker"], ctx.accent_main) + _title(block["title"]) + body
     return (inner, False, None, False)
 
 
@@ -1133,19 +1602,82 @@ def _build_closing_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         return (inner, True, ctx.flourish_corner, True)
 
 
-_PDF_BLOCK_BUILDERS = {
-    "cover": _build_cover_block,
-    "intro": _build_intro_block,
+# Panel-builder registry (dikunci per "panel_kind", BUKAN per "kind" halaman) — 1 halaman
+# (kind="page", lihat build_report_blocks tahap 2 di report_render_logic.py) bisa berisi 1-3
+# panel yang dirender lewat registry ini, disusun otomatis oleh _build_page_block di bawah.
+# Semua fungsi di sini "mandiri" (judul kicker+title sendiri di dalam kontennya) KECUALI
+# _panel_insight_card (dipakai insight_tile & dynamic_section, TIDAK punya judul sendiri —
+# judulnya dari halaman, lihat _group_candidates_into_pages/_page_from_panels yg menjaga
+# panel bertema "insight" tidak pernah tercampur dgn panel mandiri di 1 halaman yang sama).
+_PDF_PANEL_BUILDERS = {
     "executive_summary": _build_executive_summary_block,
-    "dynamic_section": _build_dynamic_section_block,
+    "insight_tile": _panel_insight_card,
+    "dynamic_section": _panel_insight_card,
     "category_distribution": _build_category_distribution_block,
-    "severity_distribution": _build_severity_distribution_block,
     "status_distribution": _build_status_distribution_block,
+    "severity_distribution": _build_severity_distribution_block,
+    "kpi_radar": _build_kpi_radar_block,
+    "time_heatmap": _build_time_heatmap_block,
+    "period_compare": _build_period_compare_block,
     "critical_table": _build_critical_table_block,
     "asset_cards": _build_asset_cards_block,
     "key_findings": _build_key_findings_block,
     "recommendations": _build_recommendations_block,
     "conclusion": _build_conclusion_block,
+}
+
+_PANEL_NEEDS_PAGE_HEADER = {"insight_tile", "dynamic_section"}
+
+
+def _build_page_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    """Composer generik: 1 halaman = 1-3 panel (block["panels"], lihat report_render_logic.py
+    tahap 2). Panel "mandiri" (category_distribution dkk) sudah bawa kicker+title sendiri di
+    kontennya — dipakai APA ADANYA. Panel "insight_tile"/"dynamic_section" TIDAK bawa judul
+    sendiri (kartu ringkas, lihat _panel_insight_card) — kalau salah satu panel di halaman ini
+    jenis itu, judul halaman (block["kicker"]/["title"], hasil _page_from_panels) ditambahkan
+    SEKALI di atas grid panel. 1 panel -> lebar penuh (sama seperti sebelum refactor ini,
+    dark diambil dari HASIL RENDER panel itu sendiri, bukan cuma block["dark"] — beberapa
+    panel mis. asset_cards bisa override dark tergantung gaya kartu yang kepilih, lihat
+    _build_asset_cards_block). >1 panel -> disusun berdampingan N kolom (pola yang sama
+    dgn distribution_dashboard/insight_dashboard versi lama, cuma digeneralisasi)."""
+    panels = block["panels"]
+    htmls, dark = [], block["dark"]
+    needs_header = any(p["panel_kind"] in _PANEL_NEEDS_PAGE_HEADER for p in panels)
+    for p in panels:
+        builder = _PDF_PANEL_BUILDERS.get(p["panel_kind"])
+        if not builder:
+            continue
+        html, panel_dark, _flourish, _last = builder(p, ctx)
+        htmls.append(html)
+        if len(panels) == 1:
+            dark = panel_dark
+    if not htmls:
+        return ("", dark, None, False)
+    header = ""
+    if needs_header and block.get("title"):
+        if dark:
+            header = (
+                _kicker(block.get("kicker"), ctx.accent_light) +
+                f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:16px;">{_esc(block["title"])}</div>'
+            )
+        else:
+            header = _kicker(block.get("kicker"), ctx.accent_main) + _title(block["title"])
+    if len(htmls) == 1:
+        body = htmls[0]
+    else:
+        col_w = round(100 / len(htmls), 3)
+        cells = "".join(
+            f'<td style="width:{col_w}%;vertical-align:top;{"padding-right:20pt;" if i < len(htmls) - 1 else ""}">{h}</td>'
+            for i, h in enumerate(htmls)
+        )
+        body = f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0"><tr>{cells}</tr></table>'
+    return (header + body, dark, None, False)
+
+
+_PDF_BLOCK_BUILDERS = {
+    "cover": _build_cover_block,
+    "intro": _build_intro_block,
+    "page": _build_page_block,
     "closing": _build_closing_block,
 }
 
@@ -1214,10 +1746,12 @@ class PDFExporter:
             kicker_analisis=kicker_analisis,
         )
 
+        page_kinds = []
         for block in blocks:
             builder = _PDF_BLOCK_BUILDERS.get(block["kind"])
             if builder:
                 pages.append(builder(block, ctx))
+                page_kinds.append(block["kind"])
 
         # ---------------- Rakit halaman jadi 1 dokumen HTML ----------------
         total_pages = len(pages) - 2  # tidak termasuk cover & penutup di penomoran
@@ -1237,11 +1771,14 @@ class PDFExporter:
             if not is_cover_or_closing:
                 content_idx += 1
                 page_num = content_idx
+            # Ditengahkan vertikal HANYA halaman "intro"/"page" (lihat catatan panjang di
+            # _page()) — cover/penutup (raw ATAU tidak) tetap posisi absolut aslinya dari atas.
+            center = (not raw) and page_kinds[i] in ("intro", "page")
             page_html_parts.append(_page(
                 inner, dark=dark, flourish=flourish,
                 page_num=page_num, total_pages=total_pages,
                 logo_b64=(logo_b64 if not is_cover_or_closing else None),
-                last=is_last, raw=raw, theme=ctx.theme,
+                last=is_last, raw=raw, theme=ctx.theme, center=center,
             ))
 
         html_content = f"""

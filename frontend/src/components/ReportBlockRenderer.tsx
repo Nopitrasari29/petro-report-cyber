@@ -1,3 +1,4 @@
+import React, { Fragment } from "react";
 import {
   REPORT_COLORS,
   CATEGORY_COLOR_RAMP,
@@ -13,6 +14,14 @@ import {
 } from "@/utils/reportTheme";
 
 const C = REPORT_COLORS;
+
+// Warna kartu tren berarah panah (dynamic_section "Trend Analysis", lihat block.trend_stat) —
+// netral (cuma menunjukkan arah naik/turun/datar, TIDAK menilai baik/buruk secara otomatis).
+const DIRECTION_COLOR: Record<string, string> = {
+  up: REPORT_COLORS.greenChart,
+  down: REPORT_COLORS.redCrit,
+  flat: REPORT_COLORS.grayText,
+};
 
 function Kicker({ text, color }: { text: string; color: string }) {
   return (
@@ -98,6 +107,211 @@ function BarChart({
   );
 }
 
+
+// Deret waktu -> batang (nilai per periode) + garis kumulatif (SVG polyline di atas batang) —
+// mirror _bar_line_chart_svg/add_bar_line_chart di backend. Dipakai KHUSUS chart.type
+// "bar_line" (Analisis Tren dgn data deret waktu asli).
+function BarLineChart({
+  categories,
+  values,
+  cumulative,
+  theme = THEME_PALETTES.green,
+}: {
+  categories: string[];
+  values: number[];
+  cumulative?: number[];
+  theme?: ThemeColors;
+}) {
+  const max = Math.max(...values, 1);
+  const maxCum = cumulative && cumulative.length ? Math.max(...cumulative, 1) : 0;
+  const n = categories.length || 1;
+  return (
+    <div className="relative" style={{ height: 110 }}>
+      <div className="absolute inset-0 flex items-end gap-1.5">
+        {categories.map((cat, i) => (
+          <div key={cat} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
+            <div
+              className="w-full rounded-t"
+              style={{ height: `${Math.max((values[i] / max) * 78, 3)}%`, background: theme.main }}
+            />
+            <span className="text-[8px] mt-1 truncate w-full text-center" style={{ color: C.grayText }}>
+              {cat}
+            </span>
+          </div>
+        ))}
+      </div>
+      {maxCum > 0 && (
+        <svg className="absolute inset-0 pointer-events-none" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <polyline
+            fill="none"
+            stroke={theme.light}
+            strokeWidth={1.6}
+            vectorEffect="non-scaling-stroke"
+            points={cumulative!.map((v, i) => `${((i + 0.5) / n) * 100},${100 - (v / maxCum) * 84}`).join(" ")}
+          />
+        </svg>
+      )}
+    </div>
+  );
+}
+
+// Skor multi-indikator (radar) — mirror _radar_chart_svg/add_native_radar_chart. Nilai (0-100)
+// sudah dinormalisasi di report_render_logic.py, jadi di sini tinggal digambar.
+function RadarChart({ axes, values, theme = THEME_PALETTES.green }: { axes: string[]; values: number[]; theme?: ThemeColors }) {
+  const n = axes.length;
+  if (n < 3) return null;
+  const size = 220;
+  const cx = size / 2;
+  const cy = size / 2;
+  const rMax = size / 2 - 46;
+  const angle = (i: number) => (-90 + (i * 360) / n) * (Math.PI / 180);
+  const point = (i: number, frac: number): [number, number] => [cx + rMax * frac * Math.cos(angle(i)), cy + rMax * frac * Math.sin(angle(i))];
+  const ringPts = (frac: number) => axes.map((_a, i) => point(i, frac).join(",")).join(" ");
+  const shapePts = values.map((v, i) => point(i, Math.max(0, Math.min(100, v)) / 100).join(",")).join(" ");
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="mx-auto block">
+      {[0.25, 0.5, 0.75, 1].map((f) => (
+        <polygon key={f} points={ringPts(f)} fill="none" stroke={C.panelBorder} strokeWidth={1} />
+      ))}
+      {axes.map((_a, i) => {
+        const [x, y] = point(i, 1);
+        return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke={C.panelBorder} strokeWidth={1} />;
+      })}
+      <polygon points={shapePts} fill={theme.main} fillOpacity={0.25} stroke={theme.main} strokeWidth={2} />
+      {values.map((v, i) => {
+        const [x, y] = point(i, Math.max(0, Math.min(100, v)) / 100);
+        return <circle key={i} cx={x} cy={y} r={3} fill={theme.main} />;
+      })}
+      {axes.map((ax, i) => {
+        const [x, y] = point(i, 1.22);
+        const cos = Math.cos(angle(i));
+        const anchor = cos > 0.3 ? "start" : cos < -0.3 ? "end" : "middle";
+        return (
+          <text key={i} x={x} y={y} textAnchor={anchor} fontSize={8.5} fill={C.textDark} style={{ fontFamily: BODY_FONT }}>
+            {ax}
+          </text>
+        );
+      })}
+    </svg>
+  );
+}
+
+// Pola per hari/jam (heatmap grid) — mirror _heatmap_grid_svg/add_heatmap_grid, warna sel
+// makin pekat makin sering kejadian di kombinasi hari/jam itu.
+function HeatmapGrid({
+  dayLabels,
+  hourLabels,
+  grid,
+  theme = THEME_PALETTES.green,
+}: {
+  dayLabels: string[];
+  hourLabels: string[];
+  grid: number[][];
+  theme?: ThemeColors;
+}) {
+  const maxVal = Math.max(...grid.flat(), 1);
+  return (
+    <div className="inline-grid gap-[3px]" style={{ gridTemplateColumns: `40px repeat(${hourLabels.length}, 1fr)` }}>
+      <div />
+      {hourLabels.map((hl) => (
+        <div key={hl} className="text-[7px] text-center" style={{ color: C.grayText }}>
+          {hl}
+        </div>
+      ))}
+      {dayLabels.map((day, r) => (
+        <React.Fragment key={day}>
+          <div className="text-[8px] text-right pr-1 flex items-center justify-end" style={{ color: C.textDark }}>
+            {day}
+          </div>
+          {grid[r].map((val, c) => {
+            const frac = 0.12 + 0.8 * (val / maxVal);
+            return (
+              <div
+                key={`${day}-${c}`}
+                className="rounded flex items-center justify-center text-[7px] font-bold"
+                style={{ background: theme.main, opacity: val ? frac : 0.08, color: frac > 0.5 ? "#fff" : C.textDark, height: 24 }}
+              >
+                {val || ""}
+              </div>
+            );
+          })}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+// Perbandingan 2 periode/seri per kategori (grouped bar) — mirror _grouped_bar_chart_svg/
+// add_grouped_bar_chart, 2 batang berdampingan per kategori (bukan ditumpuk).
+function GroupedBarChart({
+  categories,
+  seriesA,
+  seriesB,
+  labelA,
+  labelB,
+  theme = THEME_PALETTES.green,
+}: {
+  categories: string[];
+  seriesA: number[];
+  seriesB: number[];
+  labelA?: string;
+  labelB?: string;
+  theme?: ThemeColors;
+}) {
+  const max = Math.max(...seriesA, ...seriesB, 1);
+  return (
+    <div>
+      <div className="flex items-end gap-3" style={{ height: 110 }}>
+        {categories.map((cat, i) => (
+          <div key={cat} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
+            <div className="flex items-end gap-1 w-full justify-center h-full">
+              <div className="rounded-t" style={{ width: "40%", height: `${Math.max((seriesA[i] / max) * 90, 3)}%`, background: theme.main }} />
+              <div className="rounded-t" style={{ width: "40%", height: `${Math.max((seriesB[i] / max) * 90, 3)}%`, background: theme.light }} />
+            </div>
+            <span className="text-[8px] mt-1 truncate w-full text-center" style={{ color: C.grayText }}>
+              {cat}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-4 mt-2 text-[10px]" style={{ color: C.grayText }}>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full" style={{ background: theme.main }} />
+          {labelA}
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full" style={{ background: theme.light }} />
+          {labelB}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Alur bertingkat (mis. status Open -> Investigating -> Resolved) — mirror _funnel_chart_svg/
+// add_funnel_chart, batang melebar/menyempit sesuai proporsi, ditumpuk dari terbesar ke terkecil.
+function FunnelChart({ categories, values, color }: { categories: string[]; values: number[]; color: string }) {
+  const max = Math.max(...values, 1);
+  const n = categories.length || 1;
+  return (
+    <div className="space-y-1.5">
+      {categories.map((cat, i) => {
+        const pct = Math.max(22, (values[i] / max) * 100);
+        const shade = 0.45 + 0.55 * (1 - i / Math.max(n - 1, 1));
+        return (
+          <div
+            key={cat}
+            className="mx-auto rounded-lg flex items-center justify-center text-white text-xs font-bold py-2.5"
+            style={{ width: `${pct}%`, background: color, opacity: shade }}
+          >
+            {cat} · {values[i]}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Varian donut — dibangun murni CSS conic-gradient (bukan library chart), lingkaran dalam
 // solid putih di atasnya menciptakan "lubang" donut. Warna per-kategori pakai CATEGORY_COLOR_RAMP
 // (ramp yang sama dipakai legend IvoryPanel) supaya tiap potongan tetap bisa dibedakan.
@@ -133,6 +347,51 @@ function DonutChart({ categories, values, colors }: { categories: string[]; valu
   );
 }
 
+// Gauge/ring persentase — dipakai panel pendukung kecil (dynamic_section/key_findings, lihat
+// ReportBlockRenderer di bawah), BUKAN dispatcher `Chart` (yang baca visual_style — bentuk gauge
+// sengaja tetap per section, bukan ikut gaya acak laporan). Teknik sama persis dgn DonutChart di
+// atas (conic-gradient + lubang putih di tengah), cuma 1 segmen terisi sebesar `value/max`
+// (bukan N kategori) + angka besar di tengah, bukan legend di samping.
+function GaugeRing({
+  value,
+  max = 100,
+  label,
+  color,
+  theme = THEME_PALETTES.green,
+}: {
+  value: number;
+  max?: number;
+  label?: string;
+  color?: string;
+  theme?: ThemeColors;
+}) {
+  const pct = Math.max(0, Math.min(1, max ? value / max : 0));
+  const ringColor = color || theme.main;
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className="relative w-24 h-24 sm:w-28 sm:h-28 shrink-0">
+        <div
+          className="absolute inset-0 rounded-full"
+          style={{ background: `conic-gradient(${ringColor} ${pct * 360}deg, #EEEEEE 0deg)` }}
+        />
+        <div
+          className="absolute rounded-full flex items-center justify-center"
+          style={{ inset: "16%", background: C.white }}
+        >
+          <span className="text-lg font-black" style={{ color: C.textDark }}>
+            {Math.round(value)}%
+          </span>
+        </div>
+      </div>
+      {label && (
+        <div className="text-xs text-center font-semibold" style={{ color: C.grayText }}>
+          {label}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Varian stacked — satu bar horizontal terbagi proporsional per kategori + legend di bawahnya.
 function StackedBar({ categories, values, colors }: { categories: string[]; values: number[]; colors?: string[] }) {
   const total = values.reduce((a, b) => a + b, 0) || 1;
@@ -162,6 +421,43 @@ function StackedBar({ categories, values, colors }: { categories: string[]; valu
   );
 }
 
+// Dispatch bar/donut/stacked/gauge TANPA bungkus kotak — dipakai langsung oleh MiniChartPanel
+// (kotak ivory sendirian) DAN InsightDashboard (kartu tile-nya sendiri sudah jadi bungkusnya,
+// lihat case "insight_dashboard" di bawah) supaya dispatch-nya tidak diduplikasi 2x. SENGAJA
+// panggil BarChart/DonutChart/StackedBar/GaugeRing langsung (bukan dispatcher `Chart` di bawah,
+// yang baca visual_style) — bentuk visual di sini tetap per section, lihat report_render_logic.py
+// utk alasannya.
+function MiniChartContent({ chart, theme = THEME_PALETTES.green }: { chart: any; theme?: ThemeColors }) {
+  if (chart.type === "gauge") {
+    return (
+      <GaugeRing
+        value={chart.value}
+        max={chart.max}
+        label={chart.label}
+        color={chart.severity_keys?.[0] ? SEVERITY_COLOR[chart.severity_keys[0]] : undefined}
+        theme={theme}
+      />
+    );
+  }
+  if (chart.type === "donut") return <DonutChart categories={chart.categories} values={chart.values} />;
+  if (chart.type === "stacked") return <StackedBar categories={chart.categories} values={chart.values} />;
+  if (chart.type === "bar_line") return <BarLineChart categories={chart.categories} values={chart.values} cumulative={chart.cumulative} theme={theme} />;
+  return <BarChart categories={chart.categories} values={chart.values} theme={theme} />;
+}
+
+// Panel chart kecil pendukung (block.chart, lihat dynamic_section/key_findings di bawah) —
+// dipakai BERSAMA oleh keduanya supaya dispatch bar/donut/stacked/gauge tidak diduplikasi 2x.
+function MiniChartPanel({ chart, theme = THEME_PALETTES.green }: { chart: any; theme?: ThemeColors }) {
+  return (
+    <div
+      className="rounded-xl p-3 h-full flex items-center justify-center"
+      style={{ background: C.ivory, border: `1px solid ${C.panelBorder}` }}
+    >
+      <MiniChartContent chart={chart} theme={theme} />
+    </div>
+  );
+}
+
 // Dispatcher gaya chart kategori/status — "bar"/"donut"/"stacked" sesuai visual_style laporan
 // (lihat category_style/status_style). Severity TIDAK lewat sini (severity tidak punya
 // dimensi gaya di backend — selalu bar dgn warna semantik SEVERITY_COLOR yang tetap).
@@ -170,14 +466,20 @@ function Chart({
   categories,
   values,
   colors,
+  color,
 }: {
-  style: VisualStyle["category_style"];
+  style: VisualStyle["category_style"] | VisualStyle["status_style"];
   categories: string[];
   values: number[];
   colors?: string[];
+  color?: string;
 }) {
   if (style === "donut") return <DonutChart categories={categories} values={values} colors={colors} />;
   if (style === "stacked") return <StackedBar categories={categories} values={values} colors={colors} />;
+  // "funnel" cuma pernah dikirim sbg vs.status_style (alur bertingkat status penanganan) —
+  // status_distribution TIDAK PERNAH pakai ramp per-kategori spt donut/stacked, cuma 1 warna
+  // aksen ditingkatkan/direndahkan opacity-nya per baris (lihat FunnelChart).
+  if (style === "funnel") return <FunnelChart categories={categories} values={values} color={color || CATEGORY_COLOR_RAMP[0]} />;
   return <BarChart categories={categories} values={values} colors={colors} />;
 }
 
@@ -243,11 +545,46 @@ function BadgeRow({ num, title, detail, color }: { num: string; title: string; d
   );
 }
 
-function AiCaption({ text }: { text?: string }) {
-  if (!text) return null;
+// Pecah teks jadi baris per kalimat — dipakai BulletLines/NoteBox di bawah, regex batas
+// kalimat yang sama dgn _shorten_to_caption/_note_box_html backend (bukan .split(". ") polos,
+// supaya kalimat yang diakhiri "!"/"?" tetap terpecah benar).
+function splitToLines(text?: string): string[] {
+  if (!text) return [];
+  return text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+}
+
+// Baris bullet polos (titik warna aksen + teks), TANPA bungkus kotak/judul — dipakai NoteBox
+// di bawah (mode penuh) DAN tile insight_dashboard (mode ringkas, sudah dibungkus kartu
+// bordered sendiri, kotak-dalam-kotak kalau dipakaikan NoteBox utuh lagi di situ).
+function BulletLines({ text, theme = THEME_PALETTES.green, sizeClass = "text-[11px]" }: { text?: string; theme?: ThemeColors; sizeClass?: string }) {
+  const lines = splitToLines(text);
+  if (!lines.length) return null;
   return (
-    <div className="text-xs italic mt-4" style={{ color: C.grayText }}>
-      💡 {text}
+    <ul className="space-y-1">
+      {lines.map((line, i) => (
+        <li key={i} className={`${sizeClass} leading-snug flex gap-1.5`} style={{ color: C.grayText }}>
+          <span className="shrink-0 font-bold" style={{ color: theme.main }}>•</span>
+          <span>{line}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Kotak "Catatan:" (border kiri warna aksen + bullet per kalimat) — GANTI dari AiCaption lama
+// (1 baris italic polos) supaya caption AI terasa seperti kotak catatan di laporan referensi,
+// BUKAN paragraf mengalir biasa (temuan user: laporan masih terasa "berat kata-kata" meski
+// chart-nya sudah ada). Dipakai di semua caption chart (kategori/severity/status) &
+// dynamic_section.
+function NoteBox({ text, theme = THEME_PALETTES.green, title = "Catatan" }: { text?: string; theme?: ThemeColors; title?: string }) {
+  const lines = splitToLines(text);
+  if (!lines.length) return null;
+  return (
+    <div className="rounded-lg p-3 mt-3" style={{ background: C.ivory, borderLeft: `3px solid ${theme.main}` }}>
+      <div className="text-[10px] font-black uppercase tracking-wide mb-1.5" style={{ color: theme.main }}>
+        {title}:
+      </div>
+      <BulletLines text={text} theme={theme} />
     </div>
   );
 }
@@ -617,6 +954,52 @@ export default function ReportBlockRenderer({
   );
 }
 
+// Kartu ringkas dipakai BERSAMA oleh panel_kind "insight_tile" (Trend/Severity/Risk bawaan AI)
+// DAN "dynamic_section" (section kustom AI) — keduanya bertema "insight" (lihat
+// report_render_logic.py) & bisa berbagi 1 halaman berdampingan sampai 4 kartu. TIDAK punya
+// kicker/judul sendiri (label kecil di dalam kartu cukup) — judul halaman ditambahkan SEKALI
+// di case "page" kalau salah satu panelnya jenis ini.
+function InsightTile({ panel, theme = THEME_PALETTES.green }: { panel: any; theme?: ThemeColors }) {
+  const label = panel.label || panel.title || "";
+  const caption = panel.caption ?? panel.text;
+  return (
+    <div className="rounded-2xl p-4 flex flex-col" style={{ border: `1px solid ${C.panelBorder}`, background: C.white }}>
+      <div className="text-[10px] font-black uppercase tracking-wide mb-3" style={{ color: theme.main }}>
+        {label}
+      </div>
+      <div className="flex-1 flex items-center justify-center py-2">
+        {panel.trend_stat ? (
+          <div className="text-center">
+            <div className="text-2xl font-black" style={{ color: DIRECTION_COLOR[panel.trend_stat.direction] }}>
+              {panel.trend_stat.value}
+            </div>
+            <div className="text-[10px] mt-1" style={{ color: C.grayText }}>{panel.trend_stat.label}</div>
+          </div>
+        ) : panel.chart ? (
+          <MiniChartContent chart={panel.chart} theme={theme} />
+        ) : panel.aux_stat ? (
+          <div className="text-center">
+            <div className="text-2xl font-black" style={{ color: theme.main }}>{panel.aux_stat[0]}</div>
+            <div className="text-[10px] mt-1" style={{ color: C.grayText }}>{panel.aux_stat[1]}</div>
+          </div>
+        ) : panel.aux_list ? (
+          <div className="w-full space-y-1">
+            {panel.aux_list.map((it: any, i: number) => (
+              <div key={i} className="flex items-center justify-between text-[11px]">
+                <span className="truncate" style={{ color: C.textDark }}>{it.label}</span>
+                <span className="font-bold" style={{ color: theme.main }}>{it.value}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <div className="mt-2">
+        <BulletLines text={caption} theme={theme} sizeClass="text-[10.5px]" />
+      </div>
+    </div>
+  );
+}
+
 function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): React.ReactNode {
   const accentColor = theme.main;
   // Ramp warna kategori/status DITURUNKAN dari tema — sama seperti export_pdf.py/export_ppt.py.
@@ -696,46 +1079,40 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
         </>
       );
 
-    case "dynamic_section": {
-      const hasAux = !!(block.aux_stat || block.aux_list);
-      const textCol = (
-        <p className="text-sm" style={{ color: C.grayText }}>
-          {block.text}
-        </p>
-      );
-      const auxCol = block.aux_stat ? (
-        <div
-          className="rounded-xl p-4 h-full flex flex-col justify-center items-center text-center"
-          style={{ background: theme.bg, border: `1px solid ${theme.light}66` }}
-        >
-          <div className="text-3xl font-black" style={{ color: theme.light }}>
-            {block.aux_stat[0]}
-          </div>
-          <div className="text-xs mt-1 text-white">{block.aux_stat[1]}</div>
-        </div>
-      ) : block.aux_list ? (
-        <IvoryPanel badge="i" title="Sorotan Data" theme={theme}>
-          {block.aux_list.map((it: any, i: number) => (
-            <div key={i} className="flex items-center justify-between text-xs">
-              <span className="truncate" style={{ color: C.textDark }}>{it.label}</span>
-              <span className="font-bold" style={{ color: theme.main }}>{it.value}</span>
+    // "page" — 1-4 panel (block.panels, lihat report_render_logic.py tahap 2:
+    // _group_candidates_into_pages). 1 panel yang BUKAN insight_tile/dynamic_section ->
+    // dirender lewat renderInner() yang sama persis (kind diganti panel_kind), kartu/kicker/
+    // judulnya sudah "mandiri" (sama seperti versi standalone sebelum refactor ini). Beberapa
+    // panel (atau 1 panel insight_tile/dynamic_section, yang TIDAK punya judul sendiri) ->
+    // dibungkus kicker+judul halaman bersama, panel-panelnya digambar berdampingan.
+    case "page": {
+      const panels = (block.panels as ReportBlock[]) || [];
+      if (panels.length === 0) return null;
+      const isInsight = panels[0].panel_kind === "insight_tile" || panels[0].panel_kind === "dynamic_section";
+      if (panels.length === 1 && !isInsight) {
+        return renderInner({ ...panels[0], kind: panels[0].panel_kind }, vs, theme);
+      }
+      if (isInsight) {
+        const cols = Math.max(1, Math.min(panels.length, 4));
+        return (
+          <>
+            <Kicker text={block.kicker} color={theme.main} />
+            <BlockTitle>{block.title}</BlockTitle>
+            <div className="grid grid-cols-1 gap-5" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+              {panels.map((panel, i) => (
+                <InsightTile key={i} panel={panel} theme={theme} />
+              ))}
             </div>
-          ))}
-        </IvoryPanel>
-      ) : null;
+          </>
+        );
+      }
+      const cols = Math.max(1, Math.min(panels.length, 3));
       return (
-        <>
-          <Kicker text={block.kicker} color={theme.main} />
-          <BlockTitle>{block.title}</BlockTitle>
-          {hasAux ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="md:col-span-2">{textCol}</div>
-              <div>{auxCol}</div>
-            </div>
-          ) : (
-            textCol
-          )}
-        </>
+        <div className="grid grid-cols-1 gap-x-10 gap-y-8" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+          {panels.map((panel, i) => (
+            <div key={i}>{renderInner({ ...panel, kind: panel.panel_kind }, vs, theme)}</div>
+          ))}
+        </div>
       );
     }
 
@@ -777,7 +1154,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {vs.panel_side === "left" ? <>{panelCol}{chartCol}</> : <>{chartCol}{panelCol}</>}
           </div>
-          <AiCaption text={block.ai_caption} />
+          <NoteBox text={block.ai_caption} theme={theme} />
         </>
       );
     }
@@ -818,7 +1195,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {vs.panel_side === "left" ? <>{panelCol}{chartCol}</> : <>{chartCol}{panelCol}</>}
           </div>
-          <AiCaption text={block.ai_caption} />
+          <NoteBox text={block.ai_caption} theme={theme} />
         </>
       );
     }
@@ -836,8 +1213,50 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
             categories={block.categories}
             values={block.values}
             colors={vs.status_style === "bar" ? block.categories.map(() => accentColor) : block.categories.map((_c: string, i: number) => ramp[i % ramp.length])}
+            color={accentColor}
           />
-          <AiCaption text={block.ai_caption} />
+          <NoteBox text={block.ai_caption} theme={theme} />
+        </>
+      );
+
+    case "kpi_radar":
+      return (
+        <>
+          <Kicker text={block.kicker} color={theme.main} />
+          <BlockTitle>{block.title}</BlockTitle>
+          <div className="flex justify-center">
+            <RadarChart axes={block.axes} values={block.values} theme={theme} />
+          </div>
+          <NoteBox text={block.intro} theme={theme} />
+        </>
+      );
+
+    case "time_heatmap":
+      return (
+        <>
+          <Kicker text={block.kicker} color={theme.main} />
+          <BlockTitle>{block.title}</BlockTitle>
+          <div className="flex justify-center overflow-x-auto">
+            <HeatmapGrid dayLabels={block.day_labels} hourLabels={block.hour_labels} grid={block.grid} theme={theme} />
+          </div>
+          <NoteBox text={block.intro} theme={theme} />
+        </>
+      );
+
+    case "period_compare":
+      return (
+        <>
+          <Kicker text={block.kicker} color={theme.main} />
+          <BlockTitle>{block.title}</BlockTitle>
+          <GroupedBarChart
+            categories={block.categories}
+            seriesA={block.series_a}
+            seriesB={block.series_b}
+            labelA={block.label_a}
+            labelB={block.label_b}
+            theme={theme}
+          />
+          <NoteBox text={block.intro} theme={theme} />
         </>
       );
 
@@ -902,11 +1321,9 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
         </>
       );
 
-    case "key_findings":
-      return (
-        <>
-          <Kicker text={block.kicker} color={theme.main} />
-          <BlockTitle>{block.title}</BlockTitle>
+    case "key_findings": {
+      const findingsCol = (
+        <div>
           {block.items.map((it: any) => (
             <BadgeRow
               key={it.num}
@@ -916,8 +1333,25 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
               color={it.is_critical ? C.redCrit : theme.main}
             />
           ))}
+        </div>
+      );
+      return (
+        <>
+          <Kicker text={block.kicker} color={theme.main} />
+          <BlockTitle>{block.title}</BlockTitle>
+          {block.chart ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="md:col-span-2">{findingsCol}</div>
+              <div>
+                <MiniChartPanel chart={block.chart} theme={theme} />
+              </div>
+            </div>
+          ) : (
+            findingsCol
+          )}
         </>
       );
+    }
 
     case "recommendations":
       return (
