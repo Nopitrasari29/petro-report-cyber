@@ -20,6 +20,10 @@ from app.services.ai_engine.data_profiler import (
 
 logger = logging.getLogger(__name__)
 
+
+class GenerationCancelled(Exception):
+    pass
+
 # Dipakai bersama oleh _normalize_json_keys (nilai fallback per key) dan analysis.py
 # (Fix deteksi laporan yang "sukses" tapi isinya cuma teks default ini semua).
 _REQUIRED_KEY_DEFAULTS = {
@@ -314,6 +318,7 @@ class OllamaClient:
         system_prompt: str | None = None,
         json_mode: bool = False,
         on_progress=None,
+        is_cancelled=None,
     ) -> str:
         """
         Mengirimkan pesan prompt ke Ollama lokal dengan parameter dinamis.
@@ -360,7 +365,19 @@ class OllamaClient:
             # tetap di memori jauh lebih lama, supaya request analisis berikutnya (dan retry
             # attempt ke-2/3 dalam job yang sama) tidak kena reload ulang.
             "keep_alive": "30m",
-            "options": {"temperature": ai_cfg["temperature"]},
+            # BUG DIPERBAIKI (dilaporkan user — section custom yg diminta selalu kosong):
+            # tanpa "num_ctx" eksplisit, Ollama pakai jendela konteks bawaan server (jauh di
+            # bawah 40960 yg sebenarnya didukung qwen3:8b — dikonfirmasi lewat `ollama show`,
+            # Modelfile model ini SAMA SEKALI tidak menyetel num_ctx sendiri). Prompt di sini
+            # (skema+statistik+daftar section custom) + permintaan tulis 6 field wajib PLUS
+            # sampai puluhan paragraf section custom gampang melebihi jendela sempit itu —
+            # "sections" (key OPSIONAL, ditulis PALING AKHIR di urutan JSON, lihat SYSTEM_PROMPT)
+            # jadi yg PERTAMA kepotong duluan begitu kehabisan ruang, walau field wajib di
+            # depannya tetap utuh (persis gejala yg diamati: 6 field wajib selalu ada, sections
+            # selalu 0). 12288 dipilih sbg jalan tengah — jauh lebih lega dari default, tapi
+            # tidak dipaksa ke batas maksimal model (yg akan jauh lebih berat/lambat lagi di
+            # mesin CPU-only ini).
+            "options": {"temperature": ai_cfg["temperature"], "num_ctx": 12288},
         }
         if json_mode:
             payload["format"] = "json"
@@ -375,6 +392,8 @@ class OllamaClient:
         ) as response:
             response.raise_for_status()
             for line in response.iter_lines():
+                if is_cancelled and is_cancelled():
+                    raise GenerationCancelled()
                 if not line:
                     continue
                 chunk = json.loads(line)
@@ -620,6 +639,7 @@ class OllamaClient:
         tone: str | None = None,
         default_level: str | None = None,
         on_progress=None,
+        is_cancelled=None,
     ) -> dict:
         """
         Mengonversi data (log keamanan, keuangan, KPI, atau data umum) ke string,
@@ -691,7 +711,11 @@ class OllamaClient:
         raw_response = None
         try:
             raw_response = self.generate(
-                prompt, system_prompt=SYSTEM_PROMPT, json_mode=True, on_progress=on_progress
+                prompt,
+                system_prompt=SYSTEM_PROMPT,
+                json_mode=True,
+                on_progress=on_progress,
+                is_cancelled=is_cancelled,
             )
             logger.debug(f"[OLLAMA RAW]\n{raw_response[:2000]}")
             result_json = self._extract_json_robust(raw_response)
@@ -706,6 +730,8 @@ class OllamaClient:
             # dipakai chart itu sendiri saat dirender) — di sini cukup biarkan chart_captions
             # kosong/apa adanya, tidak perlu isi apa pun lagi.
             return result_json
+        except GenerationCancelled:
+            raise
         except Exception as e:
             # Sama seperti guard Ollama-offline di atas — dulu mengembalikan dict "berhasil"
             # berisi teks error mentah per field (termasuk potongan respons AI yang rusak,

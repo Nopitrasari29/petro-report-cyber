@@ -3,10 +3,21 @@ import { getLanguage } from "@/utils/i18n";
 import { useTx } from "@/hooks/useTx";
 import { API_BASE_URL, authHeaders, getToken } from "@/utils/api";
 import { setNavGuardMessage } from "@/utils/navGuard";
-import { REPORT_SECTIONS, buildPagesFromBlocks, getPageByNumber } from "@/utils/reportSections";
+import {
+  REPORT_SECTIONS,
+  buildPagesFromBlocks,
+  getPageByNumber,
+} from "@/utils/reportSections";
 import { fetchReportBlocks } from "@/utils/reportBlocksApi";
-import { arrayItemsToHtml, htmlToArrayItems } from "@/utils/richTextArrayBridge";
-import { DEFAULT_VISUAL_STYLE, type ReportBlock, type VisualStyle } from "@/utils/reportTheme";
+import {
+  arrayItemsToHtml,
+  htmlToArrayItems,
+} from "@/utils/richTextArrayBridge";
+import {
+  DEFAULT_VISUAL_STYLE,
+  type ReportBlock,
+  type VisualStyle,
+} from "@/utils/reportTheme";
 import type { DynamicSectionItem } from "../components/Step2Settings";
 
 interface UploadedFile {
@@ -72,7 +83,16 @@ export function useGenerateWizard() {
   const [periodEnd, setPeriodEnd] = useState("");
   const [periodAutoDetected, setPeriodAutoDetected] = useState(false);
   const [periodDetecting, setPeriodDetecting] = useState(false);
-  const [templateType, setTemplateType] = useState("");
+  // BUG NYATA DITEMUKAN (dilaporkan user, "SOC & Management masih tertukar"): default ""
+  // (bukan "SOC Executive Summary") — Step2Settings menampilkan kartu SOC sbg TERPILIH SECARA
+  // VISUAL saat templateType kosong (fallback tampilan saja), TAPI kalau user tidak pernah
+  // benar2 mengklik salah satu kartu, state ini tetap "" dan dikirim APA ADANYA ke backend
+  // (formData.append di bawah selalu mengirim field ini, bahkan kalau kosong) — occasionally
+  // menyebabkan report.template_type tersimpan kosong, ambigu dgn kemungkinan default lain di
+  // sisi backend. Default eksplisit di sini menyamakan STATE dgn apa yang SUDAH ditampilkan
+  // sbg terpilih di UI, supaya tidak ada lagi celah "terlihat terpilih tapi belum benar2
+  // tersimpan".
+  const [templateType, setTemplateType] = useState("SOC Executive Summary");
   const [outputFormat, setOutputFormat] = useState("PDF");
   const [language, setLanguage] = useState("English");
 
@@ -153,17 +173,21 @@ export function useGenerateWizard() {
   // 2) Menutup/refresh tab atau pindah ke URL LUAR aplikasi — event browser native
   //    "beforeunload" di bawah.
   // CATATAN JUJUR (bukan disembunyikan, cuma pesannya disesuaikan supaya tidak salah info):
-  // proses AI di server TIDAK BENAR-BENAR berhenti kalau halaman ini ditinggalkan (job
-  // background tetap jalan, bisa dipulihkan lewat sessionStorage — lihat effect
-  // recoverInProgressReport di bawah) — makanya pesannya bilang "tetap berjalan tapi Anda
-  // perlu kembali ke sini", BUKAN "akan berhenti", supaya tidak menyesatkan pengguna.
+  // Saat user menekan Back atau memilih tetap keluar lewat navigasi aplikasi, handler
+  // pembatalan menghentikan job server dan melepas lock agar generate berikutnya bisa langsung
+  // dimulai.
   useEffect(() => {
     setNavGuardMessage(
       aiStatus === "processing"
         ? tx(
-            "Analisis AI masih berjalan. Proses TETAP berjalan di server walau Anda pindah halaman, tapi Anda perlu kembali ke halaman ini nanti untuk melihat hasilnya. Yakin ingin keluar?",
-            "AI analysis is still running. The process will keep running on the server even if you leave, but you'll need to come back to this page later to see the result. Leave anyway?",
+            "Analisis AI masih berjalan. Jika keluar, proses akan dibatalkan agar Anda bisa langsung membuat laporan baru. Yakin ingin keluar?",
+            "AI analysis is still running. Leaving will cancel it so you can start a new report immediately. Leave anyway?",
           )
+        : null,
+      aiStatus === "processing"
+        ? () => {
+            void handleCancelGeneration();
+          }
         : null,
     );
     return () => setNavGuardMessage(null);
@@ -208,7 +232,8 @@ export function useGenerateWizard() {
   // vs FullscreenStudioModal) supaya "pages" di bawah bisa dihitung dari struktur laporan ASLI,
   // bukan lagi 6 field ai_summary yang terpisah dari apa yang benar-benar tampil di Preview.
   const [blocks, setBlocks] = useState<ReportBlock[]>([]);
-  const [visualStyle, setVisualStyle] = useState<VisualStyle>(DEFAULT_VISUAL_STYLE);
+  const [visualStyle, setVisualStyle] =
+    useState<VisualStyle>(DEFAULT_VISUAL_STYLE);
   // Warna TERRESOLVE dari backend (resolve_theme_color) — BEDA dari `themeColor` di atas, yang
   // itu cuma pilihan mentah user di picker Step 2 (bisa "auto"). Kalau user pilih "Automatic",
   // warna sungguhan baru DIKUNCI acak sekali saat analisis AI berhasil (lihat resolved_theme_color
@@ -246,9 +271,15 @@ export function useGenerateWizard() {
   // Daftar halaman LENGKAP — sekarang 1:1 dengan block ASLI laporan (Cover, Latar Belakang,
   // Ringkasan Eksekutif, tiap chart/tabel, dst), urutan & judulnya PERSIS sama dengan tab
   // Preview & file PDF/PPTX yang diunduh. Dihitung ulang tiap kali blocks/editedSummary berubah.
-  const pages = buildPagesFromBlocks(blocks, editedSummary, reportDetails?.included_sections);
-  const getPageTitle = (page: string) => getPageByNumber(pages, page)?.title ?? "";
-  const getPageContentKey = (page: string) => getPageByNumber(pages, page)?.key ?? null;
+  const pages = buildPagesFromBlocks(
+    blocks,
+    editedSummary,
+    reportDetails?.included_sections,
+  );
+  const getPageTitle = (page: string) =>
+    getPageByNumber(pages, page)?.title ?? "";
+  const getPageContentKey = (page: string) =>
+    getPageByNumber(pages, page)?.key ?? null;
 
   const getPageText = (page: string) => {
     const key = getPageContentKey(page);
@@ -388,12 +419,15 @@ export function useGenerateWizard() {
       // terbaik yang tersedia di titik ini.
       fd.append("language", language);
 
-      const res = await fetch(`${API_BASE_URL}/api/v1/upload/suggest-sections`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: fd,
-        signal: controller.signal,
-      });
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/upload/suggest-sections`,
+        {
+          method: "POST",
+          headers: authHeaders(),
+          body: fd,
+          signal: controller.signal,
+        },
+      );
 
       if (res.ok) {
         const data = await res.json();
@@ -445,8 +479,12 @@ export function useGenerateWizard() {
       return ALLOWED_EXTENSIONS.includes(ext);
     });
 
-    const oversized = validExtFiles.filter((f) => f.size > MAX_UPLOAD_SIZE_BYTES);
-    const newFiles = validExtFiles.filter((f) => f.size <= MAX_UPLOAD_SIZE_BYTES);
+    const oversized = validExtFiles.filter(
+      (f) => f.size > MAX_UPLOAD_SIZE_BYTES,
+    );
+    const newFiles = validExtFiles.filter(
+      (f) => f.size <= MAX_UPLOAD_SIZE_BYTES,
+    );
     if (oversized.length > 0) {
       setErrorMsg(
         `${tx("File berikut melebihi batas maksimum 100MB dan tidak ditambahkan:", "The following files exceed the 100MB limit and were not added:")} ${oversized.map((f) => f.name).join(", ")}.`,
@@ -458,7 +496,9 @@ export function useGenerateWizard() {
     const combinedFiles = [...rawFiles, ...newFiles];
     if (combinedFiles.length > 1) {
       const exts = new Set(
-        combinedFiles.map((f) => "." + (f.name.split(".").pop() || "").toLowerCase()),
+        combinedFiles.map(
+          (f) => "." + (f.name.split(".").pop() || "").toLowerCase(),
+        ),
       );
       if (exts.size > 1) {
         setErrorMsg(
@@ -546,6 +586,7 @@ export function useGenerateWizard() {
   // kesalahan tak terduga" (pesan generik utk kegagalan asli), karena di server keduanya
   // sama-sama berakhir sbg status "failed" — cuma sisi frontend ini yang tahu bedanya.
   const cancelRequestedRef = useRef(false);
+  const generationAbortRef = useRef<AbortController | null>(null);
 
   // Poll progress asli tiap 2 detik sampai job selesai (analyzed) atau gagal (failed), lalu
   // ambil detail hasil akhirnya. Dipisah jadi fungsi sendiri supaya bisa dipanggil ulang oleh
@@ -617,10 +658,9 @@ export function useGenerateWizard() {
 
     const recoverInProgressReport = async () => {
       try {
-        const res = await fetch(
-          `${API_BASE_URL}/api/v1/history/${savedId}`,
-          { headers: authHeaders() },
-        );
+        const res = await fetch(`${API_BASE_URL}/api/v1/history/${savedId}`, {
+          headers: authHeaders(),
+        });
         if (!res.ok) {
           sessionStorage.removeItem(ACTIVE_REPORT_ID_KEY);
           return;
@@ -701,7 +741,10 @@ export function useGenerateWizard() {
       console.error(err);
       setErrorMsg(
         err.message ||
-          tx("Terjadi kesalahan tidak terduga.", "An unexpected error occurred."),
+          tx(
+            "Terjadi kesalahan tidak terduga.",
+            "An unexpected error occurred.",
+          ),
       );
       setAiStatus("pending");
       setProcessingStep("idle");
@@ -710,23 +753,27 @@ export function useGenerateWizard() {
   };
 
   // Tombol "Batalkan Proses" (Step 3) — dipanggil SENGAJA oleh user, beda dari sekadar pindah
-  // halaman (yang TETAP membiarkan job jalan di background, lihat catatan navGuard di atas).
-  // TIDAK benar-benar menghentikan panggilan Ollama yang sedang jalan di server (lihat catatan
-  // panjang di endpoint /cancel, backend/analysis.py) — tapi melepas kunci global SEKARANG JUGA
-  // (server menandai laporan "failed") supaya user bisa langsung mulai generate laporan lain
-  // tanpa menunggu. cancelRequestedRef mencegah pollAndFetchResult yang mungkin masih jalan
-  // menampilkan pesan "gagal karena kesalahan tak terduga" (generik) padahal ini pembatalan
-  // yang disengaja.
+  // halaman. Pembatalan juga memberi sinyal ke stream Ollama agar job segera berhenti.
   const handleCancelGeneration = async () => {
-    if (!reportId) return;
     cancelRequestedRef.current = true;
+    generationAbortRef.current?.abort();
+    if (!reportId) {
+      sessionStorage.removeItem(ACTIVE_REPORT_ID_KEY);
+      setLoading(false);
+      setAiStatus("pending");
+      setProcessingStep("idle");
+      return;
+    }
     try {
       await fetch(`${API_BASE_URL}/api/v1/analysis/${reportId}/cancel`, {
         method: "POST",
         headers: authHeaders(),
       });
     } catch (err) {
-      console.warn("Gagal memberi tahu server soal pembatalan (tetap dianggap dibatalkan di sisi ini):", err);
+      console.warn(
+        "Gagal memberi tahu server soal pembatalan (tetap dianggap dibatalkan di sisi ini):",
+        err,
+      );
     }
     sessionStorage.removeItem(ACTIVE_REPORT_ID_KEY);
     setLoading(false);
@@ -738,6 +785,9 @@ export function useGenerateWizard() {
   // Submit Settings and Start Upload to Backend
   const handleStartGeneration = async () => {
     cancelRequestedRef.current = false;
+    generationAbortRef.current?.abort();
+    const generationController = new AbortController();
+    generationAbortRef.current = generationController;
     if (!periodStart || !periodEnd) {
       setErrorMsg(
         tx(
@@ -825,10 +875,15 @@ export function useGenerateWizard() {
       formData.append("default_level", defaultLevel);
 
       if (dynamicSections.length > 0) {
-        // Kirim HANYA section yang dicentang user (bukan seluruh kandidat usulan AI),
-        // beserta urutannya — backend memakai ini utk menyusun ai_summary["sections"].
-        const selectedSections = dynamicSections.filter((s) => s.enabled);
-        formData.append("included_sections", JSON.stringify(selectedSections));
+        // BUG YANG DIPERBAIKI (dilaporkan user): sebelumnya HANYA section yang dicentang
+        // yang dikirim — section yang di-uncheck jadi tidak terkirim SAMA SEKALI, bukan
+        // dikirim sbg enabled:false. Backend (is_section_included() di
+        // report_render_logic.py) memperlakukan key yang "tidak ada di daftar" sebagai
+        // default TAMPIL — jadi meng-uncheck section apa pun efeknya nol. Sekarang SELURUH
+        // section dikirim apa adanya (termasuk yang tidak dicentang), backend yang
+        // memfilter enabled=true/false-nya masing-masing (analysis_runner.py tetap benar
+        // menyaring hanya yang enabled utk ditulis AI, lihat filter di sana).
+        formData.append("included_sections", JSON.stringify(dynamicSections));
       } else {
         formData.append("included_sections", JSON.stringify(sections));
       }
@@ -850,6 +905,7 @@ export function useGenerateWizard() {
         method: "POST",
         headers: authHeaders(),
         body: formData,
+        signal: generationController.signal,
       });
 
       if (!uploadRes.ok) {
@@ -867,6 +923,7 @@ export function useGenerateWizard() {
 
       const reportData = await uploadRes.json();
       const generatedId = reportData.id;
+      if (cancelRequestedRef.current) return;
       setReportId(generatedId);
       sessionStorage.setItem(ACTIVE_REPORT_ID_KEY, String(generatedId));
       setProcessingStep("analyzing");
@@ -880,6 +937,7 @@ export function useGenerateWizard() {
         {
           method: "POST",
           headers: authHeaders(),
+          signal: generationController.signal,
         },
       );
 
@@ -899,10 +957,14 @@ export function useGenerateWizard() {
       await pollAndFetchResult(generatedId);
       setLoading(false);
     } catch (err: any) {
+      if (err?.name === "AbortError" && cancelRequestedRef.current) return;
       console.error(err);
       setErrorMsg(
         err.message ||
-          tx("Terjadi kesalahan tidak terduga.", "An unexpected error occurred."),
+          tx(
+            "Terjadi kesalahan tidak terduga.",
+            "An unexpected error occurred.",
+          ),
       );
       setAiStatus("pending");
       setProcessingStep("idle");
@@ -1022,9 +1084,7 @@ export function useGenerateWizard() {
     setDomainType("general");
     setTone("Professional");
     setDefaultLevel("Standard");
-    setSections(
-      Object.fromEntries(REPORT_SECTIONS.map((s) => [s.key, true])),
-    );
+    setSections(Object.fromEntries(REPORT_SECTIONS.map((s) => [s.key, true])));
     setExportFormats({ pdf: false, pptx: false });
     setBlocks([]);
     setBlocksLoading(true);

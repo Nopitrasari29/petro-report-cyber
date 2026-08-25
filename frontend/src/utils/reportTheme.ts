@@ -52,14 +52,69 @@ export const THEME_PALETTES: Record<ThemeColorKey, ThemeColors> = {
   gold: { main: "#8A6A16", bg: "#4A3908", chart: "#C9A227", light: "#F3E3AE", soft: "#FBF3DC" },
 };
 
+// Mirror _blend_with_white di export_pdf.py/export_ppt.py — campur `hex` dgn putih sebesar
+// (1-frac). Dipakai turunkan shade "chart" utk tema warna KUSTOM (color picker) di bawah.
+function blendWithWhite(hex: string, frac: number): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const toHex = (v: number) => Math.round(v).toString(16).padStart(2, "0");
+  return `#${toHex(r * frac + 255 * (1 - frac))}${toHex(g * frac + 255 * (1 - frac))}${toHex(b * frac + 255 * (1 - frac))}`;
+}
+
+// Mirror _darken di export_pdf.py/export_ppt.py — skala RGB `hex` turun sebesar `factor`
+// (menuju hitam). Dipakai turunkan "bg" (latar cover/penutup) dari warna KUSTOM yang
+// dipilih user — SEBELUMNYA "bg" tema kustom SELALU "#111827" tetap apa pun warnanya, cover
+// (kesan pertama laporan) jadi terlihat tidak menerapkan pilihan warna user sama sekali.
+function darken(hex: string, factor = 0.55): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const toHex = (v: number) => Math.round(v).toString(16).padStart(2, "0");
+  return `#${toHex(r * factor)}${toHex(g * factor)}${toHex(b * factor)}`;
+}
+
+// Mirror _light_safe di export_pdf.py/export_ppt.py — pastikan `hex` cukup gelap (luminance
+// <= maxLuminance) dipakai sbg latar solid dgn teks kontras di atasnya. maxLuminance tinggi
+// (default 0.68) dipakai utk teks/aksen di atas latar TERANG; maxLuminance rendah (mis. 0.45,
+// lihat resolveThemeColors di bawah) dipakai utk warna kustom yang jadi "main" (latar gelap +
+// teks putih) — BUG YANG DIPERBAIKI (dilaporkan user): warna kustom terang (mis. ungu muda)
+// dipakai APA ADANYA sbg "main", teks putih di atasnya nyaris tak kelihatan.
+export function lightSafe(hex: string, maxLuminance = 0.68): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  if (luminance <= maxLuminance || luminance === 0) return hex;
+  const frac = maxLuminance / luminance;
+  const toHex = (v: number) => Math.round(v).toString(16).padStart(2, "0");
+  return `#${toHex(r * frac)}${toHex(g * frac)}${toHex(b * frac)}`;
+}
+
 export function resolveThemeColors(themeColor?: string | null): ThemeColors {
   if (themeColor && themeColor.startsWith("#")) {
+    // 3 BUG DIPERBAIKI (mirror export_pdf.py/export_ppt.py, lihat catatan lengkap di sana):
+    // "chart" sebelumnya = "main" APA ADANYA — chart 2-seri jadi tidak bisa dibedakan. "bg"
+    // sebelumnya "#111827" tetap. "light"/"soft" sebelumnya tetap GOLD_MAIN/GOLD_LIGHT (aksen
+    // emas TAK TERKAIT warna kustom sama sekali, dipakai luas di kicker/pill/badge/panel
+    // gelap hampir tiap halaman — penyebab utama keluhan "warnanya kurang kelihatan", dan bisa
+    // bikin pill/badge nyaris tak terbaca kalau warna kustom user kebetulan senada dgn gold
+    // tetap ini). Sekarang KEEMPAT peran diturunkan dari SATU hue kustom yang sama (main=gelap,
+    // chart=medium, light=terang, soft=paling terang) — pola RAMP SAMA PERSIS yang sudah
+    // dipakai tema "gold" bawaan sendiri, cuma huenya ikut pilihan user. BUG TAMBAHAN
+    // DIPERBAIKI (dilaporkan user): "main" kustom sekarang dilewatkan lightSafe() dulu (ambang
+    // 0.45) supaya SELALU cukup gelap dipakai bersama teks putih, sebelum jadi basis turunan
+    // chart/light/soft di bawah.
+    const safeMain = lightSafe(themeColor, 0.45);
     return {
-      main: themeColor,
-      bg: "#111827",
-      chart: themeColor,
-      light: "#C9A227",
-      soft: "#E7C766",
+      main: safeMain,
+      bg: darken(safeMain),
+      chart: blendWithWhite(safeMain, 0.6),
+      light: blendWithWhite(safeMain, 0.3),
+      soft: blendWithWhite(safeMain, 0.12),
     };
   }
   const key = (themeColor || "green").toLowerCase() as ThemeColorKey;

@@ -16,7 +16,7 @@ interface Step3AIProcessingProps {
   onBack: () => void;
   onProceed: () => void;
   onRetry?: () => void;
-  onCancel?: () => void;
+  onCancel?: () => Promise<void> | void;
   tx: (key: string, fallback: string) => string;
 }
 
@@ -570,7 +570,7 @@ export default function Step3AIProcessing({
               status lain (completed/pending/retry) Back tetap seperti biasa, selalu aktif. */}
           {aiStatus === "processing" && onCancel ? (
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (
                   window.confirm(
                     tx(
@@ -579,7 +579,7 @@ export default function Step3AIProcessing({
                     ),
                   )
                 ) {
-                  onCancel();
+                  await onCancel();
                   onBack();
                 }
               }}

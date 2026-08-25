@@ -72,7 +72,9 @@ KEY OPSIONAL TAMBAHAN:
   * SELURUH isi (termasuk kata/istilah apa pun di dalamnya, mis. nama hari) HARUS satu bahasa
     yang sama seperti field lain (lihat instruksi bahasa di atas) - DILARANG menyisipkan kata
     tunggal berbahasa lain di tengah kalimat (mis. "Friday" di tengah kalimat Bahasa Indonesia).
-- "sections": array objek {"id": "...", "title": "...", "content": "..."} — HANYA diisi kalau di bagian prompt DI BAWAH ada blok eksplisit "DAFTAR SECTION YANG WAJIB DIISI". Kalau blok itu TIDAK ADA di prompt, WAJIB kosongkan array ini ([]) — jangan mengarang isinya. Kalau ADA, isi PERSIS section yang diminta di blok itu: gunakan "id" & "title" yang sama persis seperti diberikan, urutan array sama dengan urutan "order"-nya, JANGAN menambah/mengurangi section, dan "content" berisi narasi 2-4 paragraf grounded pada STATISTIK TERHITUNG untuk topik section tsb.
+- "sections": array objek {"id": "...", "title": "...", "content": "...", "chart": null atau {"chart_type","labels","values"}} — HANYA diisi kalau di bagian prompt DI BAWAH ada blok eksplisit "DAFTAR SECTION YANG WAJIB DIISI". Kalau blok itu TIDAK ADA di prompt, WAJIB kosongkan array ini ([]) — jangan mengarang isinya. Kalau ADA, isi PERSIS section yang diminta di blok itu: gunakan "id" & "title" yang sama persis seperti diberikan, urutan array sama dengan urutan "order"-nya, JANGAN menambah/mengurangi section.
+  * "content": narasi PENDEK 1-3 kalimat SAJA (BUKAN 2-4 paragraf lagi — laporan ini gaya visual-padat, teks cuma pendukung/pelengkap chart, bukan sorotan utama) grounded pada STATISTIK TERHITUNG.
+  * "chart" (OPSIONAL, isi kalau topik section ini SECARA ALAMI membahas perbandingan/proporsi antar beberapa kategori — mis. "per metode", "top vendor", "per departemen", "per status"): objek {"chart_type": "bar" atau "donut", "labels": [...nama kategori, PERSIS seperti tertulis di STATISTIK TERHITUNG...], "values": [...angka ASLI dari STATISTIK TERHITUNG, JANGAN mengarang/membulatkan...]}. Kalau topik section TIDAK melibatkan perbandingan antar kategori (mis. cuma 1 angka tunggal, atau narasi kualitatif tanpa pecahan kategori), set "chart": null — JANGAN memaksakan chart palsu.
 
 CONTOH DENGAN KEY OPSIONAL (few-shot kedua, ilustrasi format saja):
 {
@@ -90,7 +92,21 @@ CONTOH DENGAN KEY OPSIONAL (few-shot kedua, ilustrasi format saja):
   "chart_captions": {
     "category": "Kategori SOC menjadi kontributor insiden terbanyak dibanding kategori lain. Konsentrasi ini mengindikasikan area tersebut sebagai titik risiko utama saat ini. Perlu audit lebih dalam pada kategori ini untuk mencegah eskalasi lebih lanjut.",
     "severity": "Proporsi high+critical mencapai 60% dari seluruh insiden (11 critical, 19 high dari 50 total). Ini menandakan mayoritas insiden butuh perhatian segera, bukan sekadar noise. Tanpa prioritisasi, tim SOC berisiko kewalahan menangani volume insiden tinggi ini."
-  }
+  },
+  "sections": [
+    {
+      "id": "top_vendor",
+      "title": "Vendor Teratas",
+      "content": "CV Surya Elektrik Industri menjadi vendor dgn transaksi terbanyak.",
+      "chart": {"chart_type": "bar", "labels": ["CV Surya Elektrik Industri", "CV Karya Teknik Mandiri", "PT Sarana Instrumentasi Utama"], "values": [9, 5, 5]}
+    },
+    {
+      "id": "status_review",
+      "title": "Tinjauan Status",
+      "content": "Sebagian besar transaksi masih berjalan, belum ada yang terlambat signifikan.",
+      "chart": null
+    }
+  ]
 }
 """
 
@@ -381,10 +397,12 @@ def get_analysis_prompt(
 --- DAFTAR SECTION YANG WAJIB DIISI (isi key opsional "sections", urutan HARUS diikuti persis) ---
 {sections_list_text}
 Isi key opsional "sections" pada JSON output dengan PERSIS daftar section di atas - satu objek
-{{"id","title","content"}} per section, "id" & "title" SAMA PERSIS seperti di daftar, "content"
-berisi narasi 2-4 paragraf grounded pada STATISTIK TERHITUNG, urutan array HARUS sama dengan
-urutan "order" di atas. JANGAN menambah/mengurangi section di luar daftar ini. Ini TAMBAHAN,
-bukan pengganti - 6 key wajib di bawah tetap harus diisi seperti biasa.
+{{"id","title","content","chart"}} per section (lihat kontrak lengkap field "content"/"chart"
+di SYSTEM_PROMPT - "content" SEKARANG PENDEK 1-3 kalimat saja, "chart" diisi kalau topiknya
+melibatkan perbandingan antar kategori, null kalau tidak), "id" & "title" SAMA PERSIS seperti
+di daftar, urutan array HARUS sama dengan urutan "order" di atas. JANGAN menambah/mengurangi
+section di luar daftar ini. Ini TAMBAHAN, bukan pengganti - 6 key wajib di bawah tetap harus
+diisi seperti biasa.
 --- AKHIR DAFTAR SECTION ---
 """
 
@@ -447,13 +465,15 @@ umum (ringkasan eksekutif, analisis tren, dst) - BEBAS mengusulkan judul section
 itu bila data benar-benar menuntutnya (mis. "Analisis Distribusi Regional" untuk data dengan
 kolom lokasi, atau "Perbandingan Shift Kerja" untuk data operasional dengan kolom shift).
 
-JUMLAH SECTION: SECUKUPNYA sesuai kompleksitas & keragaman data yang SEBENARNYA ada - JANGAN
-dipatok ke angka tetap. Data sederhana dengan sedikit kolom/dimensi analisis wajar cuma
-menghasilkan 3-4 section; data kaya dengan banyak dimensi berbeda (mis. banyak kolom kategorikal
-independen, kombinasi keuangan+operasional+SDM sekaligus) boleh menghasilkan 12+ section kalau
-itu semua BENAR-BENAR menambah nilai analisis berbeda satu sama lain. JANGAN menambahkan
-section "filler"/pengisi generik cuma untuk mengejar jumlah tertentu, dan JANGAN memotong
-section yang genuinely relevan cuma karena sudah "cukup banyak" - biarkan data yang menentukan.
+JUMLAH SECTION: MAKSIMAL 6, TIDAK BOLEH LEBIH - pilih 6 topik yang PALING relevan & PALING
+berbeda nilai analisisnya kalau data punya lebih banyak dimensi drpd itu (JANGAN asal ambil 6
+pertama, bandingkan semua kandidat dulu lalu pilih yang paling bernilai). Data sederhana dengan
+sedikit kolom/dimensi analisis wajar cuma menghasilkan 3-4 section - JANGAN dipaksa sampai 6
+kalau memang tidak ada 6 topik yang genuinely berbeda nilainya (JANGAN menambahkan section
+"filler"/pengisi generik cuma untuk mengejar angka 6). Batas 6 ini SENGAJA (bukan usulan) -
+laporan akhir nanti menuliskan narasi PENUH utk tiap section yang dicentang user, jadi kalau
+section yang diusulkan disini kebanyakan, akan ada section yang gagal ditulis lengkap saat
+laporan sungguhan dibuat nanti walau sudah dicentang user - HINDARI ITU dgn disiplin di batas 6.
 
 Format keluaran HARUS berupa SATU JSON OBJECT valid dengan TEPAT SATU key top-level "sections"
 berisi ARRAY (JANGAN mengembalikan array telanjang di root - HARUS dibungkus objek seperti

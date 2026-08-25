@@ -8,6 +8,7 @@ Sekarang fungsi ini menjadi service mandiri di app/services/analysis_runner.py d
 secara bersih oleh analysis.py dan history.py.
 """
 import logging
+import threading
 import time
 from sqlalchemy.orm import Session
 
@@ -15,10 +16,44 @@ from app.db.session import SessionLocal
 from app.core.config import settings
 from app.models.report import Report
 from app.models.user import User
-from app.services.ai_engine.ollama_client import ollama_client, _REQUIRED_KEY_DEFAULTS
+from app.services.ai_engine.ollama_client import (
+    GenerationCancelled,
+    ollama_client,
+    _REQUIRED_KEY_DEFAULTS,
+)
 from app.services.report_render_logic import pick_visual_style
 
 logger = logging.getLogger(__name__)
+
+_cancel_events: dict[int, threading.Event] = {}
+_cancel_events_lock = threading.Lock()
+
+
+def register_analysis_job(report_id: int) -> None:
+    with _cancel_events_lock:
+        _cancel_events[report_id] = threading.Event()
+
+
+def cancel_analysis_job(report_id: int) -> None:
+    with _cancel_events_lock:
+        event = _cancel_events.get(report_id)
+        if event:
+            event.set()
+
+
+def is_analysis_cancelled(report_id: int) -> bool:
+    with _cancel_events_lock:
+        event = _cancel_events.get(report_id)
+        return event.is_set() if event else False
+
+
+def _remove_analysis_job(report_id: int) -> None:
+    with _cancel_events_lock:
+        _cancel_events.pop(report_id, None)
+
+
+class AnalysisCancelled(Exception):
+    pass
 
 _ALL_REQUIRED_FIELDS = list(_REQUIRED_KEY_DEFAULTS.keys())
 
@@ -48,11 +83,16 @@ def run_analysis_job(report_id: int) -> None:
         if not db_report:
             return
 
+        if is_analysis_cancelled(report_id):
+            return
+
         start_time = time.time()
         last_write_at = 0.0
 
         def on_progress(tokens_so_far: int, done: bool = False) -> None:
             nonlocal last_write_at
+            if is_analysis_cancelled(report_id):
+                raise AnalysisCancelled()
             now = time.time()
             # RCA-06: Watchdog timeout jika total job berjalan lebih lama dari OLLAMA_TIMEOUT_SECONDS
             if (now - start_time) > settings.OLLAMA_TIMEOUT_SECONDS:
@@ -66,6 +106,17 @@ def run_analysis_job(report_id: int) -> None:
             db.commit()
 
         # Deteksi jalur section dinamis vs jalur lama
+        # BUG DIPERBAIKI (dilaporkan user, ditelusuri sampai ke database — 71 laporan
+        # berturut-turut sejak 6 Agustus 0% berhasil): sebelumnya SEMUA item "Include
+        # Sections" yang dicentang diminta ditulis AI sbg narasi 2-4 paragraf, TERMASUK
+        # section "fixed" (mis. Distribusi Kategori/Pola Hari-Jam) yang sebenarnya TIDAK
+        # PERNAH butuh tulisan AI sama sekali — isinya sudah otomatis dari chart/statistik
+        # asli (lihat is_included() di report_render_logic.py, jalur RENDER-nya terpisah
+        # total dari ai_summary["sections"]). Meminta AI menulis sampai 16 section sekaligus
+        # (bukan cuma ~8-10 yang genuinely custom) kemungkinan besar bikin model lokal
+        # kewalahan & melewatkan section custom sepenuhnya. Section "fixed" TETAP tampil
+        # normal di laporan (jalur render-nya tidak berubah) — cuma tidak lagi ikut2an
+        # diminta ditulis ulang oleh AI.
         selected_sections = None
         if isinstance(db_report.included_sections, list):
             selected_sections = sorted(
@@ -77,7 +128,7 @@ def run_analysis_job(report_id: int) -> None:
                         "order": s.get("order", idx),
                     }
                     for idx, s in enumerate(db_report.included_sections)
-                    if isinstance(s, dict) and s.get("enabled", True) and s.get("title")
+                    if isinstance(s, dict) and s.get("enabled", True) and s.get("title") and not s.get("fixed")
                 ],
                 key=lambda s: s["order"],
             ) or None
@@ -89,10 +140,15 @@ def run_analysis_job(report_id: int) -> None:
         last_err = None
         for attempt in range(MAX_RETRIES + 1):
             try:
+                if is_analysis_cancelled(report_id):
+                    raise AnalysisCancelled()
                 if attempt > 0:
                     delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
                     logger.info(f"Retry attempt {attempt}/{MAX_RETRIES} untuk report {report_id} — menunggu {delay} detik...")
-                    time.sleep(delay)
+                    with _cancel_events_lock:
+                        cancel_event = _cancel_events.get(report_id)
+                    if cancel_event and cancel_event.wait(delay):
+                        raise AnalysisCancelled()
                     db_report.tokens_generated = 0
                     db.commit()
 
@@ -119,6 +175,7 @@ def run_analysis_job(report_id: int) -> None:
                     tone=db_report.tone,
                     default_level=db_report.default_level,
                     on_progress=on_progress,
+                    is_cancelled=lambda: is_analysis_cancelled(report_id),
                 )
 
                 if not isinstance(raw_result, dict):
@@ -133,8 +190,28 @@ def run_analysis_job(report_id: int) -> None:
                         f"(key tidak dikenali atau model gagal menjawab)."
                     )
 
+                # BUG DIPERBAIKI (dilaporkan user): sebelumnya field opsional "sections" (narasi
+                # custom AI utk section yg dicentang user) TIDAK PERNAH dicek sama sekali di sini —
+                # kalau AI kembalikan 0 section padahal user minta N section custom, laporan tetap
+                # dianggap "berhasil sempurna", tidak pernah dicoba ulang (beda dgn 6 field wajib
+                # di atas yg SUDAH auto-retry). Sekarang ikut memicu retry (pakai budget attempt yg
+                # sama, tidak menambah delay/percobaan baru) — TAPI kalau di PERCOBAAN TERAKHIR
+                # masih tetap kosong, laporan TETAP disimpan sbg sukses (bukan digagalkan total):
+                # 6 field wajib sudah cukup utk laporan yg lengkap & berguna, section custom cuma
+                # pelengkap tambahan — tidak sepadan kalau sampai menggagalkan seluruh laporan
+                # hanya gara-gara bagian bonus ini.
+                sections_missing = bool(selected_sections) and not analysis_result.get("sections")
+                if sections_missing and attempt < MAX_RETRIES:
+                    raise RuntimeError(
+                        f"AI tidak menuliskan section custom yang diminta "
+                        f"(0/{len(selected_sections)} section terisi)."
+                    )
+
                 last_err = None
                 break
+            except (AnalysisCancelled, GenerationCancelled):
+                logger.info(f"Analisis report {report_id} dihentikan oleh user.")
+                return
             except Exception as ai_err:
                 last_err = ai_err
                 logger.warning(f"Attempt {attempt + 1}/{MAX_RETRIES + 1} gagal untuk report {report_id}: {ai_err}")
@@ -238,4 +315,5 @@ def run_analysis_job(report_id: int) -> None:
         except Exception as recovery_err:
             logger.error(f"[FATAL] Gagal tandai report {report_id} sbg 'failed': {recovery_err}")
     finally:
+        _remove_analysis_job(report_id)
         db.close()

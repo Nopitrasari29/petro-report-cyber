@@ -28,16 +28,14 @@ export const REPORT_SECTIONS: ReportSection[] = [
 
 // Satu halaman di panel "Pages"/Focus Studio — SEKARANG 1:1 dengan block asli laporan
 // (build_report_blocks di backend), urutan & judulnya PERSIS sama dengan yang tampil di tab
-// Preview & file PDF/PPTX yang diunduh (termasuk Cover, chart, tabel, dst — bukan lagi cuma
-// 6 field teks AI). `key` cuma terisi utk halaman yang MEMANG punya teks bebas yang bisa
-// diedit AI (ai_summary) — null utk halaman yang isinya dihitung dari data (Cover, chart,
-// tabel, kartu aset, dst), supaya tab "Edit Text" tidak berpura-pura ada teks yang bisa
-// diedit padahal tidak ada.
+// Preview & file PDF/PPTX yang diunduh. Satu block = satu halaman nyata; panel-panel di dalam
+// satu block tidak dihitung sebagai halaman terpisah.
 export interface ReportPage {
   page: string;
   key: string | null;
   title: string;
   editable: boolean;
+  blockIndex: number;
 }
 
 // key ai_summary yang 1:1 sesuai kind block-nya — TIDAK termasuk "dynamic_section" (bisa jadi
@@ -49,12 +47,17 @@ const DIRECT_EDITABLE_KEY_BY_KIND: Record<string, string> = {
 };
 
 function isSectionIncluded(key: string, includedSections: unknown): boolean {
-  if (includedSections && typeof includedSections === "object" && !Array.isArray(includedSections)) {
+  if (
+    includedSections &&
+    typeof includedSections === "object" &&
+    !Array.isArray(includedSections)
+  ) {
     return (includedSections as Record<string, boolean>)[key] !== false;
   }
   if (Array.isArray(includedSections)) {
     const match = includedSections.find(
-      (sec) => sec && typeof sec === "object" && (sec.key === key || sec.id === key),
+      (sec) =>
+        sec && typeof sec === "object" && (sec.key === key || sec.id === key),
     );
     return match ? match.enabled !== false : true;
   }
@@ -63,12 +66,8 @@ function isSectionIncluded(key: string, includedSections: unknown): boolean {
 
 // Bangun daftar "Pages" dari block ASLI yang sudah dirender backend (build_report_blocks) —
 // BUKAN lagi dari 6 field ai_summary yang terpisah. Sejak build_report_blocks dirombak jadi 2
-// tahap (kandidat + pengelompokan halaman, lihat report_render_logic.py), 1 block berkind
-// "page" bisa berisi LEBIH dari 1 panel yang masing-masing punya teks AI sendiri (mis. 1
-// halaman berisi kartu Trend Analysis + Severity Analysis + 1 section kustom sekaligus) — jadi
-// di sini di-flatten per PANEL (bukan per block/halaman) supaya tiap teks yang genuinely bisa
-// diedit tetap punya entri "Pages" sendiri, meski beberapa entri kebetulan menunjuk ke halaman
-// visual yang sama. Panel berkind "insight_tile"/"dynamic_section" dipakai BERULANG utk
+// tahap (kandidat + pengelompokan halaman, lihat report_render_logic.py). Panel berkind
+// "insight_tile"/"dynamic_section" dipakai BERULANG utk
 // trend_analysis/severity_analysis/risk_assessment MAUPUN section tambahan usulan AI
 // (ai_summary.sections[1:]) — satu-satunya cara membedakan panel ke-N mana yang mewakili key
 // ai_summary yang mana adalah lewat URUTAN kemunculannya, karena backend SELALU mengumpulkan
@@ -81,47 +80,84 @@ export function buildPagesFromBlocks(
   includedSections: unknown,
 ): ReportPage[] {
   const dynamicKeyQueue: string[] = [];
-  if (isSectionIncluded("trend_analysis", includedSections) && aiSummary?.trend_analysis) {
+  if (
+    isSectionIncluded("trend_analysis", includedSections) &&
+    aiSummary?.trend_analysis
+  ) {
     dynamicKeyQueue.push("trend_analysis");
   }
-  if (isSectionIncluded("severity_analysis", includedSections) && aiSummary?.severity_analysis) {
+  if (
+    isSectionIncluded("severity_analysis", includedSections) &&
+    aiSummary?.severity_analysis
+  ) {
     dynamicKeyQueue.push("severity_analysis");
   }
-  if (isSectionIncluded("risk_assessment", includedSections) && aiSummary?.risk_assessment) {
+  if (
+    isSectionIncluded("risk_assessment", includedSections) &&
+    aiSummary?.risk_assessment
+  ) {
     dynamicKeyQueue.push("risk_assessment");
   }
-  const extraSections = Array.isArray(aiSummary?.sections) ? aiSummary!.sections.slice(1) : [];
-  extraSections.forEach((_: any, i: number) => dynamicKeyQueue.push(`section:${i + 1}`));
+  const extraSections = Array.isArray(aiSummary?.sections)
+    ? aiSummary!.sections.slice(1)
+    : [];
+  extraSections.forEach((_: any, i: number) =>
+    dynamicKeyQueue.push(`section:${i + 1}`),
+  );
 
   let dynamicQueueIdx = 0;
   const pages: ReportPage[] = [];
 
-  const pushPage = (key: string | null, title: string) => {
-    pages.push({ page: String(pages.length + 1).padStart(2, "0"), key, title, editable: key !== null });
+  const pushPage = (key: string | null, title: string, blockIndex: number) => {
+    pages.push({
+      page: String(pages.length + 1).padStart(2, "0"),
+      key,
+      title,
+      editable: key !== null,
+      blockIndex,
+    });
   };
 
   blocks.forEach((block, i) => {
-    const panels = Array.isArray(block.panels) ? (block.panels as ReportBlock[]) : null;
+    const panels = Array.isArray(block.panels)
+      ? (block.panels as ReportBlock[])
+      : null;
     if (block.kind === "page" && panels && panels.length > 0) {
+      let editableKey: string | null = null;
       panels.forEach((panel) => {
         const panelKind = panel.panel_kind as string;
-        let key: string | null = null;
         if (panelKind === "insight_tile" || panelKind === "dynamic_section") {
-          key = dynamicKeyQueue[dynamicQueueIdx] ?? null;
+          const key = dynamicKeyQueue[dynamicQueueIdx] ?? null;
+          if (editableKey === null) editableKey = key;
           dynamicQueueIdx += 1;
         } else if (DIRECT_EDITABLE_KEY_BY_KIND[panelKind]) {
-          key = DIRECT_EDITABLE_KEY_BY_KIND[panelKind];
+          if (editableKey === null)
+            editableKey = DIRECT_EDITABLE_KEY_BY_KIND[panelKind];
         }
-        pushPage(key, panel.label || panel.title || block.title || getBlockNavTitle(block, i));
       });
+      pushPage(
+        editableKey,
+        block.title ||
+          panels[0].label ||
+          panels[0].title ||
+          getBlockNavTitle(block, i),
+        i,
+      );
       return;
     }
-    pushPage(DIRECT_EDITABLE_KEY_BY_KIND[block.kind] ?? null, getBlockNavTitle(block, i));
+    pushPage(
+      DIRECT_EDITABLE_KEY_BY_KIND[block.kind] ?? null,
+      getBlockNavTitle(block, i),
+      i,
+    );
   });
 
   return pages;
 }
 
-export function getPageByNumber(pages: ReportPage[], page: string): ReportPage | undefined {
+export function getPageByNumber(
+  pages: ReportPage[],
+  page: string,
+): ReportPage | undefined {
   return pages.find((p) => p.page === page);
 }

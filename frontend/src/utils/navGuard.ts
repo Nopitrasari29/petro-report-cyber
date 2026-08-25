@@ -4,9 +4,14 @@
 // saat pengguna mengklik link (di dalam onClick handler), bukan re-render tiap kali status
 // berubah — variabel modul biasa lebih pas & lebih sederhana daripada Context utk kebutuhan ini.
 let guardMessage: string | null = null;
+let guardOnConfirm: (() => void) | null = null;
 
-export function setNavGuardMessage(message: string | null) {
+export function setNavGuardMessage(
+  message: string | null,
+  onConfirm: (() => void) | null = null,
+) {
   guardMessage = message;
+  guardOnConfirm = onConfirm;
 }
 
 export function getNavGuardMessage(): string | null {
@@ -18,5 +23,7 @@ export function getNavGuardMessage(): string | null {
 // mau keluar), `false` kalau harus dibatalkan (pengguna klik "Cancel" di dialog konfirmasi).
 export function confirmNavAway(): boolean {
   if (!guardMessage) return true;
-  return window.confirm(guardMessage);
+  const confirmed = window.confirm(guardMessage);
+  if (confirmed) guardOnConfirm?.();
+  return confirmed;
 }

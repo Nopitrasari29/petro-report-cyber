@@ -89,9 +89,9 @@ export default function Step4PreviewEdit({
   // lalu dipakai sebagai `max-height` utk kartu Pages — daftar di dalamnya scroll sendiri
   // (lihat min-h-0 di bawah) kalau tidak muat, alih-alih memaksa baris jadi lebih tinggi.
   const previewCardRef = React.useRef<HTMLDivElement>(null);
-  const [previewCardHeight, setPreviewCardHeight] = React.useState<number | undefined>(
-    undefined,
-  );
+  const [previewCardHeight, setPreviewCardHeight] = React.useState<
+    number | undefined
+  >(undefined);
   React.useEffect(() => {
     const el = previewCardRef.current;
     if (!el) return;
@@ -111,10 +111,14 @@ export default function Step4PreviewEdit({
     return () => ro.disconnect();
   }, []);
 
-  const isActivePageEditable = getPageByNumber(pages, activePage)?.editable ?? false;
-  // Preview cuma render 1 block aktif (bukan seluruh dokumen ditumpuk) — pages 1:1 urutan
-  // dengan blocks (lihat buildPagesFromBlocks), jadi indexnya tinggal activePage - 1.
-  const activeBlock = blocks[Number(activePage) - 1];
+  const isActivePageEditable =
+    getPageByNumber(pages, activePage)?.editable ?? false;
+  // Satu block dapat memiliki beberapa panel yang ditampilkan sebagai beberapa entri Pages.
+  // Karena itu halaman aktif harus memakai blockIndex, bukan indeks visual halaman.
+  const activePageData = getPageByNumber(pages, activePage);
+  const activeBlock = activePageData
+    ? blocks[activePageData.blockIndex]
+    : undefined;
 
   // Listener tombol Escape untuk keluar dari mode Fullscreen
   React.useEffect(() => {
@@ -208,10 +212,14 @@ export default function Step4PreviewEdit({
               &lt; {tx("Prev", "Prev")}
             </button>
             <span>
-              {tx("Page", "Page")} {activePage} {tx("of", "of")} {pages.length > 0 ? pages[pages.length - 1].page : "01"}
+              {tx("Page", "Page")} {activePage} {tx("of", "of")}{" "}
+              {pages.length > 0 ? pages[pages.length - 1].page : "01"}
             </span>
             <button
-              disabled={pages.length === 0 || activePage === pages[pages.length - 1].page}
+              disabled={
+                pages.length === 0 ||
+                activePage === pages[pages.length - 1].page
+              }
               onClick={() => {
                 const next = String(Number(activePage) + 1).padStart(2, "0");
                 setActivePage(next);
@@ -401,7 +409,11 @@ export default function Step4PreviewEdit({
                 {!blocksLoading && !blocksError && activeBlock && (
                   <div className="w-full">
                     <div className="aspect-video overflow-y-auto bg-white border border-stone-300 shadow-sm">
-                      <ReportBlockRenderer block={activeBlock} visualStyle={visualStyle} themeColor={themeColor} />
+                      <ReportBlockRenderer
+                        block={activeBlock}
+                        visualStyle={visualStyle}
+                        themeColor={themeColor}
+                      />
                     </div>
                   </div>
                 )}

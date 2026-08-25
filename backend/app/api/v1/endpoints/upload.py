@@ -198,7 +198,7 @@ def upload_security_file(
     files: List[UploadFile] = File(...),
     period_start: Optional[str] = Form(None),  # Format YYYY-MM-DD
     period_end: Optional[str] = Form(None),    # Format YYYY-MM-DD
-    template_type: Optional[str] = Form("SOC Executive Summary (Monthly)"),
+    template_type: Optional[str] = Form("SOC Executive Summary"),
     output_format: Optional[str] = Form("PDF"),
     language: Optional[str] = Form("Indonesian"),
     included_sections: Optional[str] = Form(None),  # JSON string [{"key": "...", "title": "..."}, ...]

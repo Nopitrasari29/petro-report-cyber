@@ -1,6 +1,57 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import ScrollReveal from "@/components/ScrollReveal";
 import { REPORT_SECTIONS } from "@/utils/reportSections";
+
+// Konversi warna utk color wheel kustom (menggantikan <input type="color"> bawaan browser,
+// lihat komentar di dekat colorWheelTriggerRef di bawah) — HEX <-> RGB <-> HSV.
+function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace(/^#/, "").padEnd(6, "0").slice(0, 6);
+  const bigint = parseInt(clean, 16) || 0;
+  return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+  return (
+    "#" +
+    [clamp(r), clamp(g), clamp(b)]
+      .map((v) => v.toString(16).padStart(2, "0"))
+      .join("")
+      .toUpperCase()
+  );
+}
+
+function rgbToHsv(r: number, g: number, b: number): { h: number; s: number; v: number } {
+  const rn = r / 255, gn = g / 255, bn = b / 255;
+  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === rn) h = ((gn - bn) / d) % 6;
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else h = (rn - gn) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = max === 0 ? 0 : d / max;
+  return { h, s: s * 100, v: max * 100 };
+}
+
+function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
+  const sn = s / 100, vn = v / 100;
+  const c = vn * sn;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = vn - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+}
 
 export interface DynamicSectionItem {
   key: string;
@@ -92,18 +143,200 @@ export default function Step2Settings({
     themeColor && themeColor.startsWith("#") ? themeColor : "#004D25"
   );
   const colorPickerRef = React.useRef<HTMLDivElement>(null);
+  // BUG YANG DIPERBAIKI (dilaporkan user, screenshot: popup keluar dari kotaknya & tabrakan
+  // dgn kartu "Export Format" di bawahnya): popup sebelumnya position:absolute di DALAM kartu
+  // "Template & Theme" — kartu itu (class premium-card-hover) punya position:relative +
+  // transition transform sendiri, jadi popup nyasar terjebak/salah tumpuk di belakang kartu
+  // lain alih-alih mengambang bersih di atas SEMUA konten. Sekarang dirender lewat React
+  // Portal ke document.body (posisi dihitung dari getBoundingClientRect tombol pemicu) —
+  // pola dropdown standar yang TIDAK mungkin lagi terjebak konteks tumpukan kartu manapun.
+  const colorTriggerRef = React.useRef<HTMLButtonElement>(null);
+  const colorPopupRef = React.useRef<HTMLDivElement>(null);
+  const [popupPos, setPopupPos] = React.useState({ top: 0, left: 0, width: 0 });
 
-  // Tutup color picker saat klik di luar
+  const openColorPicker = () => {
+    const rect = colorTriggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setPopupPos({ top: rect.bottom + 8, left: rect.left, width: rect.width });
+    }
+    setShowColorPicker(true);
+  };
+
+  // Tutup color picker saat klik di luar (cek tombol pemicu MAUPUN isi popup — popup sekarang
+  // di document.body via portal, di luar subtree colorPickerRef).
   React.useEffect(() => {
     if (!showColorPicker) return;
     const handler = (e: MouseEvent) => {
-      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      // BUG DIPERBAIKI (ketemu lewat tes klik-sungguhan, bukan cuma mockup): panel color
+      // wheel (wheelPopupRef) juga di-portal ke document.body sbg SIBLING popup ini, BUKAN
+      // anak DOM dari colorPopupRef — jadi klik di dalam panel color wheel (mis. menyeret
+      // kotak saturation/value) sebelumnya selalu terhitung "di luar" popup utama ini &
+      // menutup KEDUA popup di tengah drag. Sekarang klik di dalam wheelPopupRef/
+      // wheelTriggerRef juga dianggap "di dalam".
+      if (
+        colorPickerRef.current && !colorPickerRef.current.contains(target) &&
+        colorPopupRef.current && !colorPopupRef.current.contains(target) &&
+        !(wheelPopupRef.current && wheelPopupRef.current.contains(target)) &&
+        !(wheelTriggerRef.current && wheelTriggerRef.current.contains(target))
+      ) {
         setShowColorPicker(false);
+      }
+    };
+    const onScrollOrResize = () => {
+      const rect = colorTriggerRef.current?.getBoundingClientRect();
+      if (rect) setPopupPos({ top: rect.bottom + 8, left: rect.left, width: rect.width });
+    };
+    document.addEventListener("mousedown", handler);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [showColorPicker]);
+
+  // Panel "color wheel" kustom (gantikan <input type="color"> bawaan browser — BUG YANG
+  // DIPERBAIKI, dilaporkan user: color picker native browser posisinya di luar kendali CSS
+  // kita, jadi bisa muncul tertumpuk aneh di belakang kartu popup kita sendiri). Dirender
+  // lewat React Portal juga (pola sama persis dgn colorPopupRef di atas), terbuka di
+  // samping kartu popup utama — lihat colorWheelPos.
+  const [showColorWheel, setShowColorWheel] = React.useState(false);
+  const [hsv, setHsv] = React.useState(() => {
+    const [r, g, b] = hexToRgb(customHex);
+    return rgbToHsv(r, g, b);
+  });
+  const wheelTriggerRef = React.useRef<HTMLDivElement>(null);
+  const wheelPopupRef = React.useRef<HTMLDivElement>(null);
+  const svSquareRef = React.useRef<HTMLDivElement>(null);
+  const hueSliderRef = React.useRef<HTMLDivElement>(null);
+  const [wheelPos, setWheelPos] = React.useState({ top: 0, left: 0 });
+  const eyedropperSupported =
+    typeof window !== "undefined" && "EyeDropper" in window;
+
+  const applyHsv = (next: { h: number; s: number; v: number }) => {
+    setHsv(next);
+    const [r, g, b] = hsvToRgb(next.h, next.s, next.v);
+    const hex = rgbToHex(r, g, b);
+    setCustomHex(hex);
+    setThemeColor && setThemeColor(hex);
+  };
+
+  const openColorWheel = () => {
+    const [r, g, b] = hexToRgb(customHex);
+    setHsv(rgbToHsv(r, g, b));
+    const popupRect = colorPopupRef.current?.getBoundingClientRect();
+    if (popupRect) {
+      const wheelWidth = 216;
+      const fitsRight = popupRect.right + 10 + wheelWidth <= window.innerWidth - 12;
+      setWheelPos({
+        top: popupRect.top,
+        left: fitsRight ? popupRect.right + 10 : Math.max(12, popupRect.left - wheelWidth - 10),
+      });
+    }
+    setShowColorWheel(true);
+  };
+
+  React.useEffect(() => {
+    if (!showColorPicker) setShowColorWheel(false);
+  }, [showColorPicker]);
+
+  React.useEffect(() => {
+    if (!showColorWheel) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        wheelTriggerRef.current && !wheelTriggerRef.current.contains(target) &&
+        wheelPopupRef.current && !wheelPopupRef.current.contains(target)
+      ) {
+        setShowColorWheel(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [showColorPicker]);
+  }, [showColorWheel]);
+
+  const dragSvSquare = (clientX: number, clientY: number) => {
+    const rect = svSquareRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const s = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const v = Math.max(0, Math.min(1, 1 - (clientY - rect.top) / rect.height));
+    applyHsv({ h: hsv.h, s: s * 100, v: v * 100 });
+  };
+
+  const dragHueSlider = (clientX: number) => {
+    const rect = hueSliderRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const h = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * 360;
+    applyHsv({ h, s: hsv.s, v: hsv.v });
+  };
+
+  // PERMINTAAN USER: kursor tangan tetap terlihat saat menyeret handle bulat, padahal
+  // maunya handle bulat itu sendiri yang MEMBESAR saat diseret (jadi indikator visual
+  // posisi warna, bukan kursornya) — lihat draggingHandle, dipakai utk scale-up handle +
+  // sembunyikan kursor (cursor-none) selama drag berlangsung.
+  const [draggingHandle, setDraggingHandle] = React.useState<"sv" | "hue" | null>(null);
+
+  const handleSvPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDraggingHandle("sv");
+    // BUG DIPERBAIKI (dilaporkan user): cursor-none di kotaknya cuma berlaku selama
+    // mouse SECARA FISIK ada tepat di atas kotak itu — begitu gerakan menyeret sedikit
+    // saja melewati batas kotak (wajar krn kotaknya kecil), kursor balik kelihatan lagi
+    // walau nilai warnanya tetap ke-update benar (posisi di-clamp). Selama drag AKTIF,
+    // paksa cursor:none di document.body juga supaya tetap tersembunyi ke mana pun mouse
+    // bergerak, dilepas lagi begitu drag selesai.
+    document.body.style.cursor = "none";
+    dragSvSquare(e.clientX, e.clientY);
+    const onMove = (ev: PointerEvent) => dragSvSquare(ev.clientX, ev.clientY);
+    const onUp = () => {
+      setDraggingHandle(null);
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const handleHuePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDraggingHandle("hue");
+    document.body.style.cursor = "none";
+    dragHueSlider(e.clientX);
+    const onMove = (ev: PointerEvent) => dragHueSlider(ev.clientX);
+    const onUp = () => {
+      setDraggingHandle(null);
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const handleEyedropper = async () => {
+    if (!eyedropperSupported) return;
+    try {
+      // @ts-expect-error EyeDropper belum ada di lib.dom.d.ts standar TypeScript
+      const dropper = new window.EyeDropper();
+      const result = await dropper.open();
+      const hex = (result.sRGBHex as string).toUpperCase();
+      setCustomHex(hex);
+      setThemeColor && setThemeColor(hex);
+      const [r, g, b] = hexToRgb(hex);
+      setHsv(rgbToHsv(r, g, b));
+    } catch {
+      // User membatalkan (klik Escape) — tidak perlu ditangani sbg error.
+    }
+  };
+
+  const wheelRgb = hsvToRgb(hsv.h, hsv.s, hsv.v);
+  const wheelHex = rgbToHex(wheelRgb[0], wheelRgb[1], wheelRgb[2]);
+  const hueBg = `hsl(${hsv.h}, 100%, 50%)`;
+  const svHandleSize = draggingHandle === "sv" ? 24 : 14;
+  const hueHandleSize = draggingHandle === "hue" ? 26 : 18;
 
   // BUG DIPERBAIKI (dilaporkan user, screenshot ke-3): CSS grid `align-items: stretch` biasa
   // TIDAK bisa diandalkan di sini — begitu daftar section AI panjang (7-9+ item), tinggi
@@ -169,12 +402,14 @@ export default function Step2Settings({
         </p>
       </div>
 
-      {/* 3-Column Top Cards */}
+      {/* 3-Column Top Cards — Opsi C (disetujui user via canvas desain): tetap 3 kolom seperti
+          semula, tapi Kolom 1 dipadatkan dgn memindahkan Judul Kop/Subjudul Kop ke sini juga
+          (sebelumnya di Kolom 2), supaya tidak terlalu kosong dibanding 2 kolom lain. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-left">
-        {/* Column 1: Report Metadata & Period */}
+        {/* Column 1: Informasi Laporan (Periode, Bahasa, Judul/Subjudul Kop) */}
         <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm space-y-4 premium-card-hover transition-colors">
           <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2">
-            {tx("Report Period & Language", "Report Period & Language")}
+            {tx("Informasi Laporan", "Report Information")}
           </h3>
 
           <div className="space-y-3">
@@ -242,10 +477,40 @@ export default function Step2Settings({
                 <option value="English">English</option>
               </select>
             </div>
+
+            <div>
+              <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">
+                {tx("Kop Header Title", "Judul Kop")}
+              </label>
+              <input
+                type="text"
+                value={headerTitle}
+                onChange={(e) =>
+                  setHeaderTitle && setHeaderTitle(e.target.value)
+                }
+                placeholder="PT PETROKIMIA GRESIK"
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">
+                {tx("Kop Subtitle", "Subjudul Kop")}
+              </label>
+              <input
+                type="text"
+                value={headerSubtitle}
+                onChange={(e) =>
+                  setHeaderSubtitle && setHeaderSubtitle(e.target.value)
+                }
+                placeholder="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700 font-medium focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
+              />
+            </div>
           </div>
         </div>
 
-        {/* Column 2: Template Kop & Theme Selector — ref di sini dipakai ResizeObserver (lihat
+        {/* Column 2: Template & Theme Selector — ref di sini dipakai ResizeObserver (lihat
             templateCardHeight di atas) supaya tinggi kartu ini bisa "dipinjam" persis oleh
             kartu Include Sections di kolom 3. */}
         <div
@@ -344,38 +609,10 @@ export default function Step2Settings({
               </div>
             </div>
 
-            <div>
-              <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1">
-                {tx("Kop Header Title", "Judul Kop")}
-              </label>
-              <input
-                type="text"
-                value={headerTitle}
-                onChange={(e) =>
-                  setHeaderTitle && setHeaderTitle(e.target.value)
-                }
-                placeholder="PT PETROKIMIA GRESIK"
-                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1">
-                {tx("Kop Subtitle", "Subjudul Kop")}
-              </label>
-              <input
-                type="text"
-                value={headerSubtitle}
-                onChange={(e) =>
-                  setHeaderSubtitle && setHeaderSubtitle(e.target.value)
-                }
-                placeholder="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
-                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700 font-medium focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
-              />
-            </div>
-
-            {/* Theme Color — Inline Expandable Luxury Accordion (Never gets cut off or overlaps buttons!) */}
-            <div className="space-y-2" ref={colorPickerRef}>
+            {/* Theme Color — sekarang popup mengambang (tidak lagi mendorong Style Preset di
+                bawahnya turun saat dibuka) — BUG YANG DIPERBAIKI (dilaporkan user): dulu
+                "Inline Expandable Accordion" ikut mendorong-dorong tata letak kartu ini. */}
+            <div className="relative" ref={colorPickerRef}>
               <div className="flex items-center justify-between">
                 <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider">
                   {tx("Theme Color", "Warna Tema Laporan")}
@@ -404,7 +641,8 @@ export default function Step2Settings({
                     {/* The Sleek Single-Row Pill Trigger */}
                     <button
                       type="button"
-                      onClick={() => setShowColorPicker(!showColorPicker)}
+                      ref={colorTriggerRef}
+                      onClick={() => (showColorPicker ? setShowColorPicker(false) : openColorPicker())}
                       className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border transition-all duration-200 cursor-pointer group shadow-2xs ${
                         showColorPicker
                           ? "bg-white border-petro-green ring-2 ring-petro-green/20 shadow-xs"
@@ -442,9 +680,18 @@ export default function Step2Settings({
                       </div>
                     </button>
 
-                    {/* Smooth INLINE Expandable Palette (Never cuts off, cleanly pushes content down!) */}
-                    {showColorPicker && (
-                      <div className="bg-stone-50/80 border border-stone-200/90 rounded-2xl p-3.5 space-y-3 animate-fadeIn">
+                    {/* Popup mengambang lewat React Portal ke document.body (posisi dihitung
+                        dari tombol pemicu, lihat popupPos/openColorPicker) — TIDAK ikut alur
+                        dokumen jadi tidak mendorong turun elemen di bawahnya, DAN tidak lagi
+                        bisa terjebak di belakang/tabrakan dgn kartu lain (BUG YANG
+                        DIPERBAIKI, dilaporkan user). Ditutup via klik-di-luar (cek
+                        colorPickerRef + colorPopupRef, sudah ada di atas). */}
+                    {showColorPicker && createPortal(
+                      <div
+                        ref={colorPopupRef}
+                        className="fixed z-50 bg-white border border-stone-200/90 rounded-2xl p-3.5 space-y-3 shadow-xl animate-fadeIn"
+                        style={{ top: popupPos.top, left: popupPos.left, width: Math.max(popupPos.width, 280) }}
+                      >
                         {/* Section 1: 8 Clean Brand Presets */}
                         <div>
                           <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
@@ -498,30 +745,39 @@ export default function Step2Settings({
                           <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
                             {tx("Custom Hex / Color Wheel", "Warna Kustom")}
                           </span>
-                          <div className="flex items-center gap-2">
-                            {/* Color Wheel Swatch Trigger */}
+                          <div className="flex items-center gap-1.5">
+                            {/* Color Wheel Trigger — BUG DIPERBAIKI (dilaporkan user,
+                                screenshot): sebelumnya <input type="color"> bawaan browser,
+                                posisinya di luar kendali CSS kita jadi bisa muncul tertumpuk
+                                aneh di belakang kartu popup kita sendiri. Sekarang buka
+                                panel color wheel BUATAN SENDIRI (lihat showColorWheel di
+                                atas), portal juga jadi tidak mungkin lagi tertumpuk. */}
                             <div
-                              className="relative w-9 h-9 rounded-xl shadow-xs border border-stone-300/80 overflow-hidden shrink-0 cursor-pointer group"
+                              ref={wheelTriggerRef}
+                              onClick={() => (showColorWheel ? setShowColorWheel(false) : openColorWheel())}
+                              className="relative w-8.5 h-8.5 rounded-full shrink-0 cursor-pointer flex items-center justify-center shadow-xs ring-2 ring-petro-green/20"
+                              style={{
+                                background:
+                                  "conic-gradient(from 180deg, #ff0000, #ffcc00, #33ff00, #00ffee, #0066ff, #cc00ff, #ff0000)",
+                              }}
                               title={tx("Click to open color wheel", "Klik untuk buka color wheel")}
-                            >
-                              <input
-                                type="color"
-                                value={customHex.startsWith("#") ? customHex : "#004D25"}
-                                onChange={(e) => {
-                                  const val = e.target.value.toUpperCase();
-                                  setCustomHex(val);
-                                  setThemeColor && setThemeColor(val);
-                                }}
-                                className="absolute -top-4 -left-4 w-20 h-20 cursor-pointer opacity-0 z-10"
-                              />
-                              <div
-                                className="w-full h-full rounded"
-                                style={{ backgroundColor: customHex }}
-                              />
-                              <div className="absolute inset-0 bg-black/15 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] transition-opacity">
-                                🎨
-                              </div>
-                            </div>
+                            />
+
+                            {/* Eyedropper — ambil warna langsung dari layar (EyeDropper API,
+                                Chrome/Edge; disembunyikan kalau browser tidak dukung). */}
+                            {eyedropperSupported && (
+                              <button
+                                type="button"
+                                onClick={handleEyedropper}
+                                title={tx("Pick color from screen", "Ambil warna dari layar")}
+                                className="w-8.5 h-8.5 rounded-xl bg-violet-50 border border-violet-200/80 shrink-0 cursor-pointer flex items-center justify-center hover:bg-violet-100 transition-colors"
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="#6d4fd6" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                                  <path d="M18.5 3.5a2.121 2.121 0 0 1 3 3L19 9l-3-3 2.5-2.5Z" />
+                                  <path d="M16 6 5 17v3h3L19 9" />
+                                </svg>
+                              </button>
+                            )}
 
                             {/* Hex Monospace Input */}
                             <div className="relative flex-1">
@@ -539,6 +795,8 @@ export default function Step2Settings({
                                   setCustomHex(val);
                                   if (raw.length === 6) {
                                     setThemeColor && setThemeColor(val);
+                                    const [r, g, b] = hexToRgb(val);
+                                    setHsv(rgbToHsv(r, g, b));
                                   }
                                 }}
                                 className="w-full bg-white border border-stone-200 rounded-xl pl-7 pr-3 py-2 text-xs font-mono font-extrabold text-stone-850 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green uppercase tracking-wider shadow-2xs"
@@ -561,7 +819,116 @@ export default function Step2Settings({
                             </button>
                           </div>
                         </div>
-                      </div>
+                      </div>,
+                      document.body
+                    )}
+
+                    {/* Panel Color Wheel kustom — portal terpisah, terbuka di samping popup
+                        utama (lihat openColorWheel), TIDAK pernah tertumpuk krn di
+                        document.body, sama pola dgn popup utama di atas. */}
+                    {showColorWheel && createPortal(
+                      <div
+                        ref={wheelPopupRef}
+                        className="fixed z-60 bg-white border border-stone-200/90 rounded-2xl p-3.5 shadow-xl animate-fadeIn"
+                        style={{ top: wheelPos.top, left: wheelPos.left, width: 216 }}
+                      >
+                        <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
+                          {tx("Color Wheel", "Color Wheel")}
+                        </span>
+
+                        {/* Kotak Saturation/Value — PERMINTAAN USER: kursor cuma disembunyikan
+                            SELAMA ditekan/digeser (draggingHandle), bukan dari awal hover —
+                            bulat indikator yang membesar itu sendiri jadi penanda posisi,
+                            gantinya kursor. Posisi handle dihitung via calc() (bukan
+                            left:X%+transform:-50%) supaya badannya selalu persis di dalam
+                            kotak, tidak pernah "nongol" keluar tepi sedikit pun. */}
+                        <div
+                          ref={svSquareRef}
+                          onPointerDown={handleSvPointerDown}
+                          className={`relative w-full h-33 rounded-[10px] shadow-inner select-none touch-none ${
+                            draggingHandle === "sv" ? "cursor-none" : "cursor-pointer"
+                          }`}
+                          style={{
+                            background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent), ${hueBg}`,
+                          }}
+                        >
+                          <div
+                            className={`absolute rounded-full border-[2.5px] border-white pointer-events-none transition-[width,height] duration-150 ${
+                              draggingHandle === "sv" ? "w-6 h-6" : "w-3.5 h-3.5"
+                            }`}
+                            style={{
+                              left: `calc((100% - ${svHandleSize}px) * ${hsv.s / 100})`,
+                              top: `calc((100% - ${svHandleSize}px) * ${(100 - hsv.v) / 100})`,
+                              backgroundColor: wheelHex,
+                              boxShadow: "0 0 0 1px rgba(0,0,0,0.35), 0 1px 3px rgba(0,0,0,0.3)",
+                            }}
+                          />
+                        </div>
+
+                        {/* Slider Hue — sama, handle dijaga tetap di dalam track secara
+                            horizontal (vertikal tetap ditengahkan, track-nya memang sengaja
+                            lebih tipis dari handle). */}
+                        <div
+                          ref={hueSliderRef}
+                          onPointerDown={handleHuePointerDown}
+                          className={`relative mt-3 w-full h-3 rounded-full shadow-inner select-none touch-none ${
+                            draggingHandle === "hue" ? "cursor-none" : "cursor-pointer"
+                          }`}
+                          style={{
+                            background:
+                              "linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)",
+                          }}
+                        >
+                          <div
+                            className={`absolute rounded-full bg-white border-2 border-white pointer-events-none transition-[width,height] duration-150 ${
+                              draggingHandle === "hue" ? "w-6.5 h-6.5" : "w-4.5 h-4.5"
+                            }`}
+                            style={{
+                              left: `calc((100% - ${hueHandleSize}px) * ${hsv.h / 360})`,
+                              top: "50%",
+                              transform: "translateY(-50%)",
+                              boxShadow: "0 0 0 1.5px rgba(0,0,0,0.25), 0 1px 3px rgba(0,0,0,0.25)",
+                            }}
+                          />
+                        </div>
+
+                        {/* Preview + Hex */}
+                        <div className="flex items-center gap-2.5 mt-3.5">
+                          <span
+                            className="w-8.5 h-8.5 rounded-full border-2 border-white shrink-0"
+                            style={{ backgroundColor: wheelHex, boxShadow: "0 0 0 1px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.08)" }}
+                          />
+                          <span className="font-mono text-[15px] font-extrabold text-stone-900 tracking-wide">
+                            <span className="text-stone-400 font-bold">#</span>
+                            {wheelHex.replace(/^#/, "")}
+                          </span>
+                        </div>
+
+                        {/* RGB Fields */}
+                        <div className="flex gap-1.5 mt-3">
+                          {(["r", "g", "b"] as const).map((channel, idx) => (
+                            <div key={channel} className="flex-1">
+                              <span className="text-[8.5px] font-extrabold text-stone-400 uppercase tracking-wider text-center block mb-1">
+                                {channel}
+                              </span>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={Math.round(wheelRgb[idx])}
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(/[^0-9]/g, "");
+                                  const n = Math.max(0, Math.min(255, raw === "" ? 0 : parseInt(raw, 10)));
+                                  const nextRgb: [number, number, number] = [...wheelRgb] as [number, number, number];
+                                  nextRgb[idx] = n;
+                                  applyHsv(rgbToHsv(nextRgb[0], nextRgb[1], nextRgb[2]));
+                                }}
+                                className="w-full text-center bg-stone-50 border border-stone-200 rounded-[9px] py-1.5 text-[11.5px] font-mono font-extrabold text-stone-900 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>,
+                      document.body
                     )}
                   </div>
                 );

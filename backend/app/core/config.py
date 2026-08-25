@@ -53,7 +53,13 @@ class Settings(BaseSettings):
     # cold-load + prefill prompt besar + generate token sungguhan. Dipasangkan dengan
     # "keep_alive" di ollama_client.py (menahan model tetap di memori) supaya cold-load itu
     # sendiri jarang terjadi berulang, tapi timeout tetap dilonggarkan sebagai jaring pengaman.
-    OLLAMA_TIMEOUT_SECONDS: int = 1200
+    # Dinaikkan lagi dari 1200 -> 1800 (dilaporkan user, bug section custom AI selalu kosong):
+    # perbaikannya (num_ctx dinaikkan di ollama_client.py, lihat komentar di sana) BENAR
+    # membuat AI berhasil menulis semua section custom yang diminta — tapi diukur langsung,
+    # permintaan "berat" (10 section custom sekaligus) genuinely butuh ~1450 detik (~24 menit)
+    # utk selesai di mesin CPU-only ini. 1200s akan MEMOTONG proses yang sebenarnya sedang
+    # SUKSES sebelum sempat selesai — persis pola yang sama dgn 2 kenaikan sebelumnya.
+    OLLAMA_TIMEOUT_SECONDS: int = 1800
 
     @property
     def OLLAMA_BASE_URL(self) -> str:

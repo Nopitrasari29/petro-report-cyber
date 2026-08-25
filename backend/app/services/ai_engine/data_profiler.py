@@ -145,7 +145,13 @@ def _normalize_category_key(value: str) -> str:
 
 
 def _top_values(df: pd.DataFrame, col: str, n: int = 10) -> List[Dict[str, Any]]:
-    raw_counts = df[col].dropna().astype(str).value_counts()
+    series = df[col].dropna()
+    if pd.api.types.is_float_dtype(series) and not series.empty and (series % 1 == 0).all():
+        # Kolom angka yang ada nilai kosongnya otomatis jadi float64 (NaN memaksa tipe
+        # desimal) — kalau ternyata semua nilai terisinya bilangan bulat, bulatkan dulu
+        # sebelum dijadikan label supaya tidak tampil "2.0"/"3.0" di laporan.
+        series = series.astype("Int64")
+    raw_counts = series.astype(str).value_counts()
     merged: Dict[str, Dict[str, Any]] = {}
     for val, cnt in raw_counts.items():
         key = _normalize_category_key(val)

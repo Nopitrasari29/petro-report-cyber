@@ -8,6 +8,7 @@ import {
   DEFAULT_VISUAL_STYLE,
   THEME_PALETTES,
   resolveThemeColors,
+  lightSafe,
   type ReportBlock,
   type VisualStyle,
   type ThemeColors,
@@ -69,6 +70,23 @@ function Flourish({ corner, theme = THEME_PALETTES.green }: { corner: VisualStyl
   );
 }
 
+// Logo (Danantara/Petrokimia Gresik/Pupuk Indonesia) pojok kanan atas tiap halaman — mirror
+// logo_html di export_pdf.py::_page(). SEBELUMNYA preview React sama sekali tidak
+// menampilkan ini (dilaporkan user, sama seperti Flourish di atas: preview vs hasil unduhan
+// beda). Logo aslinya berwarna gelap/hitam (lihat public/LOGO_PETRO_DANANTARA.png) — di
+// halaman berlatar gelap (`dark`) dibungkus chip putih spy tetap kontras, sama seperti fix
+// di backend, BUKAN ditempel langsung di atas latar gelap yang sama.
+function PageLogo({ dark }: { dark?: boolean }) {
+  return (
+    <img
+      src="/LOGO_PETRO_DANANTARA.png"
+      alt=""
+      className="absolute top-3 right-3 h-6 sm:h-7 w-auto object-contain z-10"
+      style={dark ? { background: C.white, borderRadius: 6, padding: "4px 8px" } : undefined}
+    />
+  );
+}
+
 function BarChart({
   categories,
   values,
@@ -116,20 +134,35 @@ function BarLineChart({
   values,
   cumulative,
   theme = THEME_PALETTES.green,
+  height = 200,
 }: {
   categories: string[];
   values: number[];
   cumulative?: number[];
   theme?: ThemeColors;
+  height?: number;
 }) {
   const max = Math.max(...values, 1);
   const maxCum = cumulative && cumulative.length ? Math.max(...cumulative, 1) : 0;
   const n = categories.length || 1;
   return (
-    <div className="relative" style={{ height: 110 }}>
+    // height default dinaikkan (110 -> 200, dioper eksplisit lebih kecil di konteks tile
+    // kompak/berpasangan — lihat ManagementTileChart & MiniChartPanel) — BUG YANG DIPERBAIKI
+    // (dilaporkan user, sama seperti GroupedBarChart di atas): chart "Analisis Tren" kerap
+    // berakhir sendirian selebar halaman, ukuran kecil menyisakan byk ruang kosong.
+    // `w-full` WAJIB eksplisit — div ini isinya cuma anak `absolute` (bar row + svg garis),
+    // jadi TIDAK punya lebar intrinsik sendiri. Selama ini "kebetulan" lebar penuh krn
+    // konteks pemanggilnya block-flow biasa, tapi di InsightTile chart dibungkus flex
+    // `items-center justify-center` (TIDAK men-stretch anak) — tanpa w-full, div ini
+    // collapse ke lebar ~0 & seluruh isinya numpuk jadi satu titik (BUG NYATA, ketahuan saat
+    // verifikasi visual: label angka tumpang tindih, tidak ada batang sama sekali).
+    <div className="relative w-full" style={{ height }}>
       <div className="absolute inset-0 flex items-end gap-1.5">
         {categories.map((cat, i) => (
           <div key={cat} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
+            {values[i] > 0 && (
+              <span className="text-[9px] font-bold mb-0.5" style={{ color: C.textDark }}>{values[i]}</span>
+            )}
             <div
               className="w-full rounded-t"
               style={{ height: `${Math.max((values[i] / max) * 78, 3)}%`, background: theme.main }}
@@ -144,7 +177,7 @@ function BarLineChart({
         <svg className="absolute inset-0 pointer-events-none" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
           <polyline
             fill="none"
-            stroke={theme.light}
+            stroke={lightSafe(theme.light)}
             strokeWidth={1.6}
             vectorEffect="non-scaling-stroke"
             points={cumulative!.map((v, i) => `${((i + 0.5) / n) * 100},${100 - (v / maxCum) * 84}`).join(" ")}
@@ -157,10 +190,19 @@ function BarLineChart({
 
 // Skor multi-indikator (radar) — mirror _radar_chart_svg/add_native_radar_chart. Nilai (0-100)
 // sudah dinormalisasi di report_render_logic.py, jadi di sini tinggal digambar.
-function RadarChart({ axes, values, theme = THEME_PALETTES.green }: { axes: string[]; values: number[]; theme?: ThemeColors }) {
+function RadarChart({
+  axes,
+  values,
+  theme = THEME_PALETTES.green,
+  size = 220,
+}: {
+  axes: string[];
+  values: number[];
+  theme?: ThemeColors;
+  size?: number;
+}) {
   const n = axes.length;
   if (n < 3) return null;
-  const size = 220;
   const cx = size / 2;
   const cy = size / 2;
   const rMax = size / 2 - 46;
@@ -250,6 +292,7 @@ function GroupedBarChart({
   labelA,
   labelB,
   theme = THEME_PALETTES.green,
+  height = 200,
 }: {
   categories: string[];
   seriesA: number[];
@@ -257,16 +300,40 @@ function GroupedBarChart({
   labelA?: string;
   labelB?: string;
   theme?: ThemeColors;
+  height?: number;
 }) {
   const max = Math.max(...seriesA, ...seriesB, 1);
   return (
-    <div>
-      <div className="flex items-end gap-3" style={{ height: 110 }}>
+    <div className="w-full">
+      {/* w-full eksplisit (bukan hanya andalkan block-level default) — lihat catatan senada
+          di BarLineChart soal kenapa ini WAJIB begitu chart dipakai di dalam pembungkus flex
+          center (mis. ManagementTileChart) yang tidak men-stretch anaknya.
+          height default dinaikkan (110 -> 200) — dipakai APA ADANYA di case "period_compare"
+          (panel MANDIRI selebar halaman, lihat backend _build_period_compare_block yang
+          dapat perbaikan sama) — ManagementTileChart mengoper height=110 sendiri utk versi
+          tile kompaknya. BUG YANG DIPERBAIKI (dilaporkan user): dulu selalu 110px tetap,
+          jadi chart ini tampak seperti persegi panjang kecil mengambang di tengah halaman
+          lebar 16:9, byk ruang kosong di kanan-kiri-atas-bawah. Cap tinggi batang 90 -> 78%
+          menyisakan ruang utk label angka di atasnya (BUG LAIN: dulu tidak ada angka sama
+          sekali di chart ini).*/}
+      <div className="flex items-end gap-3" style={{ height }}>
         {categories.map((cat, i) => (
           <div key={cat} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
             <div className="flex items-end gap-1 w-full justify-center h-full">
-              <div className="rounded-t" style={{ width: "40%", height: `${Math.max((seriesA[i] / max) * 90, 3)}%`, background: theme.main }} />
-              <div className="rounded-t" style={{ width: "40%", height: `${Math.max((seriesB[i] / max) * 90, 3)}%`, background: theme.light }} />
+              {/* seriesB pakai theme.chart (BUKAN theme.light) — utk tema "gold" khususnya,
+                  main (bronze) & light (krem sangat pucat) kontrasnya rendah berdampingan. */}
+              <div className="flex flex-col items-center justify-end h-full" style={{ width: "40%" }}>
+                {seriesA[i] > 0 && (
+                  <span className="text-[9px] font-bold mb-0.5" style={{ color: C.textDark }}>{seriesA[i]}</span>
+                )}
+                <div className="w-full rounded-t" style={{ height: `${Math.max((seriesA[i] / max) * 78, 3)}%`, background: theme.main }} />
+              </div>
+              <div className="flex flex-col items-center justify-end h-full" style={{ width: "40%" }}>
+                {seriesB[i] > 0 && (
+                  <span className="text-[9px] font-bold mb-0.5" style={{ color: C.textDark }}>{seriesB[i]}</span>
+                )}
+                <div className="w-full rounded-t" style={{ height: `${Math.max((seriesB[i] / max) * 78, 3)}%`, background: theme.chart }} />
+              </div>
             </div>
             <span className="text-[8px] mt-1 truncate w-full text-center" style={{ color: C.grayText }}>
               {cat}
@@ -280,7 +347,7 @@ function GroupedBarChart({
           {labelA}
         </span>
         <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full" style={{ background: theme.light }} />
+          <span className="w-2 h-2 rounded-full" style={{ background: theme.chart }} />
           {labelB}
         </span>
       </div>
@@ -315,7 +382,17 @@ function FunnelChart({ categories, values, color }: { categories: string[]; valu
 // Varian donut — dibangun murni CSS conic-gradient (bukan library chart), lingkaran dalam
 // solid putih di atasnya menciptakan "lubang" donut. Warna per-kategori pakai CATEGORY_COLOR_RAMP
 // (ramp yang sama dipakai legend IvoryPanel) supaya tiap potongan tetap bisa dibedakan.
-function DonutChart({ categories, values, colors }: { categories: string[]; values: number[]; colors?: string[] }) {
+function DonutChart({
+  categories,
+  values,
+  colors,
+  textColor,
+}: {
+  categories: string[];
+  values: number[];
+  colors?: string[];
+  textColor?: string;
+}) {
   const total = values.reduce((a, b) => a + b, 0) || 1;
   let cumulative = 0;
   const stops = categories.map((_cat, i) => {
@@ -325,6 +402,9 @@ function DonutChart({ categories, values, colors }: { categories: string[]; valu
     const end = (cumulative / total) * 360;
     return `${color} ${start}deg ${end}deg`;
   });
+  // textColor opsional (default C.textDark, cocok panel terang) — dioverride panel
+  // berlatar gelap (mis. Ringkasan Eksekutif), lihat case "executive_summary" di bawah.
+  const legendColor = textColor || C.textDark;
   return (
     <div className="flex items-center gap-5">
       <div className="relative w-28 h-28 sm:w-32 sm:h-32 shrink-0">
@@ -338,8 +418,8 @@ function DonutChart({ categories, values, colors }: { categories: string[]; valu
               className="w-2.5 h-2.5 rounded-full shrink-0"
               style={{ background: colors ? colors[i] : CATEGORY_COLOR_RAMP[i % CATEGORY_COLOR_RAMP.length] }}
             />
-            <span className="flex-1 truncate font-semibold" style={{ color: C.textDark }}>{cat}</span>
-            <span className="font-bold" style={{ color: C.textDark }}>{values[i]}</span>
+            <span className="flex-1 truncate font-semibold" style={{ color: legendColor }}>{cat}</span>
+            <span className="font-bold" style={{ color: legendColor }}>{values[i]}</span>
           </div>
         ))}
       </div>
@@ -427,7 +507,7 @@ function StackedBar({ categories, values, colors }: { categories: string[]; valu
 // panggil BarChart/DonutChart/StackedBar/GaugeRing langsung (bukan dispatcher `Chart` di bawah,
 // yang baca visual_style) — bentuk visual di sini tetap per section, lihat report_render_logic.py
 // utk alasannya.
-function MiniChartContent({ chart, theme = THEME_PALETTES.green }: { chart: any; theme?: ThemeColors }) {
+function MiniChartContent({ chart, theme = THEME_PALETTES.green, barLineHeight }: { chart: any; theme?: ThemeColors; barLineHeight?: number }) {
   if (chart.type === "gauge") {
     return (
       <GaugeRing
@@ -441,7 +521,7 @@ function MiniChartContent({ chart, theme = THEME_PALETTES.green }: { chart: any;
   }
   if (chart.type === "donut") return <DonutChart categories={chart.categories} values={chart.values} />;
   if (chart.type === "stacked") return <StackedBar categories={chart.categories} values={chart.values} />;
-  if (chart.type === "bar_line") return <BarLineChart categories={chart.categories} values={chart.values} cumulative={chart.cumulative} theme={theme} />;
+  if (chart.type === "bar_line") return <BarLineChart categories={chart.categories} values={chart.values} cumulative={chart.cumulative} theme={theme} height={barLineHeight} />;
   return <BarChart categories={chart.categories} values={chart.values} theme={theme} />;
 }
 
@@ -453,9 +533,55 @@ function MiniChartPanel({ chart, theme = THEME_PALETTES.green }: { chart: any; t
       className="rounded-xl p-3 h-full flex items-center justify-center"
       style={{ background: C.ivory, border: `1px solid ${C.panelBorder}` }}
     >
-      <MiniChartContent chart={chart} theme={theme} />
+      <MiniChartContent chart={chart} theme={theme} barLineHeight={130} />
     </div>
   );
+}
+
+// Dispatch chart KOMPAK per tile di "management_visual_dashboard" (mirror _mgmt_tile_chart_html
+// di export_pdf.py / kind-branch di _build_management_visual_dashboard_slide export_ppt.py) —
+// beberapa jenis chart ditumpuk berdampingan dlm 1 grid, jadi tiap chart di sini dirender
+// lebih kecil drpd versi 1-halaman-penuh yang dulu dipakai (mis. RadarChart size 220 -> 150).
+function ManagementTileChart({ tile, theme = THEME_PALETTES.green }: { tile: any; theme?: ThemeColors }) {
+  const sevColors: Record<string, string> =
+    tile.mode === "severity"
+      ? { red: "#DC2626", orange: "#EA580C", amber: "#D97706", blue: "#2563EB", gray: "#6B7280" }
+      : { blue: theme.main, green: theme.chart, amber: lightSafe(theme.light), orange: lightSafe(theme.soft), gray: "#6B7280", red: theme.main };
+  switch (tile.tile_kind) {
+    case "risk_heatmap": {
+      const bars = (tile.bars || []).slice(0, 5);
+      return (
+        <BarChart
+          categories={bars.map((b: any) => b.label)}
+          values={bars.map((b: any) => b.count)}
+          colors={bars.map((b: any) => sevColors[b.color] || theme.main)}
+          theme={theme}
+        />
+      );
+    }
+    case "kpi_radar":
+      return <RadarChart axes={tile.axes} values={tile.values} theme={theme} size={150} />;
+    case "status_funnel":
+      return <FunnelChart categories={tile.categories} values={tile.values} color={theme.main} />;
+    case "period_compare":
+      return (
+        <GroupedBarChart
+          categories={tile.categories}
+          seriesA={tile.series_a}
+          seriesB={tile.series_b}
+          labelA={tile.label_a}
+          labelB={tile.label_b}
+          theme={theme}
+          height={110}
+        />
+      );
+    case "time_heatmap":
+      return <HeatmapGrid dayLabels={tile.day_labels} hourLabels={tile.hour_labels} grid={tile.grid} theme={theme} />;
+    case "trend_chart":
+      return <MiniChartContent chart={tile.chart} theme={theme} barLineHeight={110} />;
+    default:
+      return null;
+  }
 }
 
 // Dispatcher gaya chart kategori/status — "bar"/"donut"/"stacked" sesuai visual_style laporan
@@ -504,7 +630,7 @@ function IvoryPanel({
       <div className="flex items-center gap-2 mb-3">
         <span
           className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white shrink-0"
-          style={{ background: theme.light }}
+          style={{ background: lightSafe(theme.light) }}
         >
           {badge}
         </span>
@@ -632,6 +758,7 @@ function CoverSplit({ block, flourishCorner, theme = THEME_PALETTES.green }: { b
       </div>
       <div className="relative flex-1 p-5 sm:p-8 overflow-hidden" style={{ background: theme.bg, color: C.white }}>
         <Flourish corner={flourishCorner} theme={theme} />
+        <PageLogo dark />
         <div className="relative">
           <Kicker text={block.kicker} color={theme.light} />
           <div className="text-2xl sm:text-3xl font-bold mb-3" style={{ fontFamily: TITLE_FONT }}>
@@ -655,6 +782,7 @@ function CoverSolid({ block, flourishCorner, theme = THEME_PALETTES.green }: { b
       style={{ background: theme.bg, color: C.white, fontFamily: BODY_FONT }}
     >
       <Flourish corner={flourishCorner} theme={theme} />
+      <PageLogo dark />
       <div className="relative">
         <Kicker text={block.kicker} color={theme.light} />
         <div className="text-3xl sm:text-4xl font-bold mb-3" style={{ fontFamily: TITLE_FONT }}>
@@ -700,6 +828,7 @@ function ClosingSplit({ block, flourishCorner, theme = THEME_PALETTES.green }: {
       </div>
       <div className="relative flex-1 p-5 sm:p-8 flex flex-col justify-center overflow-hidden" style={{ background: theme.bg, color: C.white }}>
         <Flourish corner={flourishCorner} theme={theme} />
+        <PageLogo dark />
         <div className="relative">
           <div className="text-2xl sm:text-3xl font-bold mb-2" style={{ fontFamily: TITLE_FONT }}>
             {block.thank_you}
@@ -719,6 +848,7 @@ function ClosingSolid({ block, flourishCorner, theme = THEME_PALETTES.green }: {
       style={{ background: theme.bg, color: C.white, fontFamily: BODY_FONT }}
     >
       <Flourish corner={flourishCorner} theme={theme} />
+      <PageLogo dark />
       <div className="relative">
         <div className="text-2xl sm:text-3xl font-bold mb-3" style={{ fontFamily: TITLE_FONT }}>
           {block.thank_you}
@@ -850,7 +980,7 @@ function RecommendationCards({ items, cols, theme = THEME_PALETTES.green }: { it
         >
           <span
             className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-black text-white mb-2"
-            style={{ background: theme.light }}
+            style={{ background: lightSafe(theme.light) }}
           >
             {it.num}
           </span>
@@ -873,7 +1003,7 @@ function RecommendationTimeline({ items, theme = THEME_PALETTES.green }: { items
           <div key={it.num} className="flex gap-4 relative">
             <span
               className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-black text-white shrink-0 relative z-10"
-              style={{ background: theme.light }}
+              style={{ background: lightSafe(theme.light) }}
             >
               {it.num}
             </span>
@@ -901,7 +1031,7 @@ function RecommendationBanners({ items, theme = THEME_PALETTES.green }: { items:
         >
           <span
             className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-black text-white shrink-0"
-            style={{ background: theme.light }}
+            style={{ background: lightSafe(theme.light) }}
           >
             {it.num}
           </span>
@@ -948,7 +1078,8 @@ export default function ReportBlockRenderer({
     : { background: C.white, color: C.textDark };
 
   return (
-    <div className="min-h-full p-6 sm:p-8" style={{ ...wrapStyle, fontFamily: BODY_FONT }}>
+    <div className="relative min-h-full p-6 sm:p-8" style={{ ...wrapStyle, fontFamily: BODY_FONT }}>
+      <PageLogo dark={dark} />
       {renderInner(block, vs, theme)}
     </div>
   );
@@ -959,9 +1090,14 @@ export default function ReportBlockRenderer({
 // report_render_logic.py) & bisa berbagi 1 halaman berdampingan sampai 4 kartu. TIDAK punya
 // kicker/judul sendiri (label kecil di dalam kartu cukup) — judul halaman ditambahkan SEKALI
 // di case "page" kalau salah satu panelnya jenis ini.
-function InsightTile({ panel, theme = THEME_PALETTES.green }: { panel: any; theme?: ThemeColors }) {
+function InsightTile({ panel, theme = THEME_PALETTES.green, cols = 1 }: { panel: any; theme?: ThemeColors; cols?: number }) {
   const label = panel.label || panel.title || "";
   const caption = panel.caption ?? panel.text;
+  // Kartu ini sendirian (cols=1) bisa selebar halaman penuh — chart "Analisis Tren" di
+  // dalamnya perlu ukuran lebih besar spy tidak mengambang kecil di tengah kartu lebar (BUG
+  // YANG DIPERBAIKI, dilaporkan user, sama seperti fix GroupedBarChart di atas). Kalau
+  // berbagi halaman dgn 2+ kartu lain, tetap kompak.
+  const barLineHeight = cols === 1 ? 200 : cols === 2 ? 150 : 110;
   return (
     <div className="rounded-2xl p-4 flex flex-col" style={{ border: `1px solid ${C.panelBorder}`, background: C.white }}>
       <div className="text-[10px] font-black uppercase tracking-wide mb-3" style={{ color: theme.main }}>
@@ -976,7 +1112,7 @@ function InsightTile({ panel, theme = THEME_PALETTES.green }: { panel: any; them
             <div className="text-[10px] mt-1" style={{ color: C.grayText }}>{panel.trend_stat.label}</div>
           </div>
         ) : panel.chart ? (
-          <MiniChartContent chart={panel.chart} theme={theme} />
+          <MiniChartContent chart={panel.chart} theme={theme} barLineHeight={barLineHeight} />
         ) : panel.aux_stat ? (
           <div className="text-center">
             <div className="text-2xl font-black" style={{ color: theme.main }}>{panel.aux_stat[0]}</div>
@@ -1000,11 +1136,17 @@ function InsightTile({ panel, theme = THEME_PALETTES.green }: { panel: any; them
   );
 }
 
+// Mirror _light_safe di export_pdf.py/export_ppt.py (lihat docstring di sana utk alasan
+// lengkap) — pastikan warna cukup gelap dipakai sbg warna isi/teks di atas latar TERANG
+// (IVORY/putih). theme.light/theme.soft SENGAJA pucat krn awalnya cuma dipakai sbg teks di
+// atas latar GELAP (mis. kicker cover) — utk tema "gold" khususnya jauh lebih pucat drpd
+// tema lain, nyaris tak kelihatan kalau dipakai ulang apa adanya di atas kartu/panel terang.
 function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): React.ReactNode {
   const accentColor = theme.main;
   // Ramp warna kategori/status DITURUNKAN dari tema — sama seperti export_pdf.py/export_ppt.py.
-  // C.grayText tetap warna ke-5 (netral).
-  const ramp = [theme.main, theme.chart, theme.light, theme.soft, C.grayText];
+  // C.grayText tetap warna ke-5 (netral). light/soft dilewatkan lightSafe() — lihat docstring
+  // di atas.
+  const ramp = [theme.main, theme.chart, lightSafe(theme.light), lightSafe(theme.soft), C.grayText];
 
   switch (block.kind) {
 
@@ -1076,6 +1218,21 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
           <div className="text-xs italic mt-5" style={{ color: theme.soft }}>
             {block.caption}
           </div>
+          {/* Panel ini satu-satunya kandidat bertema "overview" (report_render_logic.py) —
+              tidak pernah digabung dgn kandidat lain, jadi selalu jadi halaman sendiri. Tanpa
+              donut pendamping ini, halaman berisi kartu KPI + caption pendek saja terasa
+              nyaris kosong (dilaporkan user). Ramp dari palet tema, bukan CATEGORY_COLOR_RAMP
+              tetap, konsisten dgn fix warna kartu KPI/bar management report. */}
+          {block.chart && (
+            <div className="mt-6 pt-5" style={{ borderTop: `1px solid ${theme.soft}66` }}>
+              <DonutChart
+                categories={block.chart.categories}
+                values={block.chart.values}
+                colors={[theme.light, C.white, theme.chart, theme.soft, "#9CA3AF"]}
+                textColor={C.white}
+              />
+            </div>
+          )}
         </>
       );
 
@@ -1100,7 +1257,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
             <BlockTitle>{block.title}</BlockTitle>
             <div className="grid grid-cols-1 gap-5" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
               {panels.map((panel, i) => (
-                <InsightTile key={i} panel={panel} theme={theme} />
+                <InsightTile key={i} panel={panel} theme={theme} cols={cols} />
               ))}
             </div>
           </>
@@ -1362,12 +1519,18 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
         </>
       );
 
-    case "conclusion":
+    case "conclusion": {
+      // priority_items kosong kalau halaman "Rekomendasi Mitigasi" sudah tampil di halaman
+      // lain (lihat report_render_logic.py — dulu diisi ulang dari sumber yang SAMA, jadi 2
+      // halaman berurutan menampilkan rekomendasi identik). "md:grid-cols-2" TETAP dipakai
+      // walau kolom kanan kosong akan menyisakan setengah halaman blank — jadi 1 kolom penuh
+      // saat itu terjadi, sama seperti fix layout yang sama di export_pdf.py/export_ppt.py.
+      const hasPriority = block.priority_items.length > 0;
       return (
         <>
           <Kicker text={block.kicker} color={theme.light} />
           <BlockTitle color={C.white}>{block.title}</BlockTitle>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className={`grid grid-cols-1 ${hasPriority ? "md:grid-cols-2" : ""} gap-6`}>
             <div>
               <p className="text-sm mb-4" style={{ color: "#E8ECE6" }}>
                 {block.text}
@@ -1384,7 +1547,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
                   <div key={p.letter} className="flex items-start gap-2 text-xs">
                     <span
                       className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white shrink-0"
-                      style={{ background: theme.light }}
+                      style={{ background: lightSafe(theme.light) }}
                     >
                       {p.letter}
                     </span>
@@ -1396,24 +1559,33 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
           </div>
         </>
       );
-
+    }
 
     // ===== MANAGEMENT REPORT BLOCKS =====
 
     case "management_kpi_grid": {
+      // BUG DIPERBAIKI (dilaporkan user): "blue"/"green"/"amber" SEBELUMNYA warna literal
+      // tetap, tidak ikut themeColor laporan — sekarang diturunkan dari palet tema (netral/
+      // capaian-baik/sorotan). "red"/"orange"/"gray" TETAP warna semantik tetap (bahaya/
+      // peringatan/netral-pasif), sama seperti SEVERITY_COLOR di tempat lain.
       const URGENCY_COLORS: Record<string, string> = {
-        blue: "#2563EB",
+        blue: theme.main,
+        green: theme.chart,
+        amber: lightSafe(theme.light),
         red: "#DC2626",
         orange: "#EA580C",
-        green: "#16A34A",
-        amber: "#D97706",
         gray: "#6B7280",
       };
       return (
         <>
           {block.kicker && <Kicker text={block.kicker} color={theme.main} />}
           <BlockTitle>{block.title}</BlockTitle>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
+          {/* Kolom menyesuaikan JUMLAH kartu sungguhan (dulu selalu 3 kolom tetap) — kalau
+              totalnya bukan kelipatan 3 (mis. 4), baris terakhir jadi timpang & lowong. */}
+          <div
+            className="grid gap-3 mt-4"
+            style={{ gridTemplateColumns: `repeat(${[2, 4].includes((block.items || []).length) ? 2 : 3}, minmax(0, 1fr))` }}
+          >
             {(block.items || []).map((item: any, i: number) => {
               const iconColor = URGENCY_COLORS[item.color] || theme.main;
               return (
@@ -1425,7 +1597,7 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
                   <div className="text-[10px] font-extrabold uppercase tracking-wider" style={{ color: iconColor }}>
                     {item.label}
                   </div>
-                  <div className="text-2xl font-black" style={{ color: iconColor }}>
+                  <div className="text-3xl font-black" style={{ color: iconColor }}>
                     {item.value}
                   </div>
                   {item.delta && (
@@ -1441,84 +1613,35 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
       );
     }
 
-    case "management_risk_heatmap": {
-      const SEV_COLORS: Record<string, string> = {
-        red: "#DC2626",
-        orange: "#EA580C",
-        amber: "#D97706",
-        blue: "#2563EB",
-        gray: "#6B7280",
-      };
+    // PERMINTAAN USER: sebelumnya tiap jenis chart (peta risiko/radar/funnel/perbandingan
+    // periode/heatmap waktu/tren) jadi block/halaman preview-nya sendiri-sendiri — "1 chart
+    // per halaman" berkali-kali, bukan benar2 padat. Sekarang ditumpuk jadi 1 grid kartu
+    // (block.tiles, lihat build_management_report_blocks), keterangan tiap tile cuma 1
+    // kalimat (tile.caption).
+    case "management_visual_dashboard": {
+      const tiles: any[] = block.tiles || [];
+      const cols = tiles.length >= 5 ? 3 : 2;
       return (
         <>
           {block.kicker && <Kicker text={block.kicker} color={theme.main} />}
           <BlockTitle>{block.title}</BlockTitle>
-          <div className="mt-4 space-y-2">
-            {(block.severity_bars || []).map((bar: any, i: number) => {
-              const col = SEV_COLORS[bar.color] || theme.main;
-              return (
-                <div key={i} className="flex items-center gap-3">
-                  <div className="w-20 text-[10px] font-extrabold shrink-0" style={{ color: col }}>
-                    {bar.label}
-                  </div>
-                  <div className="flex-1 h-5 rounded-full bg-stone-100 overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{ width: `${Math.max(bar.pct, 2)}%`, background: col }}
-                    />
-                  </div>
-                  <div className="w-16 text-right text-xs font-bold" style={{ color: col }}>
-                    {bar.count} <span className="text-[9px] font-normal text-stone-400">({bar.pct}%)</span>
-                  </div>
+          <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+            {tiles.map((tile, i) => (
+              <div key={i} className="rounded-xl p-4" style={{ background: C.ivory, border: `1px solid ${C.panelBorder}` }}>
+                <div className="text-[10px] font-extrabold uppercase tracking-wider mb-2 truncate" style={{ color: theme.main }}>
+                  {tile.title}
                 </div>
-              );
-            })}
+                <div className="flex justify-center overflow-hidden">
+                  <ManagementTileChart tile={tile} theme={theme} />
+                </div>
+                {tile.caption && (
+                  <p className="text-[10px] leading-relaxed mt-2" style={{ color: C.grayText }}>
+                    {tile.caption}
+                  </p>
+                )}
+              </div>
+            ))}
           </div>
-          {block.summary_text && (
-            <p className="mt-4 text-xs leading-relaxed" style={{ color: C.grayText }}>
-              {block.summary_text}
-            </p>
-          )}
-        </>
-      );
-    }
-
-    case "management_trend_chart": {
-      return (
-        <>
-          {block.kicker && <Kicker text={block.kicker} color={theme.main} />}
-          <BlockTitle>{block.title}</BlockTitle>
-          {block.narrative && (
-            <p className="text-xs leading-relaxed mt-2 mb-4" style={{ color: C.grayText }}>
-              {block.narrative}
-            </p>
-          )}
-          {(block.trend_items || []).length > 0 && (
-            <div className="mt-3 space-y-4">
-              {block.trend_items.map((ti: any, i: number) => (
-                <div key={i}>
-                  <div className="text-[10px] font-extrabold uppercase tracking-wider mb-2" style={{ color: theme.main }}>
-                    {ti.category}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(ti.top_values || []).map((v: string, j: number) => (
-                      <span
-                        key={j}
-                        className="px-2.5 py-1 rounded-full text-[10px] font-bold"
-                        style={{
-                          background: theme.soft,
-                          color: theme.main,
-                          border: `1px solid ${theme.light}40`,
-                        }}
-                      >
-                        {v}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </>
       );
     }

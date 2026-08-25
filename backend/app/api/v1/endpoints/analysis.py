@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.rate_limit import rate_limiter
 from app.api.v1.endpoints.auth import get_current_user
 from app.services.ai_engine.ollama_client import ollama_client
-from app.services.analysis_runner import run_analysis_job
+from app.services.analysis_runner import cancel_analysis_job, register_analysis_job, run_analysis_job
 from app.crud.report import get_owned_report, update_report, try_acquire_ai_lock
 from app.models.report import Report
 from app.schemas.report import AnalysisProgress, ReportResponse, ReportUpdate, ReportUserEditableUpdate
@@ -115,6 +115,7 @@ def generate_ai_analysis(
     rate_limiter.check(key=f"generate-analysis:{current_user.id}", max_attempts=10, window_seconds=60)
 
     db.refresh(db_report)
+    register_analysis_job(report_id)
     background_tasks.add_task(run_analysis_job, report_id)
 
     # RCA-A02: Catat aksi trigger analisis AI ke audit log — sebelumnya endpoint ini
@@ -157,6 +158,7 @@ def cancel_analysis(
     if db_report.status != "processing":
         raise HTTPException(status_code=400, detail="Laporan ini sedang tidak diproses.")
 
+    cancel_analysis_job(report_id)
     db_report.status = "failed"
     db.commit()
     db.refresh(db_report)

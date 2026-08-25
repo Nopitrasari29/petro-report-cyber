@@ -280,6 +280,52 @@ def _localize_preset(preset: Dict[str, Any], is_en: bool) -> Dict[str, Any]:
     }
 
 
+def _detect_fixed_sections(report_stats: Dict[str, Any], is_en: bool) -> List[Dict[str, Any]]:
+    """Section BAWAAN (grafik/tabel visual, BUKAN narasi bebas tulisan AI) yang genuinely
+    didukung data yang diunggah — kunci di sini SAMA PERSIS dgn key yang dicek
+    is_section_included() di report_render_logic.py (build_report_blocks &
+    build_management_report_blocks). BUG YANG DIPERBAIKI (dilaporkan user): section bawaan
+    spt grafik distribusi kategori/perbandingan periode/pola jam dulu tidak pernah muncul
+    sbg pilihan ceklis sama sekali (cuma section narasi AI yang ditawarkan) — jadi user
+    tidak pernah benar2 bisa mematikannya lewat wizard, walau kodenya kini SUDAH bisa
+    (lihat fix is_section_included). Deteksi di sini SENGAJA longgar/heuristik (dipanggil
+    sebelum analisis AI penuh berjalan) — false positive (ditawarkan tapi ternyata kosong
+    saat render) aman, fungsi render tetap melakukan pengecekan ketatnya sendiri."""
+    top_categories = report_stats.get("top_categories") or {}
+    source_cols = report_stats.get("_source_columns") or {}
+    numeric_summary = report_stats.get("numeric_summary") or {}
+    has_category = any(label != "status" and items for label, items in top_categories.items())
+    has_status = bool(top_categories.get("status"))
+    has_date = bool(source_cols.get("date"))
+    has_severity = bool(source_cols.get("severity"))
+    candidates = [
+        ("category_distribution", has_category, ("Distribusi Kategori/Unit", "Category/Unit Distribution")),
+        ("status_distribution", has_status, ("Distribusi Status", "Status Distribution")),
+        ("kpi_radar", len(numeric_summary) >= 3, ("Radar Skor Multi-Indikator", "Multi-Indicator Score Radar")),
+        ("time_heatmap", has_date, ("Pola Kejadian per Hari & Jam", "Day/Hour Activity Pattern")),
+        ("period_compare", has_category and has_date, ("Perbandingan Antar Paruh Periode", "Period-over-Period Comparison")),
+        ("asset_cards", has_category, ("Entitas/Aset Paling Sering Muncul", "Most Frequent Entities/Assets")),
+        ("key_findings", bool(has_category or has_status or numeric_summary), ("Temuan Utama", "Key Findings")),
+        ("critical_table", has_severity, ("Tabel Insiden/Item Prioritas Tinggi", "High-Priority Incident/Item Table")),
+    ]
+    out = []
+    for key, available, title in candidates:
+        if not available:
+            continue
+        out.append({
+            "key": key,
+            "title": _pick_lang(title, is_en),
+            "description": _pick_lang((
+                "Bagian visual bawaan, disusun otomatis dari data yang terdeteksi.",
+                "Built-in visual section, auto-assembled from detected data.",
+            ), is_en),
+            "enabled": True,
+            "recommended": True,
+            "fixed": True,
+        })
+    return out
+
+
 # Kata kunci per domain, dipakai detect_domain_from_columns via SISTEM SKOR (jumlah kata
 # kunci yang cocok), BUKAN first-match-wins seperti sebelumnya. BUG YANG DIPERBAIKI: dengan
 # first-match-wins, data pengadaan/vendor yang kebetulan punya kolom "Unit_Kerja"/"Departemen"
@@ -376,12 +422,17 @@ def suggest_sections_for_file(
     is_en = (language or "").strip().lower() == "english"
     preset = _localize_preset(_DOMAIN_PRESETS.get(domain, _DOMAIN_PRESETS["general"]), is_en)
 
+    # Dihitung SEKALI di sini (dulu cuma dipakai inline utk stats_text AI) — dipakai ULANG di
+    # bawah oleh _detect_fixed_sections() supaya section bawaan (grafik distribusi, dst) yang
+    # ditawarkan sbg ceklis genuinely mencerminkan data yang sama yang dipakai analisis.
+    report_stats = compute_statistics(sample_data, domain) if sample_data else {}
+
     # 3. Coba usulan AI dulu — grounded pada skema & statistik terhitung (bukan data mentah)
     ai_sections = None
     if sample_data:
         try:
             schema_text = format_schema_as_text(compute_schema_summary(sample_data))
-            stats_text = format_statistics_as_text(compute_statistics(sample_data, domain))
+            stats_text = format_statistics_as_text(report_stats)
             ai_sections = ollama_client.suggest_sections(
                 schema_text=schema_text,
                 stats_text=stats_text,
@@ -393,13 +444,35 @@ def suggest_sections_for_file(
             logger.warning(f"Jalur AI gagal, fallback ke preset heuristik: {e}")
             ai_sections = None
 
+    # PERMINTAAN USER: batas 6 section custom SUDAH diminta lewat prompt di atas
+    # (SECTION_SUGGESTION_SYSTEM_PROMPT), tapi tetap dipagari lagi di sini (bukan cuma
+    # percaya instruksi) — supaya checklist yang dilihat & dicentang user TIDAK PERNAH
+    # menjanjikan lebih banyak drpd yang genuinely bisa ditulis lengkap oleh AI saat laporan
+    # sungguhan dibuat nanti (akar masalah nyata yang dilaporkan user: user centang N section,
+    # yang benar2 ditulis cuma sebagian, krn permintaan generation kelebihan beban). Yang
+    # "recommended" diprioritaskan dipertahankan drpd yang tidak, urutan asli tetap dijaga.
+    if ai_sections and len(ai_sections) > 6:
+        ai_sections = sorted(
+            enumerate(ai_sections),
+            key=lambda pair: (0 if pair[1].get("recommended") else 1, pair[0]),
+        )[:6]
+        ai_sections = [s for _, s in sorted(ai_sections, key=lambda pair: pair[0])]
+
     if ai_sections:
+        # Section bebas tulisan AI + section bawaan (grafik/tabel visual) yang datanya
+        # mendukung — digabung jadi SATU daftar ceklis di wizard (lihat _detect_fixed_sections).
+        existing_keys = {s.get("key") or s.get("id") for s in ai_sections if isinstance(s, dict)}
+        fixed_sections = [
+            {**s, "order": len(ai_sections) + i}
+            for i, s in enumerate(_detect_fixed_sections(report_stats, is_en))
+            if s["key"] not in existing_keys
+        ]
         return {
             "domain_type": domain,
             "domain_label": preset["domain_label"],
             "header_title": preset["default_header_title"],
             "header_subtitle": preset["default_header_subtitle"],
-            "suggested_sections": ai_sections,
+            "suggested_sections": ai_sections + fixed_sections,
             "source": "ai",
         }
 
@@ -421,11 +494,17 @@ def suggest_sections_for_file(
             col_label = cat_cols[0].replace('_', ' ').title()
             custom_sections[1]["title"] = f"Analysis by {col_label}" if is_en else f"Analisis Berdasarkan {col_label}"
 
+    existing_keys = {s.get("key") for s in custom_sections}
+    fixed_sections = [
+        {**s, "order": len(custom_sections) + i}
+        for i, s in enumerate(_detect_fixed_sections(report_stats, is_en))
+        if s["key"] not in existing_keys
+    ]
     return {
         "domain_type": domain,
         "domain_label": preset["domain_label"],
         "header_title": preset["default_header_title"],
         "header_subtitle": preset["default_header_subtitle"],
-        "suggested_sections": custom_sections,
+        "suggested_sections": custom_sections + fixed_sections,
         "source": "heuristic",
     }
