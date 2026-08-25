@@ -181,6 +181,8 @@ export default function GenerateReportPage() {
               setThemeColor={w.setThemeColor}
               stylePreset={w.stylePreset}
               setStylePreset={w.setStylePreset}
+              templateType={w.templateType}
+              setTemplateType={w.setTemplateType}
               tone={w.tone}
               setTone={w.setTone}
               defaultLevel={w.defaultLevel}

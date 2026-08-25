@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, upload, analysis, chart, history, validation, settings, dashboard, profile, notifications
+from app.api.v1.endpoints import auth, upload, analysis, chart, history, validation, settings, dashboard, profile, notifications, audit_logs
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -12,3 +12,5 @@ api_router.include_router(validation.router, prefix="/validation", tags=["valida
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
 api_router.include_router(profile.router, prefix="/settings", tags=["profile"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+# RCA-B07: Daftarkan endpoint audit log agar data forensik bisa diakses via API
+api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["audit-logs"])

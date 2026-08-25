@@ -45,7 +45,12 @@ def get_dashboard_stats(
     pending_queue_count = base_query.filter(Report.status.in_(["processing", "queued", "waiting"])).count()
 
     crit_incidents = db.query(func.sum(Report.threat_count_critical)).filter(Report.user_id == current_user.id).scalar() or 0
-    avg_confidence = db.query(func.avg(Report.ai_confidence)).filter(Report.user_id == current_user.id).scalar() or 94.0
+    avg_confidence_val = db.query(func.avg(Report.ai_confidence)).filter(
+        Report.user_id == current_user.id,
+        Report.status.in_(["analyzed", "completed"]),
+        Report.ai_confidence.isnot(None)
+    ).scalar()
+    avg_confidence = float(avg_confidence_val) if avg_confidence_val is not None else 0.0
     available_reports = base_query.filter(Report.status.in_(["parsed", "analyzed", "completed"])).count()
 
     # Hitung persentase perubahan Critical Incidents (30 hari terakhir vs 30 s/d 60 hari yang lalu)
@@ -99,7 +104,10 @@ def get_dashboard_stats(
             {"label": "Critical", "data": [rep.threat_count_critical or 0 for rep in trend_reports]},
             {"label": "High", "data": [rep.threat_count_high or 0 for rep in trend_reports]},
             {"label": "Medium", "data": [rep.threat_count_medium or 0 for rep in trend_reports]},
-            {"label": "Low", "data": [rep.threat_count_low or 0 for rep in trend_reports]}
+            {"label": "Low", "data": [rep.threat_count_low or 0 for rep in trend_reports]},
+            # RCA-B02: Sertakan Informational agar total trend_trend konsisten dengan
+            # total_events di severity_distribution (yang sudah menghitung sum_info).
+            {"label": "Informational", "data": [rep.threat_count_info or 0 for rep in trend_reports]},
         ]
     else:
         labels = []
@@ -107,7 +115,8 @@ def get_dashboard_stats(
             {"label": "Critical", "data": []},
             {"label": "High", "data": []},
             {"label": "Medium", "data": []},
-            {"label": "Low", "data": []}
+            {"label": "Low", "data": []},
+            {"label": "Informational", "data": []}
         ]
 
     # 5. Antrean pemrosesan AI, di-scope ke user_id
@@ -118,11 +127,13 @@ def get_dashboard_stats(
         progress = 0
         q_status = "Waiting in Queue"
         if rep.status == "processing":
-            progress = 75
+            # RCA-B01: Hitung progress NYATA dari tokens_generated (bukan hardcoded 75%).
+            tokens = rep.tokens_generated or 0
+            progress = min(95, round((tokens / 3500) * 100)) if tokens > 0 else 15
             q_status = "Processing"
         elif rep.status == "draft":
-            progress = 100
-            q_status = "Completed Parsing"
+            progress = 25
+            q_status = "Parsed — Ready for Analysis"
 
         queue_list.append({
             "report_name": rep.title,
@@ -130,6 +141,8 @@ def get_dashboard_stats(
             "status": q_status,
             "timestamp": rep.updated_at.strftime("%d %b %Y, %H:%M") if rep.updated_at else "-"
         })
+
+    confidence_label = "High Confidence" if avg_confidence >= 85 else ("Medium Confidence" if avg_confidence > 0 else "No Reports Yet")
 
     return {
         "counters": {
@@ -143,8 +156,8 @@ def get_dashboard_stats(
                 "pending_queue": pending_queue_count
             },
             "ai_analysis_score": {
-                "value": round(avg_confidence),
-                "label": "High Confidence" if avg_confidence >= 85 else "Medium Confidence"
+                "value": round(avg_confidence) if avg_confidence > 0 else 0,
+                "label": confidence_label
             },
             "report_history": {
                 "value": available_reports,

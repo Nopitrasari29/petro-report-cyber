@@ -17,7 +17,7 @@ from app.schemas.report import ReportResponse
 from app.models.report import Report
 from app.services.export_pdf import PDFExporter
 from app.services.export_ppt import PPTXExporter
-from app.services.report_render_logic import build_report_blocks, get_visual_style, resolve_theme_color
+from app.services.report_render_logic import build_report_blocks, build_management_report_blocks, get_visual_style, resolve_theme_color
 
 from datetime import datetime, date
 
@@ -136,7 +136,11 @@ def get_report_preview_blocks(
             detail="Laporan belum dianalisis oleh AI. Silakan jalankan analisis terlebih dahulu sebelum melihat preview."
         )
 
-    blocks = build_report_blocks(db_report)
+    _template = (db_report.template_type or "").strip().lower()
+    if "management" in _template:
+        blocks = build_management_report_blocks(db_report)
+    else:
+        blocks = build_report_blocks(db_report)
     # visual_style dikirim terpisah (bukan diselipkan ke tiap block) supaya frontend cukup
     # baca 1 objek kecil ini utk tahu varian mana yg harus dirender (cover solid/split, chart
     # bar/donut/stacked, dst) — lihat pick_visual_style() di report_render_logic.py utk kenapa
@@ -259,8 +263,9 @@ def retry_report_analysis(
 
     db.refresh(db_report)
 
-    from app.api.v1.endpoints.analysis import _run_analysis_job
-    background_tasks.add_task(_run_analysis_job, report_id)
+    # RCA-B03: Gunakan service runner mandiri
+    from app.services.analysis_runner import run_analysis_job
+    background_tasks.add_task(run_analysis_job, report_id)
 
     # Fix #9: Catat aksi retry ke audit log
     try:

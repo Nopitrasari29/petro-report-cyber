@@ -19,14 +19,23 @@ logger = logging.getLogger(__name__)
 # baru masuk (biasanya tiap ~1.5 detik sekali proses generate mulai); mandek tanpa update SAMA
 # SEKALI selama 10 menit penuh jauh lebih mungkin berarti proses sudah mati (bukan cuma lambat).
 STALE_PROCESSING_THRESHOLD_SECONDS = 600
+_LAST_REAP_TIMESTAMP: float = 0.0
 
 
 def _reap_stale_processing_reports(db: Session) -> None:
     """
     Pemulihan OTOMATIS (dicek setiap kali ada percobaan generate/retry AI baru) untuk laporan
-    yang macet di status "processing" — sebelumnya satu-satunya pemulihan adalah restart server
-    manual. Laporan macet ditandai "failed" di sini supaya kunci global langsung lepas.
+    yang macet di status "processing".
+    RCA-C04: Dithrottle agar hanya berjalan maksimal sekali setiap 60 detik untuk mencegah
+    overhead full scan berulang pada request yang datang beruntun.
     """
+    global _LAST_REAP_TIMESTAMP
+    import time
+    now_ts = time.time()
+    if (now_ts - _LAST_REAP_TIMESTAMP) < 60:
+        return
+    _LAST_REAP_TIMESTAMP = now_ts
+
     now = datetime.now(timezone.utc)
     candidates = db.query(Report).filter(Report.status == "processing").all()
     reaped = False
@@ -34,8 +43,7 @@ def _reap_stale_processing_reports(db: Session) -> None:
         updated = r.updated_at
         if updated is None:
             continue
-        # SQLite tidak benar-benar menyimpan timezone (lihat pola yang sama di auth/password.py)
-        # — kolom yang dibaca balik dari DB datang tanpa tzinfo, dianggap UTC.
+        # SQLite tidak benar-benar menyimpan timezone
         if updated.tzinfo is None:
             updated = updated.replace(tzinfo=timezone.utc)
         if (now - updated).total_seconds() > STALE_PROCESSING_THRESHOLD_SECONDS:
@@ -155,9 +163,13 @@ def update_report(db: Session, report_id: int, report_update: ReportUpdate, user
 
     update_data = report_update.model_dump(exclude_unset=True)
     
-    # RCA-02: Jika konten/pengaturan laporan berubah, hapus cache PDF & PPTX lama di disk
-    # agar download berikutnya merender versi terbaru (bukan me-return file usang)
-    invalidate_keys = {"ai_summary", "title", "header_title", "header_subtitle", "included_sections", "theme_color", "style_preset", "chart_data"}
+    # RCA-02 + RCA-C07: Jika konten/pengaturan laporan berubah, hapus cache PDF & PPTX lama di disk
+    # agar download berikutnya merender versi terbaru (bukan me-return file usang).
+    # visual_style ditambahkan: saat laporan di-re-analyze (status baru dari "failed" →
+    # "analyzed"), visual_style diset ulang oleh pick_visual_style() di _run_analysis_job,
+    # tapi cache PDF/PPTX lama (dari analyze sebelumnya) tidak dihapus — jadi PDF lama dengan
+    # visual_style lama terus diunduh meski DB sudah berisi visual_style yang baru.
+    invalidate_keys = {"ai_summary", "title", "header_title", "header_subtitle", "included_sections", "theme_color", "style_preset", "chart_data", "visual_style"}
     if any(k in update_data for k in invalidate_keys):
         _delete_file_safely(db_report.file_pdf_path)
         _delete_file_safely(db_report.file_ppt_path)

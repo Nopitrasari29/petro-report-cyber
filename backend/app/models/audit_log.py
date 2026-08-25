@@ -1,5 +1,5 @@
 # backend/app/models/audit_log.py
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Index
 from sqlalchemy.sql import func
 from app.db.session import Base
 
@@ -11,6 +11,13 @@ class AuditLog(Base):
     Digunakan untuk investigasi forensik jika terjadi insiden data di dalam tim IT Petro.
     """
     __tablename__ = "audit_logs"
+    # RCA-C01: Index komposit untuk query forensik yang umum dilakukan:
+    # - Semua aktivitas user X dalam rentang waktu tertentu
+    # - Semua aksi "delete" atau "download_pdf" hari ini (untuk monitoring)
+    __table_args__ = (
+        Index("idx_audit_user_created", "user_id", "created_at"),
+        Index("idx_audit_action_created", "action", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)

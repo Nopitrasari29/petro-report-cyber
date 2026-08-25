@@ -53,3 +53,18 @@ def mark_all_notifications_as_read(db: Session, user_id: int) -> int:
     )
     db.commit()
     return updated_count
+
+def cleanup_old_read_notifications(db: Session, max_age_days: int = 30) -> int:
+    """
+    RCA-B06: Membersihkan notifikasi yang sudah dibaca dan berusia lebih dari `max_age_days`.
+    Dipanggil saat startup / background maintenance agar tabel notifications tidak bloat.
+    """
+    from datetime import datetime, timedelta
+    cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+    deleted_count = (
+        db.query(Notification)
+        .filter(Notification.is_read == True, Notification.created_at < cutoff)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return deleted_count

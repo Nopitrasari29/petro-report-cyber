@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 
 from app.models.report import Report
-from app.services.report_render_logic import build_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
+from app.services.report_render_logic import build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,15 @@ def _badge(text, color=GREEN_MAIN, size="26px", font_size="10.5pt") -> str:
     # dalam + padding kumulatif (pernah crash "negative availWidth"), jadi badge SENGAJA
     # dibuat elemen paling sederhana (1 div) supaya tidak menambah level nesting di semua
     # tempat yang memakainya (badge muncul di hampir tiap bagian dokumen).
+    #
+    # BUG NYATA DITEMUKAN (tema "gold" khususnya): teks angka di dalam badge SELALU putih
+    # (fixed) — banyak pemanggil di file ini memberi `color` = peran "light" tema (t["light"]/
+    # ctx.accent_light), yang cukup gelap utk tema green/navy/dark (badge tetap kebaca) tapi
+    # SANGAT pucat khusus utk tema "gold" (dirancang sbg teks di atas latar gelap, bukan fill
+    # badge) — hasilnya angka putih nyaris tak kelihatan di atas badge krem pucat. _light_safe
+    # dipanggil DI SINI (bukan di tiap titik panggil) supaya SEMUA pemanggil badge terlindungi
+    # otomatis, warna yang sudah cukup gelap (mayoritas pemanggil) tidak berubah sama sekali.
+    color = _light_safe(color)
     return (
         f'<div style="display:inline-block;width:{size};height:{size};line-height:{size};'
         f'border-radius:50%;background:{color};text-align:center;color:#fff;font-weight:700;'
@@ -145,7 +154,7 @@ def _badge(text, color=GREEN_MAIN, size="26px", font_size="10.5pt") -> str:
     )
 
 
-def _badge_row(number, title, detail, color=GREEN_MAIN, on_dark=False) -> str:
+def _badge_row(number, title, detail, color=GREEN_MAIN, on_dark=False, scale=1.0) -> str:
     # xhtml2pdf (fallback engine kalau WeasyPrint tak tersedia) TIDAK support flexbox —
     # dipakai <table> supaya badge+teks sejajar konsisten di kedua engine.
     #
@@ -153,14 +162,17 @@ def _badge_row(number, title, detail, color=GREEN_MAIN, on_dark=False) -> str:
     # dihapus — baris sepadat kontennya (detail panjang wrap bebas tanpa risiko kepotong/
     # numpuk), jarak antar baris dinaikkan sedikit (14px) supaya senapas dengan spacing
     # generous di panel-panel lain.
+    # `scale` (PERMINTAAN USER, berkali-kali): dipakai _build_key_findings_block utk
+    # memperbesar baris ini kalau jumlah temuannya sedikit (1.0 = ukuran normal).
     title_color = WHITE if on_dark else TEXT_DARK
     detail_color = GOLD_LIGHT if on_dark else GRAY_TEXT
-    detail_html = f'<div style="font-size:9.5pt;color:{detail_color};margin-top:3px;">{_esc(detail)}</div>' if detail else ""
+    badge_d = round(28 * scale)
+    detail_html = f'<div style="font-size:{9.5*scale:.1f}pt;color:{detail_color};margin-top:{round(3*scale)}px;">{_esc(detail)}</div>' if detail else ""
     return (
-        f'<table style="width:100%;border-collapse:collapse;margin-bottom:14px;" cellpadding="0" cellspacing="0"><tr>'
-        f'<td style="width:34px;vertical-align:top;padding:0 12px 0 0;">{_badge(number, color)}</td>'
+        f'<table style="width:100%;border-collapse:collapse;margin-bottom:{round(14*scale)}px;" cellpadding="0" cellspacing="0"><tr>'
+        f'<td style="width:{badge_d + 12}px;vertical-align:top;padding:0 12px 0 0;">{_badge(number, color, size=f"{badge_d}px", font_size=f"{11*scale:.1f}pt")}</td>'
         f'<td style="vertical-align:top;padding:0;">'
-        f'<div style="font-weight:700;font-size:11.5pt;color:{title_color};">{_esc(title)}</div>{detail_html}'
+        f'<div style="font-weight:700;font-size:{11.5*scale:.1f}pt;color:{title_color};">{_esc(title)}</div>{detail_html}'
         f'</td></tr></table>'
     )
 
@@ -271,14 +283,18 @@ def _stacked_proportion_bar_html(values, colors=None, height_px=46) -> str:
     return f'<div style="padding:14pt 0;">{bar_html}</div>'
 
 
-def _donut_chart_svg(values, colors=None, size=210, stroke_w=36) -> str:
+def _donut_chart_svg(values, colors=None, size=210, stroke_w=36, label_color=None, sub_color=None) -> str:
     """Alternatif visual utk distribusi kategori (selain _bar_chart_html) — titik variasi
     tampilan antar generate (lihat `category_style` di generate_pdf_report), BUKAN
     penggantian permanen. Donut cincin dibangun dari beberapa <circle> bertumpuk dengan
     stroke-dasharray/-dashoffset (trik SVG standar), bukan wedge/pie asli — lebih sederhana &
     hasilnya tetap rapi utk kategori sampai ~6 nilai. SVG dirender native oleh WeasyPrint,
     tidak perlu library chart eksternal (Kaleido/Plotly SENGAJA tidak dipakai lagi di file
-    ini, lihat docstring atas)."""
+    ini, lihat docstring atas). `label_color`/`sub_color` opsional (default TEXT_DARK/GRAY_TEXT
+    cocok utk panel terang) — dipakai panel BERLATAR GELAP (mis. Ringkasan Eksekutif) supaya
+    label pusat tidak nyaris tak kelihatan di atas latar gelap."""
+    label_color = label_color or TEXT_DARK
+    sub_color = sub_color or GRAY_TEXT
     total = sum(values) or 1
     r = (size - stroke_w) / 2
     cx = cy = size / 2
@@ -298,8 +314,8 @@ def _donut_chart_svg(values, colors=None, size=210, stroke_w=36) -> str:
         offset += dash
     labels = (
         f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" font-size="28" font-weight="700" '
-        f'fill="{TEXT_DARK}" font-family="{BODY_FONT}">{total:g}</text>'
-        f'<text x="{cx}" y="{cy + 18}" text-anchor="middle" font-size="10.5" fill="{GRAY_TEXT}" '
+        f'fill="{label_color}" font-family="{BODY_FONT}">{total:g}</text>'
+        f'<text x="{cx}" y="{cy + 18}" text-anchor="middle" font-size="10.5" fill="{sub_color}" '
         f'font-family="{BODY_FONT}">Total</text>'
     )
     svg = (
@@ -348,6 +364,20 @@ def _gauge_chart_svg(value, max_value=100, label="", color=None, size=150, strok
 # bertingkat -> funnel. Tiap fungsi punya jalur non-SVG (SVG_SUPPORTED=False, lihat definisi
 # di atas) utk xhtml2pdf yang tidak bisa merender <svg> inline dgn andal.
 # ============================================================================
+def _darken(hex_color: str, factor: float = 0.55) -> str:
+    """Skala RGB `hex_color` turun sebesar `factor` (menuju hitam, BUKAN blend ke abu-abu) —
+    dipakai turunkan "bg" (latar halaman gelap penuh: cover/penutup) dari warna KUSTOM yang
+    dipilih user (color picker), mengikuti pola yang sama dgn 4 tema bernama (mis. GREEN_BG
+    ~0.5-0.6x GREEN_MAIN, lihat THEME_PALETTES). BUG NYATA DITEMUKAN (dilaporkan user, "kok
+    ga diterapkan"): "bg" tema kustom SEBELUMNYA SELALU "#111827" (navy gelap generik) apa
+    pun warna yang dipilih — halaman cover/penutup (kesan PERTAMA laporan, yang paling
+    mungkin dilihat user duluan) jadi terlihat sama sekali tidak terpengaruh pilihan
+    warnanya, padahal halaman isi (kartu KPI, chart) sebenarnya SUDAH ikut warna kustom."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"#{round(r * factor):02x}{round(g * factor):02x}{round(b * factor):02x}"
+
+
 def _blend_with_white(hex_color: str, frac: float) -> str:
     """Campur `hex_color` dgn putih sebesar (1-frac) jadi warna solid baru — dipakai fallback
     heatmap non-SVG (warna blended SUNGGUHAN, bukan CSS `opacity` yang tidak selalu didukung
@@ -359,6 +389,27 @@ def _blend_with_white(hex_color: str, frac: float) -> str:
     g = round(g * frac + 255 * (1 - frac))
     b = round(b * frac + 255 * (1 - frac))
     return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _light_safe(hex_color: str, max_luminance: float = 0.68) -> str:
+    """Pastikan `hex_color` cukup gelap dipakai sbg WARNA ISI/teks di atas latar TERANG
+    (IVORY/putih). BUG NYATA DITEMUKAN (dilaporkan user, tema "gold" khususnya): peran
+    "light"/"soft" tiap tema (ctx.accent_light/accent_soft) SENGAJA pucat krn awalnya cuma
+    dipakai sbg teks di atas latar GELAP (mis. kicker cover) — utk tema green/navy/dark,
+    "light"=GOLD_MAIN & "soft"=GOLD_LIGHT (lumayan gelap, kontras tetap oke dipakai ulang di
+    latar terang). Tapi utk tema "gold" sendiri, "light"/"soft"-nya (GOLD_CREAM_LIGHT/SOFT)
+    JAUH lebih pucat drpd tema lain (dirancang utk kontras di atas latar gelap coklat-emas
+    tema itu) — dipakai ulang apa adanya sbg warna bar/segmen chart di atas kartu IVORY hasilnya
+    nyaris tak kelihatan (2 warna pucat berdempetan). Cuma menggelapkan PROPORSIONAL (hue
+    tetap sama) kalau luminance-nya di atas ambang — TIDAK mengubah apa pun utk warna yang
+    sudah cukup gelap (green/navy/dark tetap identik seperti sebelumnya)."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    if luminance <= max_luminance or luminance == 0:
+        return hex_color
+    frac = max_luminance / luminance
+    return f"#{round(r * frac):02x}{round(g * frac):02x}{round(b * frac):02x}"
 
 
 def _bar_line_chart_html_fallback(categories, values, cumulative, color) -> str:
@@ -374,7 +425,10 @@ def _bar_line_chart_svg(categories, values, cumulative=None, color=None, size_w=
     bar_color = color or GREEN_MAIN
     line_color = GOLD_MAIN
     n = len(categories) or 1
-    pad_l, pad_r, pad_t, pad_b = 8, 8, 12, 22
+    # pad_t dinaikkan (12 -> 22) supaya ada ruang utk label angka di atas batang tertinggi
+    # (BUG YANG DIPERBAIKI, dilaporkan user: chart ini dulu sama sekali tidak menampilkan
+    # angka, beda dgn chart lain di laporan yang sudah menampilkan nilainya).
+    pad_l, pad_r, pad_t, pad_b = 8, 8, 22, 22
     plot_w, plot_h = size_w - pad_l - pad_r, size_h - pad_t - pad_b
     col_w = plot_w / n
     max_val = max(values) if values and max(values) else 1
@@ -385,6 +439,8 @@ def _bar_line_chart_svg(categories, values, cumulative=None, color=None, size_w=
         x = pad_l + i * col_w
         y = pad_t + (plot_h - bar_h)
         bars.append(f'<rect x="{x + col_w*0.18:.1f}" y="{y:.1f}" width="{col_w*0.64:.1f}" height="{bar_h:.1f}" fill="{bar_color}" rx="2" />')
+        if val:
+            bars.append(f'<text x="{x + col_w/2:.1f}" y="{max(y - 4, 10):.1f}" text-anchor="middle" font-size="7.5" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{val}</text>')
         if max_cum:
             cy = pad_t + plot_h - ((cumulative[i] / max_cum) * (plot_h - 4))
             points.append((x + col_w / 2, cy))
@@ -405,12 +461,15 @@ def _radar_chart_html_fallback(axes, values, color=None) -> str:
     return _bar_chart_html(axes, values, colors=[color or GREEN_MAIN] * len(values))
 
 
-def _radar_chart_svg(axes, values, color=None, size=360) -> str:
+def _radar_chart_svg(axes, values, color=None, size=360, label_margin=100) -> str:
     """Skor multi-indikator (nilai 0-100, sudah dinormalisasi di report_render_logic.py) —
     tiap sumbu ditarik dari pusat, poligon menghubungkan titik nilai tiap sumbu. Margin label
-    (size/2 - r_max) SENGAJA lapang (100px) — label sumbu (mis. "Skor Ketepatan Waktu") bisa
-    cukup panjang & SVG tidak membungkus teks otomatis, kalau margin terlalu sempit teks
-    kepotong di tepi viewBox (bug nyata yang pernah terjadi sebelum nilai ini diperbesar)."""
+    (size/2 - r_max) SENGAJA lapang (default 100px) — label sumbu (mis. "Skor Ketepatan
+    Waktu") bisa cukup panjang & SVG tidak membungkus teks otomatis, kalau margin terlalu
+    sempit teks kepotong di tepi viewBox (bug nyata yang pernah terjadi sebelum nilai ini
+    diperbesar). `label_margin` bisa dikecilkan (lihat tile dashboard management report di
+    _mgmt_tile_chart_html) supaya ring tetap punya radius wajar di kanvas yang lebih kecil —
+    WAJIB size/2 > label_margin, kalau tidak r_max negatif & chart-nya rusak/terbalik."""
     if not SVG_SUPPORTED:
         return _radar_chart_html_fallback(axes, values, color)
     n = len(axes)
@@ -418,7 +477,7 @@ def _radar_chart_svg(axes, values, color=None, size=360) -> str:
         return ""
     ring_color = color or GREEN_MAIN
     cx = cy = size / 2
-    r_max = size / 2 - 100
+    r_max = size / 2 - label_margin
 
     def _angle(i):
         return (-90 + i * 360 / n) * math.pi / 180
@@ -522,7 +581,10 @@ def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="
         return _grouped_bar_chart_html_fallback(categories, series_a, series_b, label_a, label_b, color_a, color_b)
     ca, cb = color_a or GREEN_MAIN, color_b or GOLD_MAIN
     n = len(categories) or 1
-    pad_l, pad_r, pad_t, pad_b = 8, 8, 10, 22
+    # pad_t dinaikkan (10 -> 20) supaya ada ruang utk label angka di atas tiap batang (BUG
+    # YANG DIPERBAIKI, dilaporkan user: chart perbandingan periode ini dulu tidak
+    # menampilkan angka sama sekali, cuma bentuk batang tanpa nilai).
+    pad_l, pad_r, pad_t, pad_b = 8, 8, 20, 22
     plot_w, plot_h = size_w - pad_l - pad_r, size_h - pad_t - pad_b
     group_w = plot_w / n
     bar_w = group_w * 0.32
@@ -534,8 +596,13 @@ def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="
         hb = (series_b[i] / max_val) * (plot_h - 6) if max_val else 0
         xa = gx + group_w * 0.14
         xb = xa + bar_w + 4
-        parts.append(f'<rect x="{xa:.1f}" y="{pad_t + plot_h - ha:.1f}" width="{bar_w:.1f}" height="{ha:.1f}" fill="{ca}" rx="2" />')
-        parts.append(f'<rect x="{xb:.1f}" y="{pad_t + plot_h - hb:.1f}" width="{bar_w:.1f}" height="{hb:.1f}" fill="{cb}" rx="2" />')
+        ya, yb = pad_t + plot_h - ha, pad_t + plot_h - hb
+        parts.append(f'<rect x="{xa:.1f}" y="{ya:.1f}" width="{bar_w:.1f}" height="{ha:.1f}" fill="{ca}" rx="2" />')
+        parts.append(f'<rect x="{xb:.1f}" y="{yb:.1f}" width="{bar_w:.1f}" height="{hb:.1f}" fill="{cb}" rx="2" />')
+        if series_a[i]:
+            parts.append(f'<text x="{xa + bar_w/2:.1f}" y="{max(ya - 4, 10):.1f}" text-anchor="middle" font-size="7" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{series_a[i]}</text>')
+        if series_b[i]:
+            parts.append(f'<text x="{xb + bar_w/2:.1f}" y="{max(yb - 4, 10):.1f}" text-anchor="middle" font-size="7" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{series_b[i]}</text>')
         parts.append(f'<text x="{gx + group_w/2:.1f}" y="{size_h - 6}" text-anchor="middle" font-size="7.5" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(cat)}</text>')
     parts.append("</svg>")
     legend = (
@@ -855,26 +922,61 @@ def _podium_row(items, theme: dict | None = None) -> str:
     return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0"><tr>{"".join(cells)}</tr></table>'
 
 
-def _timeline_html(items, container_h_pt=230, theme: dict | None = None) -> str:
+def _estimate_text_lines(text: str, font_pt: float, width_pt: float) -> int:
+    """Estimasi kasar jumlah baris kalau `text` di-word-wrap dlm lebar `width_pt` pada ukuran
+    `font_pt` — estimasi pra-render murni (WeasyPrint tidak dipanggil di sini), pola sama dgn
+    `_estimate_wrapped_height_in` di export_ppt.py, dipakai `_timeline_html` di bawah utk
+    menentukan tinggi kontainer SEBELUM HTML dirender."""
+    if not text:
+        return 0
+    avg_char_w = font_pt * 0.52
+    chars_per_line = max(int(width_pt / avg_char_w), 1)
+    return max(1, -(-len(text) // chars_per_line))
+
+
+def _timeline_html(items, container_h_pt=None, theme: dict | None = None) -> str:
     """Alternatif visual utk daftar rekomendasi (kartu grid) — titik variasi tampilan (lihat
     `recommendation_style` di generate_pdf_report). items: list of dict {"num","title",
     "detail"}, dirender sebagai roadmap horizontal: garis + node bulat bernomor, label
     berselang-seling di atas/bawah garis (gaya "tindak lanjut" laporan eksekutif). Posisi
     dihitung via CSS transform:translate (dikonfirmasi didukung WeasyPrint lewat isolasi
     render+sampling), BUKAN <table> — perlu node yang duduk TEPAT di tengah satu garis
-    horizontal kontinu, sesuatu yang tidak bisa dicapai rapi dengan tabel kolom."""
+    horizontal kontinu, sesuatu yang tidak bisa dicapai rapi dengan tabel kolom.
+
+    `container_h_pt`: kalau None (default), dihitung otomatis dari perkiraan tinggi
+    title+detail TERPANJANG di antara items — BUG YANG DIPERBAIKI (dilaporkan user): dulu
+    SELALU 230pt tetap terlepas dari panjang teksnya, jadi rekomendasi dgn teks agak panjang
+    kepotong visual (kotak kontennya tidak pernah menyesuaikan). Pola estimasi sama dgn
+    perbaikan serupa yang sudah lebih dulu dilakukan di export_ppt.py."""
     t = theme or THEME_PALETTES["green"]
+    # _light_safe: t["light"] SENGAJA pucat di tema "gold" (dirancang utk teks di atas latar
+    # gelap) — dipakai apa adanya di sini (garis & node PERTAMA di atas latar TERANG) bikin
+    # keduanya nyaris tak kelihatan (garis pucat di atas putih, angka putih di atas node pucat).
+    line_color = _light_safe(t["light"])
     n = len(items) or 1
+    stem_h = 20
+    col_w_pt = 900 / n  # lebar konten halaman (13.333in - 2*0.5in margin) dibagi jumlah item
+    text_w_pt = col_w_pt * 0.85
+
+    def _content_h_pt(it):
+        h = _estimate_text_lines(it.get("title", ""), 10, text_w_pt) * 10 * 1.3
+        if it.get("detail"):
+            h += _estimate_text_lines(it["detail"], 8.5, text_w_pt) * 8.5 * 1.3 + 3
+        return h
+
+    if container_h_pt is None:
+        max_content_h = max((_content_h_pt(it) for it in items), default=0)
+        container_h_pt = max(230, 2 * (max_content_h + stem_h + 14))
     line_y = container_h_pt / 2
     parts = [f'<div style="position:relative;height:{container_h_pt}pt;margin-top:10pt;">']
     parts.append(
-        f'<div style="position:absolute;left:3%;right:3%;top:{line_y}pt;height:2pt;background:{t["light"]};"></div>'
+        f'<div style="position:absolute;left:3%;right:3%;top:{line_y}pt;height:2pt;background:{line_color};"></div>'
     )
     col_w_pct = 100 / n
     for i, it in enumerate(items):
         cx_pct = round((i + 0.5) / n * 100, 3)
         above = (i % 2 == 0)
-        node_color = t["light"] if i == 0 else t["main"]
+        node_color = line_color if i == 0 else t["main"]
         parts.append(
             f'<div style="position:absolute;left:{cx_pct}%;top:{line_y}pt;transform:translate(-50%,-50%);'
             f'width:24pt;height:24pt;border-radius:50%;background:{node_color};color:#fff;text-align:center;'
@@ -882,7 +984,6 @@ def _timeline_html(items, container_h_pt=230, theme: dict | None = None) -> str:
         )
         detail_html = f'<div style="font-size:8.5pt;color:{GRAY_TEXT};margin-top:3pt;">{_esc(it["detail"])}</div>' if it.get("detail") else ""
         content_html = f'<div style="font-weight:700;font-size:10pt;color:{TEXT_DARK};">{_esc(it["title"])}</div>{detail_html}'
-        stem_h = 20
         if above:
             parts.append(
                 f'<div style="position:absolute;left:{cx_pct}%;top:{line_y - stem_h}pt;height:{stem_h}pt;'
@@ -920,7 +1021,7 @@ def _recommendation_banner_list_html(items, theme: dict | None = None) -> str:
             if it.get("detail") else ""
         )
         rows.append(
-            f'<table style="width:100%;background:{bg};border-left:4px solid {t["light"]};margin-bottom:10pt;" cellpadding="0" cellspacing="0">'
+            f'<table style="width:100%;background:{bg};border-left:4px solid {_light_safe(t["light"])};margin-bottom:10pt;" cellpadding="0" cellspacing="0">'
             f'<tr><td style="width:52px;vertical-align:top;padding:14pt 0 14pt 16pt;">{_badge(it["num"], t["main"], size="32px", font_size="12pt")}</td>'
             f'<td style="vertical-align:top;padding:14pt 16pt 14pt 12pt;">'
             f'<div style="font-weight:700;font-size:12.5pt;color:{TEXT_DARK};">{_esc(it["title"])}</div>'
@@ -1002,7 +1103,7 @@ def _flourish_html(corner="bottom_right", theme: dict | None = None) -> str:
     return f'<div style="position:absolute;top:0;right:0;bottom:0;left:0;overflow:hidden;pointer-events:none;">{circles}</div>'
 
 
-def _split_cover_td(block, flourish_corner, theme: dict | None = None) -> str:
+def _split_cover_td(block, flourish_corner, logo_b64=None, theme: dict | None = None) -> str:
     """Varian cover 2-kolom warna penuh (emas kiri + hijau kanan, angka hero besar di kolom
     emas) — titik variasi tampilan (lihat `cover_style` di generate_pdf_report), alternatif
     dari cover 1-warna standar. Dikembalikan sebagai dua <td> LENGKAP (dipakai lewat
@@ -1042,10 +1143,14 @@ def _split_cover_td(block, flourish_corner, theme: dict | None = None) -> str:
     )
     title_text = block["title"]
     title_size_pt = 26 if len(title_text) > 55 else 32 if len(title_text) > 40 else 38 if len(title_text) > 28 else 44
+    # PERMINTAAN USER: logo cover/penutup lebih besar lagi drpd halaman konten biasa (halaman
+    # pertama/terakhir yg paling dilihat) — 126px, bukan cuma 84px spt halaman dark biasa.
+    logo_html = _dark_logo_html(logo_b64, size_px=126, top="0.28in") if logo_b64 else ""
     right_td = (
         f'<td style="width:{100 - left_w_pct}%;background:{t["bg"]};color:#fff;position:relative;'
         f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};overflow:hidden;">'
         f'{_flourish_html(flourish_corner, theme=t)}'
+        f'{logo_html}'
         f'<div style="position:relative;margin:0.5in;">'
         f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
         f'{_kicker(block["kicker"], t["light"])}'
@@ -1058,7 +1163,7 @@ def _split_cover_td(block, flourish_corner, theme: dict | None = None) -> str:
     return left_td + right_td
 
 
-def _split_closing_td(block, flourish_corner="bottom_right", theme: dict | None = None) -> str:
+def _split_closing_td(block, flourish_corner="bottom_right", logo_b64=None, theme: dict | None = None) -> str:
     """Varian penutup berpasangan dgn _split_cover_td — angka hero yang SAMA ditampilkan lagi
     di kolom emas kiri (mengulang temuan utama di penutup, gaya "bookend" laporan
     eksekutif), kolom kanan tetap "Terima Kasih" seperti biasa."""
@@ -1076,10 +1181,13 @@ def _split_closing_td(block, flourish_corner="bottom_right", theme: dict | None 
         f'<div style="font-size:10.5pt;margin-top:8px;">{_esc(label)}</div>'
         f'</div></div></td>'
     )
+    # PERMINTAAN USER: logo cover/penutup lebih besar lagi drpd halaman konten biasa.
+    logo_html = _dark_logo_html(logo_b64, size_px=126, top="0.28in") if logo_b64 else ""
     right_td = (
         f'<td style="width:{100 - left_w_pct}%;background:{t["bg"]};color:#fff;position:relative;'
         f'height:7.5in;vertical-align:top;font-family:{BODY_FONT};overflow:hidden;">'
         f'{_flourish_html(flourish_corner, theme=t)}'
+        f'{logo_html}'
         f'<div style="position:relative;margin:0.5in;">'
         f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
         f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;margin-bottom:10px;">{_esc(block["thank_you"])}</div>'
@@ -1088,6 +1196,19 @@ def _split_closing_td(block, flourish_corner="bottom_right", theme: dict | None 
         f'</div></td>'
     )
     return left_td + right_td
+
+
+def _dark_logo_html(logo_b64, size_px=84, top="0.3in", right="0.3in") -> str:
+    """Logo di atas latar GELAP — PERMINTAAN USER: sebelumnya dibungkus kotak putih solid
+    bersudut (kontras aman, tapi terlihat seperti stiker ditempel). Diganti glow putih lembut
+    (radial-gradient, memudar ke tepi, tanpa sudut/kotak keras) — tetap kontras krn logo
+    aslinya berwarna gelap, tapi menyatu dgn latar, bukan kotak asing di atasnya."""
+    pad = round(size_px * 0.28)
+    return (
+        f'<div style="position:absolute;top:{top};right:{right};padding:{pad}px;line-height:0;'
+        f'background:radial-gradient(circle, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0) 78%);">'
+        f'<img src="data:image/png;base64,{logo_b64}" style="height:{size_px}px;display:block;" /></div>'
+    )
 
 
 def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None, logo_b64=None, last=False, raw=False, theme: dict | None = None, center=False) -> str:
@@ -1099,13 +1220,20 @@ def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None
         # tanpa background/margin-inset/flourish tunggal standar di bawah ini (pemanggil yang
         # bertanggung jawab penuh atas seluruh isi <tr>, termasuk warnanya sendiri).
         return f'<table style="width:13.333in;{break_style}" cellpadding="0" cellspacing="0"><tr>{inner_html}</tr></table>'
-    bg = t["bg"] if dark else WHITE
+    bg = t["bg"] if dark else t["soft"]
     color = WHITE if dark else TEXT_DARK
     flourish_html = _flourish_html(flourish, theme=t) if flourish else ""
-    logo_html = (
-        f'<img src="data:image/png;base64,{logo_b64}" style="position:absolute;top:0.3in;right:0.3in;height:40px;" />'
-        if logo_b64 else ""
-    )
+    if logo_b64 and dark:
+        # Logo aslinya berwarna gelap/hitam (lihat frontend/public/LOGO_PETRO_DANANTARA.png)
+        # — perlu treatment kontras di halaman berlatar gelap (cover/penutup/panel dark)
+        # supaya tetap kontras, bukan tenggelam di latar gelap yang sama (lihat
+        # _dark_logo_html). PERMINTAAN USER: ukuran logo digandakan (42 -> 84px).
+        logo_html = _dark_logo_html(logo_b64, size_px=84)
+    elif logo_b64:
+        # PERMINTAAN USER: ukuran logo digandakan (54 -> 108px).
+        logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="position:absolute;top:0.22in;right:0.3in;height:108px;" />'
+    else:
+        logo_html = ""
     footer_html = ""
     if page_num is not None:
         footer_html = (
@@ -1135,13 +1263,51 @@ def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None
     # cuma demi mengisi ruang. Cover/Penutup TIDAK dipengaruhi (selalu `center=False`, lihat
     # docstring atas) — layout keduanya sudah bespoke posisi absolut dari tepi atas/bawah.
     valign = "middle" if center else "top"
+    # BUG KRITIS KEDUA DIPERBAIKI (satu paket dgn perbaikan `center=False` hardcode di
+    # generate_pdf_report): variabel `valign` di atas SUDAH benar dihitung dari `center`,
+    # TAPI baris <td> di bawah selama ini menulis literal "vertical-align:top" APA ADANYA,
+    # tidak pernah benar2 memakai variabel `{valign}` ini — jadi walau `center=True` sudah
+    # benar terkirim sampai sini, hasil akhirnya TETAP top-align, tidak pernah ketengahan.
+    # Inilah 2 lapis bug yang sama2 harus diperbaiki spy fitur "tengahkan vertikal" ini
+    # akhirnya benar2 aktif.
+    # PERBAIKAN (dilaporkan user): logo & nomor halaman "ikut naik-turun" kalau isi 1 blok
+    # kebetulan lebih tinggi dari 1 halaman fisik (7.5in) — WeasyPrint memperlakukan tinggi
+    # <td> di atas sbg MINIMUM, bukan batas tegas, jadi baris tabel ini diam-diam terpecah
+    # jadi 2+ halaman fisik; logo/nomor halaman (position:absolute) dihitung relatif ke
+    # wrapper yang jadi lebih tinggi dari 7.5in itu, sehingga posisinya ikut bergeser.
+    # break-inside:avoid MEMAKSA WeasyPrint memindah SELURUH blok ke halaman fisik
+    # berikutnya kalau tidak muat, bukan memotongnya di tengah — wrapper jadi TETAP persis
+    # 7.5in tiap kali dirender, jadi posisi logo/nomor halaman tidak pernah lagi bergantung
+    # pada tinggi konten.
+    # BUG KRITIS KETIGA (satu paket dgn 2 perbaikan di atas): TERNYATA `vertical-align` di
+    # <td> di atas TIDAK PERNAH bisa efektif sama sekali — wrapper div persis di bawahnya
+    # (`height:7.5in` tegas) SELALU memenuhi 100% tinggi <td>, jadi tidak ada sisa ruang
+    # apa pun utk didistribusikan oleh vertical-align (anaknya sudah pas 7.5in juga). Div
+    # biasa (position:relative) JUGA tidak merespon vertical-align sama sekali (properti itu
+    # cuma berlaku utk elemen table-cell/inline). Konten SEKARANG dibungkus display:table +
+    # display:table-cell (pola yang SAMA PERSIS sudah dipakai & terbukti jalan di WeasyPrint
+    # utk _timeline_html di file ini) — supaya vertical-align BENAR-BENAR mengambang-tengahkan
+    # tinggi konten ASLI (bukan wrapper 7.5in tegas) di dalam ruang yang tersedia.
+    # CSS display:table pada <div> TERNYATA tidak cukup andal di WeasyPrint utk kasus ini
+    # (baris/sel anonim tidak konsisten meregang ke `height` yg diminta kalau kontennya lebih
+    # pendek — sudah dicoba & TERBUKTI tidak berefek). Dipakai <table> SUNGGUHAN sebagai
+    # gantinya — pola PERSIS sama dgn wrapper TERLUAR (di bawah) yang SUDAH TERBUKTI berhasil
+    # memenuhi <td height:7.5in> secara konsisten di semua halaman (itulah caranya warna latar
+    # tiap halaman sudah selalu benar mengisi penuh 7.5in selama ini).
+    content_html = (
+        f'<table style="width:13.333in;height:7.5in;" cellpadding="0" cellspacing="0"><tr>'
+        f'<td style="height:7.5in;vertical-align:{valign};">'
+        f'<div style="position:relative;margin:0.5in;">{inner_html}</div>'
+        f'</td></tr></table>'
+    )
     return (
         f'<table style="width:13.333in;{break_style}" cellpadding="0" cellspacing="0">'
-        f'<tr><td style="position:relative;background:{bg};color:{color};height:7.5in;vertical-align:{valign};'
-        f'font-family:{BODY_FONT};">'
+        f'<tr><td style="background:{bg};color:{color};height:7.5in;vertical-align:top;'
+        f'break-inside:avoid;page-break-inside:avoid;font-family:{BODY_FONT};">'
+        f'<div style="position:relative;width:13.333in;height:7.5in;overflow:hidden;">'
         f'{flourish_html}{logo_html}'
-        f'<div style="margin:0.5in;">{inner_html}</div>'
-        f'{footer_html}</td></tr></table>'
+        f'{content_html}'
+        f'{footer_html}</div></td></tr></table>'
     )
 
 
@@ -1172,6 +1338,7 @@ class _PdfBlockContext:
     cover_style: str
     asset_style: str
     recommendation_style: str
+    logo_b64: str | None
     kicker_ringkasan: str
     kicker_analisis: str
     # Palet warna tema (report.theme_color) — 5 peran, resolusi lihat resolve_theme_color()/
@@ -1188,6 +1355,12 @@ class _PdfBlockContext:
     # (_ivory_panel, _stat_card_grid, dkk) yang tidak butuh field ctx lain.
     theme: dict | None = None
     cover_hero_stat: dict | None = None
+    # Diisi _build_page_block SEBELUM memanggil builder tiap panel di halaman itu — dibaca
+    # _mini_chart_html (lihat catatan di sana) supaya chart pendukung tahu apakah dia
+    # sendirian selebar halaman atau berbagi kolom dgn panel lain, BUKAN selalu diasumsikan
+    # sempit (BUG YANG DIPERBAIKI, dilaporkan user: chart kecil dibiarkan kecil walau
+    # kebetulan sendirian di halaman lebar, menyisakan banyak ruang kosong).
+    panel_count: int = 1
 
 
 def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
@@ -1196,7 +1369,7 @@ def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         # Varian 2-kolom warna penuh (lihat _split_cover_td) — dipakai via
         # _page(..., raw=True) karena tiap kolom butuh background sendiri penuh
         # 1 halaman, bukan satu warna latar tunggal seperti varian "solid".
-        return (_split_cover_td(block, ctx.flourish_corner, theme=ctx.theme), True, None, False, True)
+        return (_split_cover_td(block, ctx.flourish_corner, logo_b64=ctx.logo_b64, theme=ctx.theme), True, None, False, True)
     else:
         # BUG BESAR YANG DIPERBAIKI: `margin-top` pada <div> PEMBUNGKUS (bukan pada
         # dirinya sendiri) terbukti (isolasi render+sampling) TIDAK diterapkan ke child
@@ -1214,7 +1387,15 @@ def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
             f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(block["subtitle"])}</div>'
             f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
             f'<div style="font-size:10.5pt;color:{ctx.accent_soft};margin-top:6px;">{_esc(block["info_line"])}</div>'
-            f'<div style="position:absolute;bottom:0;left:0;font-size:9pt;font-weight:700;color:#fff;">{_esc(block["header_title"])}</div>'
+            # BUG YANG DIPERBAIKI (dilaporkan user): "bottom:0" di sini dulu terlihat benar
+            # SECARA KEBETULAN (parent belum position:relative saat itu, jadi malah escape ke
+            # tepi FISIK kertas). Setelah parent diperbaiki jadi position:relative (lihat
+            # _page()), "bottom:0" berubah makna jadi "bawah DIV KONTEN" (yang tingginya cuma
+            # sebatas kicker+judul+subjudul, bukan setinggi halaman) — nama perusahaan jadi
+            # tumpang tindih dgn baris info di atasnya. Diganti "top:6.6in" (offset tetap dari
+            # atas div, POLA SAMA yang sudah dipakai _split_cover_td utk elemen serupa, TIDAK
+            # bergantung tinggi konten di atasnya).
+            f'<div style="position:absolute;top:6.6in;left:0;font-size:9pt;font-weight:700;color:#fff;">{_esc(block["header_title"])}</div>'
         )
         return (inner, True, ctx.flourish_corner, False)
 
@@ -1240,6 +1421,19 @@ def _build_intro_block(block: dict, ctx: _PdfBlockContext) -> tuple:
 
 
 def _build_executive_summary_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # Panel ini SEBELUMNYA cuma kartu KPI + 1 paragraf caption — solo page bertema "overview"
+    # (satu-satunya kandidat bertema ini, lihat _group_candidates_into_pages) jadi TIDAK
+    # PERNAH digabung dgn kandidat lain, hasilnya banyak ruang kosong kalau jumlah kartu
+    # sedikit. Donut kategori/status (data yang SAMA dgn aux_list_items, sudah dihitung di
+    # report_render_logic.py) ditambahkan sbg pendamping visual supaya halaman ini terasa
+    # sepadat halaman lain, bukan cuma teks pendek + banyak ruang kosong.
+    chart_html = ""
+    if block.get("chart"):
+        chart_html = (
+            f'<div style="margin-top:22px;padding-top:18px;border-top:1px solid {ctx.accent_soft};">'
+            f'{_dark_donut_chart_html(block["chart"], ctx)}'
+            f'</div>'
+        )
     inner = (
         _kicker(ctx.kicker_ringkasan, ctx.accent_light) +
         f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:18px;">{_esc(block["heading"])}</div>' +
@@ -1248,22 +1442,42 @@ def _build_executive_summary_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         # selebar halaman penuh di kertas widescreen 13.333in menghasilkan baris
         # >150 karakter, jauh melebihi lebar baca nyaman (~75-90 karakter); versi
         # referensi selalu membatasi teks naratif ke lebar yang lebih wajar.
-        f'<div style="font-size:10.5pt;font-style:italic;color:{ctx.accent_soft};margin-top:18px;max-width:9.5in;">{_esc(block["caption"])}</div>'
+        f'<div style="font-size:10.5pt;font-style:italic;color:{ctx.accent_soft};margin-top:18px;max-width:9.5in;">{_esc(block["caption"])}</div>' +
+        chart_html
     )
     return (inner, True, None, False)
 
 
-def _mini_legend_html(categories, ramp) -> str:
+def _mini_legend_html(categories, ramp, text_color=None) -> str:
     """Legend ringkas (titik warna + nama, tanpa persentase) utk chart "donut"/"stacked" di
     _mini_chart_html — _donut_chart_svg/_stacked_proportion_bar_html sendiri MURNI grafik
     (beda dari React DonutChart/StackedBar yang legend-nya sudah menyatu di komponennya),
-    tanpa ini pembaca tidak tahu warna mana mewakili kategori apa di panel kecil ini."""
+    tanpa ini pembaca tidak tahu warna mana mewakili kategori apa di panel kecil ini.
+    `text_color` opsional (default GRAY_TEXT) — dioverride panel berlatar gelap."""
+    text_color = text_color or GRAY_TEXT
     dots = "".join(
         f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{ramp[i % len(ramp)]};margin-right:4px;"></span>'
-        f'<span style="font-size:8pt;color:{GRAY_TEXT};margin-right:10px;">{_esc(cat)}</span>'
+        f'<span style="font-size:8pt;color:{text_color};margin-right:10px;">{_esc(cat)}</span>'
         for i, cat in enumerate(categories)
     )
     return f'<div style="margin-top:8pt;line-height:2;">{dots}</div>'
+
+
+def _dark_donut_chart_html(chart: dict, ctx: "_PdfBlockContext") -> str:
+    """Donut kategori/status utk panel BERLATAR GELAP (Ringkasan Eksekutif) — _donut_chart_svg
+    & _mini_legend_html defaultnya dirancang utk panel terang (label pusat/legend pakai
+    TEXT_DARK/GRAY_TEXT, nyaris tak kelihatan di atas hijau tua). Ramp warna SENGAJA dari
+    palet tema (ctx.accent_*), bukan CATEGORY_COLOR_RAMP yang tetap hijau/emas apa pun
+    temanya — konsisten dgn fix konsistensi warna tema di kartu KPI/bar management report."""
+    ramp = [ctx.accent_light, WHITE, ctx.accent_chart, ctx.accent_soft, GRAY_TEXT]
+    svg = _donut_chart_svg(chart["values"], colors=ramp[:len(chart["values"])], size=190, stroke_w=32, label_color=WHITE, sub_color=ctx.accent_soft)
+    legend = _mini_legend_html(chart["categories"], ramp, text_color=WHITE)
+    return (
+        f'<table cellpadding="0" cellspacing="0"><tr>'
+        f'<td style="vertical-align:middle;">{svg}</td>'
+        f'<td style="vertical-align:middle;padding-left:20px;">{legend}</td>'
+        f'</tr></table>'
+    )
 
 
 def _mini_chart_html(chart: dict, ctx: "_PdfBlockContext") -> str:
@@ -1282,7 +1496,15 @@ def _mini_chart_html(chart: dict, ctx: "_PdfBlockContext") -> str:
     if chart["type"] == "stacked":
         return _stacked_proportion_bar_html(chart["values"], colors=colors, height_px=28) + _mini_legend_html(chart["categories"], ramp)
     if chart["type"] == "bar_line":
-        return _bar_line_chart_svg(chart["categories"], chart["values"], chart.get("cumulative"), color=ctx.accent_main, size_w=300, size_h=130)
+        # Lebar menyesuaikan berapa panel yang berbagi halaman ini (ctx.panel_count, diisi
+        # _build_page_block SEBELUM memanggil builder tiap panel) — BUG YANG DIPERBAIKI
+        # (dilaporkan user): dulu SELALU 300x130 tetap, jadi kalau kandidat "Analisis Tren"
+        # ini kebetulan berakhir SENDIRIAN selebar halaman (umum, bukan cuma teori — lihat
+        # 1 panel -> lebar penuh di _build_page_block), chart kecilnya menyisakan banyak
+        # ruang kosong di kanan-kiri. Tinggi tetap 130 (batas visual_wrap 1.4in di
+        # _panel_insight_card, biar tidak overflow vertikal).
+        size_w = {1: 700, 2: 460}.get(ctx.panel_count, 300)
+        return _bar_line_chart_svg(chart["categories"], chart["values"], chart.get("cumulative"), color=ctx.accent_main, size_w=size_w, size_h=130)
     return _bar_chart_html(chart["categories"], chart["values"], colors=colors or [ctx.accent_main] * len(chart["values"]))
 
 
@@ -1363,10 +1585,23 @@ def _build_time_heatmap_block(block: dict, ctx: _PdfBlockContext) -> tuple:
 def _build_period_compare_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     """Perbandingan antar paruh periode (grouped bar) — panel MANDIRI, sama pola dgn
     category_distribution dkk."""
+    # color_b sengaja pakai _light_safe(accent_light), BUKAN accent_light apa adanya — di
+    # atas latar TERANG panel ini, tema "gold" khususnya bikin 2 batang berdampingan nyaris
+    # tak beda warna (lihat docstring _light_safe).
+    # size_w eksplisit menyesuaikan ctx.panel_count (diisi _build_page_block SEBELUM
+    # memanggil builder tiap panel di halaman ini) — KOREKSI: panel ini TIDAK selalu
+    # sendirian selebar halaman seperti asumsi awal fix ini (bobotnya 0.45, di bawah
+    # MIN_FULL backstop 0.6, jadi sering digabung dgn panel "distribution" lain spt
+    # category_distribution/time_heatmap di halaman yang sama — size_w=760 tetap akan
+    # overflow keluar kolomnya kalau dipaksa selalu dipakai). BUG ASLI YANG DIPERBAIKI
+    # (dilaporkan user): ukuran default lama (480x190) kecil & menyisakan ruang kosong
+    # kalau kebetulan sendirian.
+    size_w, size_h = {1: (760, 230), 2: (480, 200)}.get(ctx.panel_count, (340, 170))
     chart_html = _grouped_bar_chart_svg(
         block["categories"], block["series_a"], block["series_b"],
         label_a=block["label_a"], label_b=block["label_b"],
-        color_a=ctx.accent_main, color_b=ctx.accent_light,
+        color_a=ctx.accent_main, color_b=_light_safe(ctx.accent_light),
+        size_w=size_w, size_h=size_h,
     )
     caption_html = _note_box_html(block.get("intro"), theme=ctx.theme) if block.get("intro") else ""
     inner = (
@@ -1380,7 +1615,10 @@ def _build_category_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
     # Ramp warna kategori/status DITURUNKAN dari tema (report.theme_color), bukan konstanta
     # hijau/emas tetap — supaya chart multi-segmen (donut/stacked) ikut tema, sama seperti
     # bar chart utama. GRAY_TEXT tetap sebagai warna ke-5 (netral, dipakai kalau kategori > 4).
-    ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
+    # accent_light/accent_soft dilewatkan _light_safe() — kedua peran ini SENGAJA pucat di
+    # tema "gold" (dirancang utk teks di atas latar gelap, lihat docstring _light_safe),
+    # tanpa ini segmen ke-3/ke-4 chart di panel BERLATAR TERANG ini nyaris tak kelihatan.
+    ramp = [ctx.accent_main, ctx.accent_chart, _light_safe(ctx.accent_light), _light_safe(ctx.accent_soft), GRAY_TEXT]
     legend = _legend_rows([
         (ramp[l["color_index"] % len(ramp)], l["name"], f"{l['pct']}%") for l in block["legend"]
     ], theme=ctx.theme)
@@ -1390,7 +1628,10 @@ def _build_category_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
     # category_style/accent_bar_color di generate_pdf_report) — datanya identik,
     # cuma cara visualnya beda tiap generate.
     if ctx.category_style == "donut":
-        chart_html = _donut_chart_svg(block["values"], colors=[ramp[l["color_index"] % len(ramp)] for l in block["legend"]])
+        # size dinaikkan dari default 210 — panel ini selebar 58% halaman (_main_panel_pair),
+        # donut kecil menyisakan ruang kosong besar di kanan-kirinya (kelas masalah sama dgn
+        # chart lain yang sudah diperbesar, dilaporkan user).
+        chart_html = _donut_chart_svg(block["values"], colors=[ramp[l["color_index"] % len(ramp)] for l in block["legend"]], size=280, stroke_w=44)
     elif ctx.category_style == "stacked":
         seg_colors = [ramp[l["color_index"] % len(ramp)] for l in block["legend"]]
         chart_html = _stacked_proportion_bar_html(block["values"], colors=seg_colors)
@@ -1432,7 +1673,10 @@ def _build_severity_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
 def _build_status_distribution_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     caption_html = _note_box_html(block["ai_caption"], theme=ctx.theme) if block.get("ai_caption") else ""
     intro_html = f'<div style="font-size:11pt;color:{GRAY_TEXT};margin-bottom:16px;max-width:9.5in;">{_esc(block["intro"])}</div>'
-    ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
+    # accent_light/accent_soft dilewatkan _light_safe() — kedua peran ini SENGAJA pucat di
+    # tema "gold" (dirancang utk teks di atas latar gelap, lihat docstring _light_safe),
+    # tanpa ini segmen ke-3/ke-4 chart di panel BERLATAR TERANG ini nyaris tak kelihatan.
+    ramp = [ctx.accent_main, ctx.accent_chart, _light_safe(ctx.accent_light), _light_safe(ctx.accent_soft), GRAY_TEXT]
     # Titik variasi tampilan (independen dari category_style — lihat status_style di
     # generate_pdf_report): donut butuh panel legend berdampingan (warna donut tidak
     # ber-label sendiri, beda dari bar chart yang sumbu kategorinya sudah jadi label),
@@ -1455,7 +1699,7 @@ def _build_status_distribution_block(block: dict, ctx: _PdfBlockContext) -> tupl
         legend_title = "Status Proportion" if is_english(ctx.report) else "Proporsi Status"
         legend_panel = _ivory_panel("%", legend_title, legend_rows_html, theme=ctx.theme)
         if ctx.status_style == "donut":
-            chart_html = _donut_chart_svg(block["values"], colors=status_colors)
+            chart_html = _donut_chart_svg(block["values"], colors=status_colors, size=280, stroke_w=44)
             body = _main_panel_pair(chart_html, legend_panel, 58, ctx.panel_side)
         else:
             # "stacked" ditumpuk vertikal (bukan berdampingan) — lihat catatan sama
@@ -1523,9 +1767,14 @@ def _build_asset_cards_block(block: dict, ctx: _PdfBlockContext) -> tuple:
 
 
 def _build_key_findings_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # PERMINTAAN USER (berkali-kali — halaman sudah ditengahkan tapi tetap terasa kosong
+    # kalau isinya cuma 1-3 temuan singkat): baris temuan diperbesar proporsional saat
+    # jumlahnya sedikit, bukan cuma dibiarkan kecil-kecil ditengah ruang lapang.
+    n_items = len(block["items"])
+    row_scale = 1.35 if n_items <= 2 else (1.15 if n_items == 3 else 1.0)
     # RED_CRIT TIDAK ikut tema (severity fixed) — cuma cabang "tidak kritis" yang ikut tema.
     findings_html_parts = [
-        _badge_row(it["num"], it["title"], it["detail"], RED_CRIT if it["is_critical"] else ctx.accent_main)
+        _badge_row(it["num"], it["title"], it["detail"], RED_CRIT if it["is_critical"] else ctx.accent_main, scale=row_scale)
         for it in block["items"]
     ]
     findings_html = "".join(findings_html_parts)
@@ -1569,18 +1818,20 @@ def _build_conclusion_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     priority_items = [(p["letter"], p["text"]) for p in block["priority_items"]]
     priority_html = _priority_panel(block["priority_panel_title"], priority_items, theme=ctx.theme) if priority_items else ""
     concl_left = (
-        f'<div style="font-size:11pt;color:#E8ECE6;margin-bottom:18px;">{_esc(block["text"])}</div>'
+        f'<div style="font-size:11pt;color:#E8ECE6;margin-bottom:18px;max-width:{"9.5in" if not priority_html else "100%"};">{_esc(block["text"])}</div>'
         f'{pills_html}'
     )
-    # panel_side cuma dipakai kalau priority_html benar-benar ada isinya — kalau
-    # kosong (tidak ada rekomendasi), swap ke "left" akan menyisakan kolom kiri
-    # kosong & teks Kesimpulan malah ke kanan, lebih buruk dari layout defaultnya.
-    concl_side = ctx.panel_side if priority_html else "right"
-    inner = (
+    header_html = (
         _kicker(block["kicker"], ctx.accent_light) +
-        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:16px;">{_esc(block["title"])}</div>' +
-        _main_panel_pair(concl_left, priority_html, 58, concl_side)
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:16px;">{_esc(block["title"])}</div>'
     )
+    if priority_html:
+        # panel_side cuma dipakai kalau priority_html benar-benar ada isinya — kalau
+        # kosong (tidak ada rekomendasi BARU, lihat report_render_logic.py), 2 kolom
+        # (58/42) menyisakan kolom kanan kosong — lebih buruk daripada teks lebar penuh.
+        inner = header_html + _main_panel_pair(concl_left, priority_html, 58, ctx.panel_side)
+    else:
+        inner = header_html + concl_left
     return (inner, True, None, False)
 
 
@@ -1588,7 +1839,7 @@ def _build_closing_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     if ctx.cover_style == "split":
         # Bookend dgn cover: panel kiri warna emas mengulang angka hero yang sama.
         closing_block = {**block, "hero_stat": ctx.cover_hero_stat}
-        return (_split_closing_td(closing_block, ctx.flourish_corner, theme=ctx.theme), True, None, True, True)
+        return (_split_closing_td(closing_block, ctx.flourish_corner, logo_b64=ctx.logo_b64, theme=ctx.theme), True, None, True, True)
     else:
         # Spacer sibling, bukan margin-top pada div pembungkus — lihat catatan panjang
         # di slide "cover" di atas (bug yang sama persis, ini slide yang jadi bukti
@@ -1600,6 +1851,235 @@ def _build_closing_block(block: dict, ctx: _PdfBlockContext) -> tuple:
             f'<div style="font-size:10.5pt;font-style:italic;color:{ctx.accent_soft};">{_esc(block["note"])}</div>'
         )
         return (inner, True, ctx.flourish_corner, True)
+
+
+def _build_management_kpi_grid_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    items = block.get("items", [])
+    cell_htmls = []
+    # BUG DIPERBAIKI (dilaporkan user): "blue"/"green"/"amber" SEBELUMNYA warna literal tetap
+    # (biru/hijau/emas baku), sama sekali tidak ikut report.theme_color — laporan yang temanya
+    # navy/dark/gold tetap tampil kartu biru-hijau-emas yang tidak nyambung. Ketiganya (netral/
+    # capaian-baik/sorotan, BUKAN status bahaya) sekarang diturunkan dari palet tema, sama
+    # seperti elemen lain di laporan. "red"/"orange"/"gray" TETAP warna semantik tetap (bahaya/
+    # peringatan/netral-pasif) — konvensi yang sama dgn SEVERITY_COLOR di tempat lain, TIDAK
+    # boleh ikut tema supaya makna "kritis" tetap konsisten dikenali di tema apa pun.
+    color_map = {
+        "blue": ctx.accent_main,
+        "green": ctx.accent_chart,
+        "amber": _light_safe(ctx.accent_light),
+        "red": RED_CRIT,
+        "orange": "#EA580C",
+        "gray": GRAY_TEXT,
+    }
+    # PERMINTAAN USER (berkali-kali — "kalau masih kosong di bawah, GEDEIN aja fontnya/
+    # kotaknya"): kartu SEBELUMNYA selalu ukuran tetap (angka 34pt, padding 16pt) apa pun
+    # jumlah kartunya — kalau cuma 2-3 kartu (1 baris), sisa halaman di bawah grid kosong
+    # total walau sudah ditengahkan vertikal. Sekarang ukuran ikut jumlah BARIS (bukan cuma
+    # posisinya) — makin sedikit baris, kartu (& angka di dalamnya) makin besar, pola sama
+    # dgn yg sudah dipakai di add_stat_card_grid versi PPT.
+    grid_cols = 2 if len(items) in (2, 4) else 3
+    rows = math.ceil(len(items) / grid_cols) if items else 1
+    scale = {1: 1.55, 2: 1.2}.get(rows, 1.0)
+    # padding dinaikkan LEBIH agresif drpd font (padding "gratis" mengisi ruang tanpa bikin
+    # angka terlihat aneh raksasa) — kartu jadi benar2 lebih TINGGI, bukan cuma angkanya besar.
+    pad_scale = {1: 2.6, 2: 1.5}.get(rows, 1.0)
+    value_pt = round(34 * scale)
+    label_pt = round(9.5 * scale)
+    pad_pt = round(16 * pad_scale)
+    dot_px = round(10 * scale)
+    for item in items:
+        col = color_map.get(item.get("color", "blue"), ctx.accent_main)
+        delta_html = f'<div style="font-size:{round(9*scale)}pt;font-weight:600;color:{GRAY_TEXT};margin-top:{round(6*scale)}px;">{_esc(item["delta"])}</div>' if item.get("delta") else ""
+        # Kartu KPI diperbesar (angka 34pt, dot warna, padding lapang) — identitas "Visual
+        # tinggi, KPI ringkas" template ini, beda dgn kartu di SOC Technical Report yang lebih
+        # sedang ukurannya krn di sana angka cuma salah satu elemen, bukan sorotan utama.
+        cell_htmls.append(
+            f'<table style="width:100%;margin-bottom:14pt;background:{IVORY};border:1.5px solid {col}40;border-radius:14px;"><tr><td style="vertical-align:top;padding:{pad_pt}pt;">'
+            f'<table cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="width:{dot_px}px;height:{dot_px}px;background:{col};border-radius:{round(dot_px/2)}px;font-size:1px;">&nbsp;</td>'
+            f'<td style="padding-left:8px;font-size:{label_pt}pt;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:{col};">{_esc(item["label"])}</td>'
+            f'</tr></table>'
+            f'<div style="font-family:{TITLE_FONT};font-size:{value_pt}pt;font-weight:900;color:{col};margin-top:8px;">{_esc(item["value"])}</div>'
+            f'{delta_html}'
+            f'</td></tr></table>'
+        )
+    # Kolom grid menyesuaikan JUMLAH kartu sungguhan — dulu SELALU 3 kolom apa pun jumlah
+    # kartunya, kalau totalnya mis. 4 (bukan kelipatan 3), baris terakhir cuma terisi 1 dari
+    # 3 sel (2 sel kosong lebar), halaman jadi terlihat timpang/kurang padat.
+    inner = _kicker(block.get("kicker", ""), ctx.accent_main) + _title(block.get("title", "")) + _card_grid(cell_htmls, grid_cols)
+    return (inner, False, None, False)
+
+
+def _mgmt_tile_chart_html(tile: dict, ctx: "_PdfBlockContext") -> str:
+    """Chart KOMPAK per tile dashboard (_build_management_visual_dashboard_block di bawah) —
+    ukuran sengaja lebih kecil drpd versi 1-halaman-penuh yang dulu dipakai builder terpisah
+    (mis. radar dulu size=300 -> 190, heatmap cell dulu 32 -> 20) supaya 4-6 tile muat
+    berdampingan dlm 1 halaman, konsisten dgn permintaan user: laporan "Visual tinggi"
+    ditumpuk banyak chart macam-macam dlm 1 halaman, BUKAN 1 chart per halaman."""
+    kind = tile["tile_kind"]
+    if kind == "risk_heatmap":
+        bars = tile.get("bars", [])[:5]
+        is_severity = tile.get("mode") == "severity"
+        if is_severity:
+            # Severity TETAP warna semantik tetap (konvensi sama dgn SEVERITY_COLOR di
+            # seluruh file ini) — TIDAK boleh ikut tema.
+            color_map = {"red": RED_CRIT, "orange": "#EA580C", "amber": GOLD_MAIN, "blue": "#2563EB", "gray": GRAY_TEXT}
+        else:
+            color_map = {"blue": ctx.accent_main, "green": ctx.accent_chart, "amber": _light_safe(ctx.accent_light), "orange": _light_safe(ctx.accent_soft), "gray": GRAY_TEXT, "red": ctx.accent_main}
+        colors = [color_map.get(b.get("color", "gray"), ctx.accent_main) for b in bars]
+        labels = [b["label"] for b in bars]
+        values = [b["count"] for b in bars]
+        # Bentuk visual ikut category_style/status_style yang SAMA dgn laporan gaya SOC
+        # (mode kategori pakai category_style, mode severity pakai status_style) — BUG YANG
+        # DIPERBAIKI (dilaporkan user, "itu-itu aja"): tile ini dulu SELALU batang polos apa
+        # pun kombinasi tampilan yang terkunci utk laporan ini, beda dari laporan SOC yang
+        # sudah bervariasi (donat/susun/corong bergantian tiap generate). Ukuran tetap
+        # kompak (bukan versi 1-halaman-penuh) supaya tetap muat berdampingan di grid tile.
+        style = ctx.status_style if is_severity else ctx.category_style
+        if style == "donut":
+            return _donut_chart_svg(values, colors=colors, size=150, stroke_w=24) + _mini_legend_html(labels, colors)
+        if style == "stacked":
+            return _stacked_proportion_bar_html(values, colors=colors, height_px=24) + _mini_legend_html(labels, colors)
+        if style == "funnel" and is_severity:
+            order = sorted(range(len(values)), key=lambda i: -values[i])
+            return _funnel_chart_svg([labels[i] for i in order], [values[i] for i in order], color=ctx.accent_main)
+        return _bar_chart_html(labels, values, colors=colors)
+    if kind == "kpi_radar":
+        # label_margin dikecilkan (100 -> 55) khusus di sini — di ukuran kompak tile ini,
+        # margin default 100px akan bikin r_max negatif (chart rusak), lihat docstring
+        # _radar_chart_svg.
+        return _radar_chart_svg(tile["axes"], tile["values"], color=ctx.accent_main, size=220, label_margin=55)
+    if kind == "status_funnel":
+        return _funnel_chart_svg(tile["categories"], tile["values"], color=ctx.accent_main, size_w=260, size_h=165)
+    if kind == "period_compare":
+        return _grouped_bar_chart_svg(
+            tile["categories"], tile["series_a"], tile["series_b"],
+            label_a=tile["label_a"], label_b=tile["label_b"],
+            color_a=ctx.accent_main, color_b=ctx.accent_chart, size_w=320, size_h=165,
+        )
+    if kind == "time_heatmap":
+        return _heatmap_grid_svg(tile["day_labels"], tile["hour_labels"], tile["grid"], color=ctx.accent_main, cell=20)
+    if kind == "trend_chart":
+        chart = tile["chart"]
+        if chart["type"] == "bar_line":
+            return _bar_line_chart_svg(chart["categories"], chart["values"], chart.get("cumulative"), color=ctx.accent_main, size_w=320, size_h=150)
+        return _bar_chart_html(chart["categories"], chart["values"], colors=[ctx.accent_main] * len(chart["values"]))
+    if kind == "custom_topic":
+        # PERMINTAAN USER (Management Report "harus lebih banyak visualisasi"): section
+        # custom tulisan AI yang punya data perbandingan kategori (field "chart" dari AI,
+        # lihat get_analysis_prompt) digambar sbg chart sungguhan di sini, bukan kartu teks —
+        # bentuknya gantian bar/donat/susun per tile (lihat _custom_chart_styles di
+        # build_management_report_blocks) supaya tidak seragam semua.
+        labels, values = tile.get("labels", []), tile.get("values", [])
+        ramp = [ctx.accent_main, ctx.accent_chart, _light_safe(ctx.accent_light), _light_safe(ctx.accent_soft), GRAY_TEXT, ctx.accent_main]
+        colors = [ramp[i % len(ramp)] for i in range(len(values))]
+        style = tile.get("chart_style", "bar")
+        if style == "donut":
+            return _donut_chart_svg(values, colors=colors, size=150, stroke_w=24) + _mini_legend_html(labels, colors)
+        if style == "stacked":
+            return _stacked_proportion_bar_html(values, colors=colors, height_px=24) + _mini_legend_html(labels, colors)
+        return _bar_chart_html(labels, values, colors=colors)
+    return ""
+
+
+def _build_management_visual_dashboard_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # PERMINTAAN USER: sebelumnya tiap jenis chart (peta risiko/radar/funnel/perbandingan
+    # periode/heatmap waktu/tren) jadi halamannya sendiri-sendiri — "1 chart per halaman"
+    # berkali-kali, bukan benar2 padat. Sekarang ditumpuk jadi 1 grid (4/5/lebih tile
+    # sekaligus, macam-macam bentuk chart), keterangan tiap tile dipangkas jadi 1 kalimat
+    # (lihat "caption" per tile, dibangun di build_management_report_blocks).
+    tiles = block.get("tiles", [])
+    cell_htmls = []
+    for t in tiles:
+        caption_html = f'<div style="font-size:8.5pt;color:{GRAY_TEXT};margin-top:8px;line-height:1.5;">{_esc(t["caption"])}</div>' if t.get("caption") else ""
+        cell_htmls.append(
+            f'<table style="width:100%;background:{IVORY};border:1px solid {PANEL_BORDER};border-radius:12px;"><tr><td style="vertical-align:top;padding:14pt;">'
+            f'<div style="font-size:9.5pt;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:{ctx.accent_main};margin-bottom:8px;">{_esc(t.get("title", ""))}</div>'
+            f'{_mgmt_tile_chart_html(t, ctx)}'
+            f'{caption_html}'
+            f'</td></tr></table>'
+        )
+    # 3 kolom kalau tile-nya banyak (5-6, chart kompak masih cukup lega), 2 kolom kalau
+    # sedikit (2-4, chart dapat ruang lebih lapang) — sama prinsipnya dgn grid_cols adaptif
+    # di _build_management_kpi_grid_block.
+    cols = 3 if len(tiles) >= 5 else 2
+    inner = _kicker(block.get("kicker", ""), ctx.accent_main) + _title(block.get("title", "")) + _card_grid(cell_htmls, cols)
+    return (inner, False, None, False)
+
+
+def _build_management_action_items_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    urgency_color = {
+        "critical": (RED_CRIT, RED_CRIT_BG),
+        "high": ("#EA580C", "#FFF7ED"),
+        "medium": (GOLD_MAIN, GOLD_CREAM_SOFT),
+        "low": ("#2563EB", "#EFF6FF"),
+    }
+    cards_html = ""
+    for it in block.get("items", []):
+        fg, bg = urgency_color.get(it.get("urgency", "low"), (ctx.accent_main, IVORY))
+        detail = f'<div style="font-size:9pt;color:{GRAY_TEXT};margin-top:4px;line-height:1.4;">{_esc(it.get("detail", ""))}</div>' if it.get("detail") else ""
+        cards_html += (
+            f'<table style="width:100%;margin-bottom:8pt;background:{bg};border:1px solid {fg}35;border-radius:10px;"><tr>'
+            f'<td style="width:36px;vertical-align:middle;text-align:center;padding:8pt;">'
+            f'<div style="width:26px;height:26px;line-height:26px;border-radius:13px;background:{fg};color:#fff;font-weight:900;font-size:10pt;margin:0 auto;">{it.get("number", 1)}</div>'
+            f'</td>'
+            f'<td style="vertical-align:middle;padding:8pt 8pt 8pt 0;">'
+            f'<div style="font-weight:800;font-size:10.5pt;color:{TEXT_DARK};">{_esc(it.get("title", ""))}</div>'
+            f'{detail}'
+            f'</td>'
+            f'<td style="width:80px;vertical-align:middle;text-align:right;padding-right:12pt;">'
+            f'<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:{fg};color:#fff;font-size:7.5pt;font-weight:800;text-transform:uppercase;">{_esc(it.get("urgency", ""))}</span>'
+            f'</td>'
+            f'</tr></table>'
+        )
+    inner = _kicker(block.get("kicker", ""), ctx.accent_main) + _title(block.get("title", "")) + cards_html
+    return (inner, False, None, False)
+
+
+def _build_management_asset_ranking_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # Versi padat/batang khas Management Report — meniru persis cabang "bars" di
+    # _build_asset_cards_block di atas, tapi TIDAK ikut ctx.asset_style (dipaksa selalu
+    # batang, supaya konsisten padat, tidak ikut pengacakan kartu/podium gaya SOC).
+    bar_items = [
+        {"num": it["num"], "name": it["name"], "stat": it["stat"], "count": it.get("count", 0)}
+        for it in block.get("items", [])
+    ]
+    inner = (
+        _kicker(block.get("kicker", ""), ctx.accent_light) +
+        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:20pt;color:#fff;margin-bottom:14px;">{_esc(block.get("title", ""))}</div>' +
+        f'<div style="margin-top:8pt;">{_asset_ranked_bars_html(bar_items, theme=ctx.theme)}</div>'
+    )
+    return (inner, True, None, False)
+
+
+def _build_management_ai_narrative_block(block: dict, ctx: _PdfBlockContext) -> tuple:
+    # Narasi bebas tulisan AI (setara dynamic_section gaya SOC), ditampilkan sbg grid kartu
+    # ivory meniru gaya tile _build_management_visual_dashboard_block di atas — supaya
+    # terasa menyatu dgn halaman dashboard visual, bukan tempelan gaya SOC.
+    # PERMINTAAN USER: (1) halaman ini terasa "cuma tulisan" utk gaya Management yang
+    # seharusnya lebih visual — ditambah aksen bar warna + badge nomor bulat di tiap kartu,
+    # senada dgn kartu KPI/dashboard tile di halaman lain (bukan cuma teks polos berbaris).
+    # (2) kalau itemnya sedikit, kartu & fontnya diperbesar DAN grid dipaksa 1 kolom (lebar
+    # penuh) supaya tidak menyisakan kolom kosong di samping.
+    items = block.get("items", [])
+    n = len(items)
+    cols = 1 if n <= 1 else 2
+    scale = 1.3 if n <= 2 else 1.0
+    cell_htmls = []
+    for idx, it in enumerate(items):
+        badge_html = _badge(str(idx + 1), ctx.accent_main, size=f"{round(20*scale)}px", font_size=f"{9*scale:.1f}pt")
+        cell_htmls.append(
+            f'<table style="width:100%;background:{IVORY};border:1px solid {PANEL_BORDER};'
+            f'border-left:4px solid {ctx.accent_main};border-radius:10px;"><tr><td style="vertical-align:top;padding:{round(14*scale)}pt;">'
+            f'<table cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="width:{round(20*scale)+10}px;vertical-align:middle;">{badge_html}</td>'
+            f'<td style="vertical-align:middle;font-size:{9.5*scale:.1f}pt;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:{ctx.accent_main};">{_esc(it.get("title", ""))}</td>'
+            f'</tr></table>'
+            f'<div style="margin-top:{round(8*scale)}px;">{_bullet_lines_html(it.get("content", ""), theme=ctx.theme, font_pt=round(9*scale))}</div>'
+            f'</td></tr></table>'
+        )
+    inner = _kicker(block.get("kicker", ""), ctx.accent_main) + _title(block.get("title", "")) + _card_grid(cell_htmls, cols)
+    return (inner, False, None, False)
 
 
 # Panel-builder registry (dikunci per "panel_kind", BUKAN per "kind" halaman) — 1 halaman
@@ -1643,6 +2123,7 @@ def _build_page_block(block: dict, ctx: _PdfBlockContext) -> tuple:
     panels = block["panels"]
     htmls, dark = [], block["dark"]
     needs_header = any(p["panel_kind"] in _PANEL_NEEDS_PAGE_HEADER for p in panels)
+    ctx.panel_count = len(panels)
     for p in panels:
         builder = _PDF_PANEL_BUILDERS.get(p["panel_kind"])
         if not builder:
@@ -1679,6 +2160,11 @@ _PDF_BLOCK_BUILDERS = {
     "intro": _build_intro_block,
     "page": _build_page_block,
     "closing": _build_closing_block,
+    "management_kpi_grid": _build_management_kpi_grid_block,
+    "management_visual_dashboard": _build_management_visual_dashboard_block,
+    "management_action_items": _build_management_action_items_block,
+    "management_asset_ranking": _build_management_asset_ranking_block,
+    "management_ai_narrative": _build_management_ai_narrative_block,
 }
 
 
@@ -1692,7 +2178,11 @@ class PDFExporter:
             )
 
         logo_b64 = _resolve_logo_b64()
-        blocks = build_report_blocks(report)
+        _template = (report.template_type or "").strip().lower()
+        if "management" in _template:
+            blocks = build_management_report_blocks(report)
+        else:
+            blocks = build_report_blocks(report)
 
         # Varian tampilan (cover_style, category_style, dst) DIBACA dari report.visual_style,
         # BUKAN di-random di sini lagi — lihat catatan sama di export_ppt.py generate_ppt_report
@@ -1714,12 +2204,52 @@ class PDFExporter:
         kicker_ringkasan = "Executive Summary" if is_english(report) else "Ringkasan Eksekutif"
         kicker_analisis = "DATA ANALYSIS" if is_english(report) else "ANALISIS DATA"
 
-        # Palet warna tema (report.theme_color) — accent_bar_color TIDAK LAGI dipakai untuk
-        # warna aksen (dulu diacak hijau/emas lewat visual_style, independen dari pilihan user
-        # di Report Settings — bisa kontradiksi dgn tema, mis. tema navy tapi bar random emas).
-        # Sekarang accent_bar_color = ctx.accent_main langsung, konsisten dgn tema yang dipilih.
+        # Palet warna tema (report.theme_color)
         theme_key = resolve_theme_color(report)
-        palette = THEME_PALETTES[theme_key]
+        if theme_key in THEME_PALETTES:
+            palette = THEME_PALETTES[theme_key]
+        elif str(theme_key).startswith("#"):
+            # 2 BUG DIPERBAIKI di sini (ditemukan lewat render+sampling langsung, tema
+            # kustom belum pernah dicek visual sebelumnya):
+            # 1. "soft" sebelumnya "#F3F4F6" (abu-abu nyaris putih, tidak senada) — MISMATCH
+            #    dgn preview web (resolveThemeColors di reportTheme.ts pakai GOLD_LIGHT).
+            #    "light"/"soft" tetap pasangan gold tetap (sama spt 4 tema bernama).
+            # 2. "chart" sebelumnya = "main" APA ADANYA (warna kustom yang SAMA PERSIS) — chart
+            #    2-seri (mis. grouped bar "Perbandingan Antar Paruh Periode") & ramp kategori
+            #    yang menyelingi accent_main/accent_chart jadi TIDAK BISA DIBEDAKAN sama sekali
+            #    (2 batang bersebelahan warnanya identik). "chart" sekarang tint LEBIH TERANG
+            #    dari warna kustom yang sama (via _blend_with_white), bukan duplikat exact.
+            # 3. "bg" (latar cover/penutup) sebelumnya SELALU "#111827" tetap, terlepas dari
+            #    warna kustomnya — cover jadi terlihat seperti tidak menerapkan pilihan warna
+            #    user sama sekali (lihat docstring _darken).
+            #
+            # BUG BESAR TAMBAHAN DIPERBAIKI (dilaporkan user, "warna itu muncul tp ga banyak" +
+            # ditemukan lewat render+sampling: pill/badge nyaris tak terbaca kalau warna kustom
+            # user KEBETULAN senada dgn gold tetap ini, mis. user pilih kuning/emas sendiri):
+            # "light"/"soft" SEBELUMNYA tetap GOLD_MAIN/GOLD_LIGHT (aksen emas TAK TERKAIT warna
+            # kustom sama sekali) — dipakai LUAS di kicker/pill/badge/panel gelap di HAMPIR
+            # SETIAP halaman, jadi mayoritas aksen laporan tetap emas walau user pilih warna lain
+            # sama sekali (persis keluhan "warnanya kurang kelihatan"). Sekarang KEEMPAT peran
+            # diturunkan dari SATU hue kustom yang sama (main=gelap, chart=medium, light=terang,
+            # soft=paling terang) — pola RAMP SAMA PERSIS yang sudah dipakai tema "gold" bawaan
+            # sendiri (GOLD_BRONZE_MAIN -> GOLD_MAIN -> GOLD_CREAM_LIGHT -> GOLD_CREAM_SOFT),
+            # cuma huenya ikut pilihan user. Kontras badge/teks tetap terjaga karena _light_safe
+            # tetap menggelapkan "light"/"soft" lagi khusus di titik pakai yang butuh (badge fill
+            # + teks putih, dst) — di sini cukup pastikan progresi terang MENANJAK & konsisten.
+            # BUG YANG DIPERBAIKI (dilaporkan user): "main" kustom dipakai APA ADANYA tanpa
+            # jaminan cukup gelap utk teks putih di atasnya (kartu KPI, cover/penutup) — warna
+            # terang (mis. ungu muda #CF87DA) bikin teks nyaris tak kelihatan (bg kartu terang +
+            # teks putih = kontras nyaris nol). _light_safe() dipakai ulang di sini (ambang 0.45,
+            # tepat di atas luminance "main" tema gold bawaan ~0.42, tema PALING terang dari 4
+            # tema tetap) supaya "main" kustom SELALU cukup gelap, sebelum jadi basis turunan
+            # chart/light/soft di bawah.
+            safe_main = _light_safe(theme_key, max_luminance=0.45)
+            chart_shade = _blend_with_white(safe_main, 0.6)
+            light_shade = _blend_with_white(safe_main, 0.3)
+            soft_shade = _blend_with_white(safe_main, 0.12)
+            palette = {"main": safe_main, "bg": _darken(safe_main), "chart": chart_shade, "light": light_shade, "soft": soft_shade}
+        else:
+            palette = THEME_PALETTES["green"]
         accent_bar_color = palette["main"]
 
         pages = []  # list of (html, dark, flourish, is_last)
@@ -1736,6 +2266,7 @@ class PDFExporter:
             cover_style=cover_style,
             asset_style=asset_style,
             recommendation_style=recommendation_style,
+            logo_b64=logo_b64,
             accent_main=palette["main"],
             accent_bg=palette["bg"],
             accent_chart=palette["chart"],
@@ -1773,11 +2304,29 @@ class PDFExporter:
                 page_num = content_idx
             # Ditengahkan vertikal HANYA halaman "intro"/"page" (lihat catatan panjang di
             # _page()) — cover/penutup (raw ATAU tidak) tetap posisi absolut aslinya dari atas.
-            center = (not raw) and page_kinds[i] in ("intro", "page")
+            # BUG KRITIS DIPERBAIKI (dilaporkan user berkali-kali — banyak ruang kosong di
+            # bawah halaman): variabel ini SEBELUMNYA hardcode `False` TANPA SYARAT di sini —
+            # padahal `_page()` (baris ~1249) sudah lengkap mendukung `center=True` dan
+            # komentar di baris ini sendiri sudah menyatakan niatnya, tapi tidak pernah benar2
+            # disambungkan ke `block["kind"]`. Akibatnya SEMUA halaman "page"/"intro" (bukan
+            # cuma yang baru2 ini diperbaiki) selalu nempel rapat ke atas & menyisakan area
+            # kosong di bawah kalau kontennya wajar tidak sampai memenuhi 1 halaman penuh.
+            # Diperluas jg ke beberapa kind Management Report (KPI grid/insight AI/action
+            # items/ranking aset) — sama-sama daftar/grid berjumlah variabel yang bisa pendek.
+            center = page_kinds[i] in (
+                "page", "intro", "management_kpi_grid", "management_ai_narrative",
+                "management_action_items", "management_asset_ranking",
+            )
+            # BUG YANG DIPERBAIKI (dilaporkan user): logo dulu sengaja disembunyikan di
+            # cover/penutup (logo_b64=None), padahal exporter PPT (add_logo dipanggil di
+            # SEMUA slide termasuk cover/penutup, lihat export_ppt.py) sudah benar — jadi
+            # PDF jadi satu-satunya tempat identitas brand hilang justru di halaman
+            # pembuka & penutup. Disamakan: logo SELALU tampil, nomor halaman saja yang
+            # tetap dilewati utk cover/penutup (halaman itu memang tidak diberi nomor).
             page_html_parts.append(_page(
                 inner, dark=dark, flourish=flourish,
                 page_num=page_num, total_pages=total_pages,
-                logo_b64=(logo_b64 if not is_cover_or_closing else None),
+                logo_b64=logo_b64,
                 last=is_last, raw=raw, theme=ctx.theme, center=center,
             ))
 

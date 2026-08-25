@@ -218,6 +218,10 @@ def upload_security_file(
     dengan konfigurasi awal (status Draft/Uploaded) untuk siap diproses di Step 3 oleh AI.
     """
     try:
+        # RCA-A01: Rate limiter upload berkas (maks 15 upload per menit per user)
+        from app.core.rate_limit import rate_limiter
+        rate_limiter.check(key=f"upload:{current_user.id}", max_attempts=15, window_seconds=60)
+
         # Judul belum tentu diisi pengguna di form upload — pakai nama template otomatis
         # supaya tidak pernah tersimpan kosong (bisa diganti belakangan di Preview & Edit/History).
         title = title.strip() if title else ""
@@ -252,12 +256,9 @@ def upload_security_file(
                 )
 
         # Baca & parse SEMUA file yang diunggah, gabungkan hasilnya jadi satu daftar data
-        # (baris dari tiap file digabung apa adanya — kalau strukturnya beda antar file,
-        # kolom yang tidak ada di salah satu file otomatis kosong saat diproses ke DataFrame
-        # di chart_generator.py/count_threats, bukan error).
         max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
         
-        # RCA-16: Cek total akumulasi kuota penyimpanan user di database (Maks 1GB per user)
+        # RCA-16 + RCA-A03: Cek akumulasi kuota penyimpanan user (Maks 1GB per user)
         from sqlalchemy import func as _func
         from app.models.report import Report as _Report
         existing_user_bytes = db.query(_func.coalesce(_func.sum(_Report.total_file_size_bytes), 0)).filter(_Report.user_id == current_user.id).scalar() or 0

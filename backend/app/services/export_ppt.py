@@ -35,7 +35,7 @@ from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
 
 from app.models.report import Report
-from app.services.report_render_logic import build_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
+from app.services.report_render_logic import build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
 
 # ============================================================================
 # Palet & font — persis sesuai brief, dipakai di SETIAP elemen (termasuk chart/tabel)
@@ -257,17 +257,47 @@ def add_footer(slide, page_num: int, total_pages: int):
     _set_font(p, BODY_FONT, Pt(9), color=GRAY_TEXT)
 
 
-def add_logo(slide, logo_path, x=None, y=Inches(0.25), width=Inches(1.7)):
+def add_logo(slide, logo_path, x=None, y=Inches(0.18), width=Inches(5.2), dark=False):
+    """width digandakan lagi (PERMINTAAN USER — 2.6in -> 5.2in default, pemanggil cover/
+    penutup 3.5in -> 7.0in) drpd sebelumnya. `dark=True` (dioper pemanggil yang slide-nya
+    berlatar gelap, lihat add_dark_bg) menggambar "glow" oval putih lembut di belakang logo
+    — logo aslinya berwarna gelap/hitam (lihat frontend/public/LOGO_PETRO_DANANTARA.png),
+    tanpa treatment ini nyaris tak kelihatan di latar gelap. PERMINTAAN USER: SEBELUMNYA
+    kotak persegi (ROUNDED_RECTANGLE) solid putih — terlihat seperti stiker ditempel.
+    Diganti oval (tanpa sudut sama sekali, silhouette lebih lembut) berpadding lebih lapang
+    drpd sebelumnya, supaya terasa menyatu bukan kotak asing di atas latar gelap."""
     if not logo_path:
         return
     x = x if x is not None else (SLIDE_W - width - Inches(0.35))
     try:
+        if dark:
+            pad = Inches(0.22)
+            # Rasio lebar:tinggi logo asli ~4.4:1 (lihat LOGO_PETRO_DANANTARA.png) — dipakai
+            # perkiraan tinggi gambar sblm add_picture (butuh ukuran chip SEBELUM gambar
+            # ditambahkan, python-pptx tidak expose intrinsic size sebelum add_picture jalan).
+            img_h = Emu(int(Emu(width) / 4.4))
+            chip = slide.shapes.add_shape(
+                MSO_SHAPE.OVAL, x - pad, y - pad, width + pad * 2, img_h + pad * 2,
+            )
+            chip.fill.solid()
+            chip.fill.fore_color.rgb = WHITE
+            chip.line.fill.background()
+            _no_shadow(chip)
         slide.shapes.add_picture(logo_path, x, y, width=width)
     except Exception:
         pass
 
 
 def add_badge_circle(slide, x, y, diameter, text, badge_color, text_color=WHITE, font_size=Pt(14)):
+    # BUG NYATA DITEMUKAN (tema "gold" khususnya): banyak pemanggil memberi badge_color =
+    # peran "light" tema (ctx.accent_light/theme.light) dgn text_color default WHITE — peran
+    # "light" cukup gelap utk tema green/navy/dark tapi SANGAT pucat khusus tema "gold"
+    # (dirancang sbg teks di atas latar gelap, bukan fill badge), hasilnya angka putih nyaris
+    # tak kelihatan. Digelapkan HANYA kalau text_color memang WHITE (kombinasi lain, mis. teks
+    # gelap di atas badge pucat, sudah aman apa adanya) — lihat _light_safe/_badge di
+    # export_pdf.py utk versi & penjelasan yang sama persis.
+    if text_color == WHITE:
+        badge_color = _light_safe(badge_color)
     circle = slide.shapes.add_shape(MSO_SHAPE.OVAL, x, y, diameter, diameter)
     circle.fill.solid()
     circle.fill.fore_color.rgb = badge_color
@@ -376,6 +406,19 @@ def add_badge_list(slide, x, y, w, items, badge_color=GREEN_MAIN, row_h=Inches(0
     row_gap_in = 0.15 * scale
 
     cur_y = y
+    # PERBAIKAN (dilaporkan user berkali-kali — banyak ruang kosong di bawah slide kalau
+    # itemnya sedikit, mis. Temuan Utama cuma 2-3 poin): sebelumnya cuma ada jaring pengaman
+    # utk kasus KEBANYAKAN konten (skala turun di atas), tidak ada utk kasus KEKURANGAN
+    # konten — daftar pendek selalu nempel rapat ke atas (dekat judul), sisa ruang di bawah
+    # dibiarkan kosong. Sekarang dites: kalau (setelah skala di atas, biasanya tetap 1.0 utk
+    # kasus ini) total tinggi SEMUA baris ternyata masih jauh di bawah `available_in`, titik
+    # mulainya digeser turun supaya blok kontennya tertengahkan vertikal di ruang yang
+    # tersedia — pola sama persis dgn yg sudah dipakai di cabang grid kartu
+    # _build_recommendations_slide.
+    if max_y is not None:
+        est_total_scaled_in = sum(row_heights_in) * scale if scale != 1.0 else est_total_in
+        if available_in > 0 and est_total_scaled_in < available_in:
+            cur_y += Inches((available_in - est_total_scaled_in) / 2)
     for r in range(n_rows):
         row_start = r * cols
         row_items = items[row_start:row_start + cols]
@@ -895,23 +938,44 @@ def add_recommendation_timeline(slide, x, y, w, h, items, theme: dict | None = N
     if not (2 <= n <= 6):
         return False
     mid_y = y + h // 2
+    # _light_safe: t["light"] SENGAJA pucat di tema "gold" (dirancang utk teks di atas latar
+    # gelap) — dipakai apa adanya di sini (garis tipis di atas latar TERANG) nyaris tak
+    # kelihatan, lihat _light_safe/_timeline_html di export_pdf.py utk penjelasan yang sama.
+    line_color = _light_safe(t["light"])
     line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, mid_y - Pt(1), w, Pt(2))
     line.fill.solid()
-    line.fill.fore_color.rgb = t["light"]
+    line.fill.fore_color.rgb = line_color
     line.line.fill.background()
     _no_shadow(line)
 
     node_d = Inches(0.4)
     slot_w = w // n
     text_w = slot_w - Inches(0.25)
-    box_h = Inches(1.5)
+    text_w_in = Emu(text_w).inches
+
+    # PERBAIKAN (dilaporkan user, screenshot — item ganjil/genap kepotong/patah di
+    # tengah teks walau ruang di sekitarnya masih kosong): box_h SEBELUMNYA flat
+    # 1.5in tanpa peduli panjang teks aktualnya — beda dari _timeline_html (versi
+    # PDF, sudah lebih dulu dibenahi) yang menghitung tinggi kontainer dari
+    # perkiraan teks TERPANJANG. Sekarang dihitung dgn pola yang sama (memakai
+    # _estimate_wrapped_height_in yg sudah dipakai cabang grid kartu di bawah),
+    # dibatasi supaya tidak melebihi ruang yg benar2 tersedia (setengah tinggi h).
+    def _content_h_in(it):
+        height_in = _estimate_wrapped_height_in(it.get("title", ""), 12.5, text_w_in)
+        if it.get("detail"):
+            height_in += _estimate_wrapped_height_in(it["detail"], 9.5, text_w_in) + 3 / 72
+        return height_in
+
+    max_content_in = max((_content_h_in(it) for it in items), default=1.5)
+    available_half_in = Emu(h // 2 - node_d // 2 - Inches(0.1)).inches
+    box_h = Inches(min(max(1.5, max_content_in + 0.15), max(available_half_in, 1.5)))
     for idx, item in enumerate(items):
         node_cx = x + slot_w * idx + slot_w // 2
         above = (idx % 2 == 0)
         node = slide.shapes.add_shape(MSO_SHAPE.OVAL, node_cx - node_d // 2, mid_y - node_d // 2, node_d, node_d)
         node.fill.solid()
         node.fill.fore_color.rgb = t["main"]
-        node.line.color.rgb = t["light"]
+        node.line.color.rgb = line_color
         node.line.width = Pt(1.5)
         _no_shadow(node)
         ntf = node.text_frame
@@ -1408,7 +1472,7 @@ def add_split_cover_slide(prs, block, flourish_corner, logo_path, theme: dict | 
     _fill_rect_bg(slide, 0, 0, left_w, SLIDE_H, t["light"])
     _fill_rect_bg(slide, right_x, 0, right_w, SLIDE_H, t["bg"])
     add_corner_flourish(slide, flourish_corner, area_x=right_x, area_w=right_w, theme=t)
-    add_logo(slide, logo_path)
+    add_logo(slide, logo_path, width=Inches(6.0), dark=True)
 
     value, label = block.get("hero_stat") or (str(block.get("total_records", "")), "Total Data")
     hero_kicker = block.get("hero_stat_kicker", "CAPAIAN")
@@ -1486,7 +1550,7 @@ def add_split_cover_slide(prs, block, flourish_corner, logo_path, theme: dict | 
     return slide
 
 
-def add_split_closing_slide(prs, block, flourish_corner, theme: dict | None = None):
+def add_split_closing_slide(prs, block, flourish_corner, logo_path=None, theme: dict | None = None):
     """Varian penutup berpasangan dgn `add_split_cover_slide` — angka hero yang SAMA
     ditampilkan lagi di kolom emas kiri (mengulang temuan utama, gaya "bookend" laporan
     eksekutif), analog `_split_closing_td()` di export_pdf.py."""
@@ -1498,6 +1562,9 @@ def add_split_closing_slide(prs, block, flourish_corner, theme: dict | None = No
     _fill_rect_bg(slide, 0, 0, left_w, SLIDE_H, t["light"])
     _fill_rect_bg(slide, right_x, 0, right_w, SLIDE_H, t["bg"])
     add_corner_flourish(slide, flourish_corner, area_x=right_x, area_w=right_w, theme=t)
+    # BUG YANG DIPERBAIKI (dilaporkan user): varian penutup ini sebelumnya tidak punya logo
+    # sama sekali (beda dgn add_split_cover_slide yang sudah benar).
+    add_logo(slide, logo_path, width=Inches(6.0), dark=True)
 
     value, label = block.get("hero_stat") or ("", "")
     value_w_in = Emu(left_w - Inches(0.6)).inches
@@ -1601,7 +1668,7 @@ def _build_cover_slide(block: dict, ctx: _PptBlockContext):
     cover = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_dark_bg(cover, theme=ctx.theme)
     add_corner_flourish(cover, ctx.flourish_corner, theme=ctx.theme)
-    add_logo(cover, ctx.logo_path)
+    add_logo(cover, ctx.logo_path, width=Inches(6.0), dark=True)
 
     add_kicker(cover, block["kicker"], color=ctx.accent_light, y=Inches(1.7))
 
@@ -1696,7 +1763,7 @@ def _build_intro_slide(block: dict, ctx: _PptBlockContext):
 def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     exec_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_dark_bg(exec_slide, theme=ctx.theme)
-    add_logo(exec_slide, ctx.logo_path)
+    add_logo(exec_slide, ctx.logo_path, dark=True)
     add_kicker(exec_slide, ctx.kicker_ringkasan, color=ctx.accent_light)
     title_bottom = add_title(exec_slide, block["heading"], color=WHITE)
 
@@ -1714,6 +1781,12 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     # menggambar apapun — replikasi kecil rumus di add_stat_card_grid), lalu kalau
     # ternyata jauh lebih pendek dari ruang yang tersedia, geser blok ini ke bawah
     # supaya "kosongnya" terbagi rata di atas & bawah, bukan menumpuk di bawah saja.
+    # Tinggi donut+legend pendamping (lihat penjelasan di bawah) diikutkan ke
+    # perkiraan content_total_in supaya perhitungan "geser ke bawah utk centering"
+    # tetap akurat waktu chart ini ada, bukan cuma menghitung grid+caption saja.
+    CHART_BLOCK_H_IN = 2.15
+    has_chart = bool(block.get("chart"))
+
     n_stat_items = len(block["stat_items"])
     if n_stat_items:
         rows_n = math.ceil(n_stat_items / ctx.stat_cols)
@@ -1722,7 +1795,7 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
         card_h_in = min(natural_card_h_in, max_card_h_in)
         grid_total_h_in = rows_n * card_h_in + (rows_n - 1) * 0.2
         caption_h_in = _estimate_wrapped_height_in(block["caption"], 11.5, Emu(CONTENT_W).inches)
-        content_total_in = grid_total_h_in + 0.25 + caption_h_in
+        content_total_in = grid_total_h_in + 0.25 + caption_h_in + (0.3 + CHART_BLOCK_H_IN if has_chart else 0)
         available_in = 6.95 - grid_y_in
         if available_in > content_total_in:
             grid_y_in += (available_in - content_total_in) / 2
@@ -1741,16 +1814,32 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     cp = ctf.paragraphs[0]
     cp.text = block["caption"]
     _set_font(cp, BODY_FONT, Pt(11.5), italic=True, color=ctx.accent_soft)
+
+    # Panel ini SATU-SATUNYA kandidat bertema "overview" (lihat report_render_logic.py) —
+    # tidak pernah digabung dgn kandidat lain, jadi SELALU jadi slide sendiri. Tanpa donut
+    # pendamping ini, slide berisi kartu KPI + 1-2 kalimat caption saja terasa nyaris kosong
+    # (dilaporkan user). Ramp warna dari palet tema (bukan CATEGORY_COLOR_RAMP tetap) supaya
+    # konsisten dgn tema yang dipilih, sama seperti fix warna kartu KPI/bar management report.
+    if has_chart:
+        chart = block["chart"]
+        ramp = [ctx.accent_light, WHITE, ctx.accent_chart, ctx.accent_soft, GRAY_TEXT]
+        colors = ramp[:len(chart["values"])]
+        chart_y = cap_box.top + cap_box.height + Inches(0.3)
+        donut_side = Inches(1.75)
+        add_native_doughnut_chart(exec_slide, MARGIN_X, chart_y, donut_side, donut_side, chart["categories"], chart["values"], colors=colors, theme=ctx.theme)
+        _add_mini_legend(exec_slide, MARGIN_X + donut_side + Inches(0.35), chart_y + Inches(0.15), CONTENT_W - donut_side - Inches(0.35), chart["categories"], ramp, text_color=WHITE)
     return exec_slide
 
 
-def _add_mini_legend(slide, x, y, w, categories, ramp):
+def _add_mini_legend(slide, x, y, w, categories, ramp, text_color=None):
     """Legend ringkas (kotak warna kecil + nama, tanpa persentase) utk chart "donut"/"stacked"
     di _add_mini_chart — add_native_doughnut_chart/add_stacked_proportion_bar sendiri TIDAK
     menyertakan legend (lihat docstring add_stacked_proportion_bar: legend memang tanggung
     jawab pemanggil), tanpa ini pembaca tidak tahu warna mana mewakili kategori apa di panel
     kecil ini. Kotak warna pakai add_shape RECTANGLE, pola sama persis dgn segmen
-    add_stacked_proportion_bar di atas (bukan API baru)."""
+    add_stacked_proportion_bar di atas (bukan API baru). `text_color` opsional (default
+    GRAY_TEXT) — dioverride panel berlatar gelap (lihat _build_executive_summary_slide)."""
+    text_color = text_color or GRAY_TEXT
     row_h = Inches(0.24)
     swatch = Inches(0.1)
     for i, cat in enumerate(categories):
@@ -1764,7 +1853,7 @@ def _add_mini_legend(slide, x, y, w, categories, ramp):
         label_box = slide.shapes.add_textbox(x + swatch + Inches(0.08), row_y, w - swatch - Inches(0.08), row_h)
         lp = label_box.text_frame.paragraphs[0]
         lp.text = str(cat)
-        _set_font(lp, BODY_FONT, Pt(9), color=GRAY_TEXT)
+        _set_font(lp, BODY_FONT, Pt(9), color=text_color)
 
 
 def _add_mini_chart(slide, chart: dict, x, y, w, h, ctx: "_PptBlockContext"):
@@ -1876,7 +1965,10 @@ def _draw_distribution_panel(slide, panel: dict, ctx: "_PptBlockContext", x, y, 
     time_heatmap, period_compare — bisa berbagi 1 slide berdampingan sampai 3 kolom, ATAU
     dipanggil sendirian selebar CONTENT_W kalau kandidat lain di temanya tidak ada. Menggambar
     LANGSUNG ke `slide` yang sudah ada (lihat catatan sama di _draw_insight_tile)."""
-    ramp = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
+    # accent_light/accent_soft dilewatkan _light_safe() — kedua peran ini SENGAJA pucat di
+    # tema "gold" (lihat docstring _light_safe), tanpa ini segmen ke-3/ke-4 chart di panel
+    # BERLATAR TERANG ini nyaris tak kelihatan.
+    ramp = [ctx.accent_main, ctx.accent_chart, _light_safe(ctx.accent_light), _light_safe(ctx.accent_soft), GRAY_TEXT]
     w_in = Emu(w).inches
     h_in = Emu(h).inches
     y_in = Emu(y).inches
@@ -1944,7 +2036,7 @@ def _draw_distribution_panel(slide, panel: dict, ctx: "_PptBlockContext", x, y, 
             slide, x, Inches(chart_top_in), w, Inches(cmp_h_in),
             panel["categories"], panel["series_a"], panel["series_b"],
             label_a=panel["label_a"], label_b=panel["label_b"],
-            color_a=ctx.accent_main, color_b=ctx.accent_light,
+            color_a=ctx.accent_main, color_b=_light_safe(ctx.accent_light),
         )
         visual_bottom_in = chart_top_in + cmp_h_in
 
@@ -2022,7 +2114,7 @@ def _build_asset_cards_slide(block: dict, ctx: _PptBlockContext):
         # GELAP, analog kartu standar) — dipakai utk jumlah item berapa pun (bukan
         # cuma tepat 3 seperti podium), lihat add_asset_ranked_bars.
         add_dark_bg(asset_slide, theme=ctx.theme)
-        add_logo(asset_slide, ctx.logo_path)
+        add_logo(asset_slide, ctx.logo_path, dark=True)
         add_kicker(asset_slide, block["kicker"], color=ctx.accent_light)
         title_bottom = add_title(asset_slide, block["title"], color=WHITE)
         bars_y = max(title_bottom + 0.3, 2.0)
@@ -2036,7 +2128,7 @@ def _build_asset_cards_slide(block: dict, ctx: _PptBlockContext):
         add_asset_ranked_bars(asset_slide, MARGIN_X, Inches(bars_y), CONTENT_W, block["items"], row_h=Inches(bars_row_h_in), theme=ctx.theme)
     else:
         add_dark_bg(asset_slide, theme=ctx.theme)
-        add_logo(asset_slide, ctx.logo_path)
+        add_logo(asset_slide, ctx.logo_path, dark=True)
         add_kicker(asset_slide, block["kicker"], color=ctx.accent_light)
         title_bottom = add_title(asset_slide, block["title"], color=WHITE)
 
@@ -2092,7 +2184,17 @@ def _build_recommendations_slide(block: dict, ctx: _PptBlockContext):
     items = block["items"]
     start_y_rec = Inches(max(title_bottom + 0.2, 1.7))
 
-    if ctx.recommendation_style == "timeline" and 2 <= len(items) <= 6:
+    # PERBAIKAN KRITIS (dilaporkan user dgn screenshot nyata — teks kepotong/patah,
+    # keterangan hilang di node "atas garis"): gaya "timeline" di PPT ini SELALU dipanggil
+    # dgn PERSIS 2 item (SOC memaginasi rekomendasi 2/halaman, lihat
+    # soc_recommendations_per_page di report_render_logic.py) — kasus PALING LEMAH utk
+    # visual timeline (garis waktu idealnya utk urutan lebih panjang, bukan cuma 2 titik),
+    # dan cabang ini TIDAK punya jaring pengaman font-scaling/pre-pass tinggi yang sudah
+    # terbukti andal di cabang grid kartu di bawah. Daripada terus berjudi dgn 1 gaya yang
+    # rapuh utk kasus yang SELALU sama persis, gaya vertikal (grid kartu, terbukti andal +
+    # sudah dites) dipakai langsung utk 2 item — variasi "timeline" disimpan hanya utk 3+
+    # item (kalau suatu saat ada jalur lain yang mengirim lebih banyak item sekaligus).
+    if ctx.recommendation_style == "timeline" and 3 <= len(items) <= 6:
         # Titik variasi tampilan: garis waktu horizontal (analog timeline di
         # export_pdf.py) — alternatif dari grid kartu standar di bawah, dipakai
         # kalau jumlah rekomendasi pas 2-6 (lihat add_recommendation_timeline).
@@ -2192,13 +2294,17 @@ def _build_recommendations_slide(block: dict, ctx: _PptBlockContext):
 def _build_conclusion_slide(block: dict, ctx: _PptBlockContext):
     concl_slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_dark_bg(concl_slide, theme=ctx.theme)
-    add_logo(concl_slide, ctx.logo_path)
+    add_logo(concl_slide, ctx.logo_path, dark=True)
     add_kicker(concl_slide, block["kicker"], color=ctx.accent_light)
     title_bottom = add_title(concl_slide, block["title"], color=WHITE)
 
-    left_w2 = Inches(7.0)
     content_top2 = max(title_bottom + 0.15, 1.7)
     priority_items = [(p["letter"], p["text"]) for p in block["priority_items"]]
+    # Kalau tidak ada priority_items (rekomendasi sudah tampil di halaman lain, lihat
+    # report_render_logic.py), kolom kanan tidak digambar sama sekali — left_w2 TETAP
+    # 7.0in dulu di sini bakal menyisakan ~5in kolom kanan kosong total. Lebar teks
+    # sekarang mengikuti CONTENT_W penuh saat itu terjadi.
+    left_w2 = CONTENT_W if not priority_items else Inches(7.0)
     # panel_side cuma dipakai kalau ada priority_items — kalau kosong, swap ke
     # "left" akan menyisakan kolom kiri kosong & teks malah ke kanan (lebih buruk
     # dari layout defaultnya), sama seperti guard yang sama di export_pdf.py.
@@ -2231,11 +2337,16 @@ def _build_conclusion_slide(block: dict, ctx: _PptBlockContext):
 def _build_closing_slide(block: dict, ctx: _PptBlockContext):
     if ctx.cover_style == "split":
         closing_block = {**block, "hero_stat": ctx.cover_hero_stat}
-        add_split_closing_slide(ctx.prs, closing_block, ctx.flourish_corner, theme=ctx.theme)
+        add_split_closing_slide(ctx.prs, closing_block, ctx.flourish_corner, ctx.logo_path, theme=ctx.theme)
         return None
     closing = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_dark_bg(closing, theme=ctx.theme)
     add_corner_flourish(closing, ctx.flourish_corner, theme=ctx.theme)
+    # BUG YANG DIPERBAIKI (dilaporkan user): halaman penutup ("Terima Kasih") SEBELUMNYA
+    # sama sekali tidak punya logo — satu-satunya halaman yang benar2 tanpa identitas brand.
+    # Ukuran sama besarnya dgn cover (halaman pertama & terakhir yang dilihat, sengaja lebih
+    # menonjol drpd slide isi).
+    add_logo(closing, ctx.logo_path, width=Inches(6.0), dark=True)
     # Teks digeser ke kanan kalau flourish-nya di pojok kiri-bawah (satu-satunya
     # varian yang jangkauannya menjorok ke area teks, yang start dari MARGIN_X) —
     # keluhan nyata dari pengguna: garis lengkung dekoratif menembus teks penutup.
@@ -2265,6 +2376,385 @@ def _build_closing_slide(block: dict, ctx: _PptBlockContext):
     np_.text = block["note"]
     _set_font(np_, BODY_FONT, Pt(11.5), italic=True, color=ctx.accent_soft)
     return None
+
+
+def _hex_to_rgb(hex_str: str) -> RGBColor:
+    hex_clean = hex_str.lstrip("#")
+    if len(hex_clean) == 3:
+        hex_clean = "".join(c * 2 for c in hex_clean)
+    if len(hex_clean) == 6:
+        r = int(hex_clean[0:2], 16)
+        g = int(hex_clean[2:4], 16)
+        b = int(hex_clean[4:6], 16)
+        return RGBColor(r, g, b)
+    return GREEN_MAIN
+
+
+def _darken(color: RGBColor, factor: float = 0.55) -> RGBColor:
+    """Mirror _darken di export_pdf.py (lihat docstring di sana utk alasan lengkap) — skala
+    RGB `color` turun sebesar `factor` (menuju hitam), dipakai turunkan "bg" (latar
+    cover/penutup) dari warna KUSTOM yang dipilih user, mengikuti pola yang sama dgn 4 tema
+    bernama. BUG NYATA DITEMUKAN (dilaporkan user, "kok ga diterapkan"): "bg" tema kustom
+    sebelumnya SELALU navy gelap tetap apa pun warna yang dipilih."""
+    r = round(color[0] * factor)
+    g = round(color[1] * factor)
+    b = round(color[2] * factor)
+    return RGBColor(r, g, b)
+
+
+def _blend_with_white(color: RGBColor, frac: float) -> RGBColor:
+    """Mirror _blend_with_white di export_pdf.py — campur `color` dgn putih sebesar (1-frac)
+    jadi RGBColor baru. Dipakai turunkan shade "chart" utk tema warna KUSTOM (color picker)
+    supaya beda dari "main" (lihat pemakaian di generate_ppt_report)."""
+    frac = max(0.0, min(1.0, frac))
+    r = round(color[0] * frac + 255 * (1 - frac))
+    g = round(color[1] * frac + 255 * (1 - frac))
+    b = round(color[2] * frac + 255 * (1 - frac))
+    return RGBColor(r, g, b)
+
+
+def _light_safe(color: RGBColor, max_luminance: float = 0.68) -> RGBColor:
+    """Mirror _light_safe di export_pdf.py (lihat docstring di sana utk alasan lengkap) —
+    pastikan `color` cukup gelap dipakai sbg warna isi/teks di atas latar TERANG (IVORY/
+    putih). Peran "light"/"soft" tema (ctx.accent_light/accent_soft) SENGAJA pucat krn
+    awalnya cuma dipakai sbg teks di atas latar GELAP — utk tema "gold" khususnya, warna
+    pucatnya jauh lebih ekstrem drpd tema lain, nyaris tak kelihatan kalau dipakai ulang apa
+    adanya sbg warna bar/kartu di atas latar terang. RGBColor (subclass bytes) diindeks
+    langsung [0]/[1]/[2], bukan lstrip/int seperti versi hex di export_pdf.py."""
+    r, g, b = color[0], color[1], color[2]
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    if luminance <= max_luminance or luminance == 0:
+        return color
+    frac = max_luminance / luminance
+    return RGBColor(round(r * frac), round(g * frac), round(b * frac))
+
+
+def _build_management_kpi_grid_slide(block: dict, ctx: _PptBlockContext):
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    add_logo(slide, ctx.logo_path)
+    add_kicker(slide, block.get("kicker", ""), color=ctx.accent_main)
+    title_bottom = add_title(slide, block.get("title", ""))
+
+    items = block.get("items", [])
+    # Kolom & lebar kartu menyesuaikan JUMLAH kartu sungguhan — dulu SELALU 3 kolom lebar
+    # tetap apa pun jumlah kartunya, kalau totalnya mis. 4 (bukan kelipatan 3), baris
+    # terakhir cuma terisi 1 dari 3 slot (2 slot kosong lebar), slide jadi terlihat
+    # timpang/kurang padat, kurang cocok dgn identitas "Visual tinggi" template ini.
+    cols = 2 if len(items) in (2, 4) else 3
+    gap_x = Inches(0.4)
+    gap_y = Inches(0.4)
+    card_w = Emu(int((CONTENT_W - gap_x * (cols - 1)) / cols))
+    card_h = Inches(2.1)
+    start_y = max(title_bottom + 0.25, 2.0)
+
+    # BUG DIPERBAIKI (dilaporkan user): "blue"/"green"/"amber" SEBELUMNYA warna literal
+    # tetap, tidak ikut report.theme_color — sekarang diturunkan dari palet tema (netral/
+    # capaian-baik/sorotan). "red"/"orange"/"gray" TETAP warna semantik tetap (bahaya/
+    # peringatan/netral-pasif), sama seperti SEVERITY_COLOR di tempat lain.
+    color_map = {
+        "blue": ctx.accent_main,
+        "green": ctx.accent_chart,
+        "amber": _light_safe(ctx.accent_light),
+        "red": RED_CRIT,
+        "orange": RGBColor(0xEA, 0x58, 0x0C),
+        "gray": GRAY_TEXT,
+    }
+
+    for i, it in enumerate(items[:6]):
+        r = i // cols
+        c = i % cols
+        cx = MARGIN_X + c * (card_w + gap_x)
+        cy = Inches(start_y) + r * (card_h + gap_y)
+
+        col = color_map.get(it.get("color", "blue"), ctx.accent_main)
+        # Background card
+        rect = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, cy, card_w, card_h)
+        rect.fill.solid()
+        rect.fill.fore_color.rgb = IVORY
+        rect.line.color.rgb = col
+        rect.line.width = Pt(1.5)
+
+        tb = slide.shapes.add_textbox(cx + Inches(0.2), cy + Inches(0.15), card_w - Inches(0.4), card_h - Inches(0.3))
+        tf = tb.text_frame
+        tf.word_wrap = True
+
+        p1 = tf.paragraphs[0]
+        p1.text = it.get("label", "").upper()
+        _set_font(p1, BODY_FONT, Pt(10), bold=True, color=col)
+
+        p2 = tf.add_paragraph()
+        p2.text = str(it.get("value", ""))
+        # Angka diperbesar (26pt -> 32pt) — identitas "Visual tinggi, KPI ringkas" template
+        # ini, beda dgn kartu KPI di SOC Technical Report yang lebih sedang ukurannya.
+        _set_font(p2, TITLE_FONT, Pt(32), bold=True, color=col)
+
+        if it.get("delta"):
+            p3 = tf.add_paragraph()
+            p3.text = it.get("delta", "")
+            _set_font(p3, BODY_FONT, Pt(9.5), color=GRAY_TEXT)
+
+    return slide
+
+
+def _build_management_visual_dashboard_slide(block: dict, ctx: _PptBlockContext):
+    # PERMINTAAN USER: sebelumnya tiap jenis chart (peta risiko/radar/funnel/perbandingan
+    # periode/heatmap waktu/tren) jadi slide-nya sendiri-sendiri — "1 chart per slide"
+    # berkali-kali, bukan benar2 padat. Sekarang ditumpuk jadi 1 grid kartu (4/5/lebih tile
+    # sekaligus, macam-macam bentuk chart) di 1 slide, keterangan tiap tile cuma 1 kalimat
+    # (block["tiles"], lihat build_management_report_blocks). Chart native PowerPoint
+    # (radar/grouped bar) otomatis menyesuaikan ukuran font/legendnya sendiri ke bounding box
+    # yang diberikan — tidak perlu varian "kompak" terpisah spt di export_pdf.py (SVG manual).
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    add_logo(slide, ctx.logo_path)
+    add_kicker(slide, block.get("kicker", ""), color=ctx.accent_main)
+    title_bottom = add_title(slide, block.get("title", ""))
+
+    tiles = block.get("tiles", [])
+    if not tiles:
+        return slide
+    cols = 3 if len(tiles) >= 5 else 2
+    rows = math.ceil(len(tiles) / cols)
+    gap_in = 0.25
+    start_y_in = max(title_bottom + 0.25, 1.9)
+    margin_x_in = Emu(MARGIN_X).inches
+    content_w_in = Emu(CONTENT_W).inches
+    content_h_in = max(3.0, 6.9 - start_y_in)
+    card_w_in = (content_w_in - gap_in * (cols - 1)) / cols
+    card_h_in = (content_h_in - gap_in * (rows - 1)) / rows
+
+    for i, tile in enumerate(tiles):
+        r, c = divmod(i, cols)
+        cx_in = margin_x_in + c * (card_w_in + gap_in)
+        cy_in = start_y_in + r * (card_h_in + gap_in)
+
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(cx_in), Inches(cy_in), Inches(card_w_in), Inches(card_h_in))
+        card.fill.solid()
+        card.fill.fore_color.rgb = IVORY
+        card.line.color.rgb = PANEL_BORDER
+        card.line.width = Pt(0.75)
+        _no_shadow(card)
+        _modest_corner(card)
+
+        pad_in = 0.16
+        title_box = slide.shapes.add_textbox(Inches(cx_in + pad_in), Inches(cy_in + pad_in), Inches(card_w_in - pad_in * 2), Inches(0.28))
+        tp = title_box.text_frame.paragraphs[0]
+        tp.text = tile.get("title", "")
+        _set_font(tp, BODY_FONT, Pt(10.5), bold=True, color=ctx.accent_main)
+
+        caption_h_in = 0.42 if tile.get("caption") else 0
+        chart_y_in = cy_in + pad_in + 0.3
+        chart_h_in = max(0.8, card_h_in - pad_in * 2 - 0.3 - caption_h_in)
+        chart_x, chart_y = Inches(cx_in + pad_in), Inches(chart_y_in)
+        chart_w, chart_h = Inches(card_w_in - pad_in * 2), Inches(chart_h_in)
+
+        kind = tile["tile_kind"]
+        if kind == "risk_heatmap":
+            bars = tile.get("bars", [])[:5]
+            is_severity = tile.get("mode") == "severity"
+            if is_severity:
+                color_map = {"red": RED_CRIT, "orange": RGBColor(0xEA, 0x58, 0x0C), "amber": GOLD_MAIN, "blue": RGBColor(0x25, 0x63, 0xEB), "gray": GRAY_TEXT}
+            else:
+                color_map = {"blue": ctx.accent_main, "green": ctx.accent_chart, "amber": _light_safe(ctx.accent_light), "orange": _light_safe(ctx.accent_soft), "gray": GRAY_TEXT, "red": ctx.accent_main}
+            colors = [color_map.get(b.get("color", "gray"), ctx.accent_main) for b in bars]
+            labels = [b["label"] for b in bars]
+            values = [b["count"] for b in bars]
+            # Bentuk visual ikut category_style/status_style SAMA dgn laporan gaya SOC (mirror
+            # export_pdf.py::_mgmt_tile_chart_html) — BUG YANG DIPERBAIKI (dilaporkan user,
+            # "itu-itu aja"): tile ini dulu SELALU batang polos apa pun kombinasi tampilan yang
+            # terkunci utk laporan ini.
+            style = ctx.status_style if is_severity else ctx.category_style
+            if style == "donut":
+                side = min(Emu(chart_w).inches, Emu(chart_h).inches * 0.62)
+                side_x = chart_x + Inches((Emu(chart_w).inches - side) / 2)
+                add_native_doughnut_chart(slide, side_x, chart_y, Inches(side), Inches(side), labels, values, colors=colors, theme=ctx.theme)
+                _add_mini_legend(slide, chart_x, chart_y + Inches(side) + Inches(0.05), chart_w, labels, colors)
+            elif style == "stacked":
+                bar_h = Inches(0.28)
+                add_stacked_proportion_bar(slide, chart_x, chart_y, chart_w, values, colors=colors, height=bar_h)
+                _add_mini_legend(slide, chart_x, chart_y + bar_h + Inches(0.08), chart_w, labels, colors)
+            elif style == "funnel" and is_severity:
+                order = sorted(range(len(values)), key=lambda i: -values[i])
+                add_funnel_chart(slide, chart_x, chart_y, chart_w, chart_h, [labels[i] for i in order], [values[i] for i in order], color=ctx.accent_main)
+            else:
+                add_native_bar_chart(slide, chart_x, chart_y, chart_w, chart_h, labels, values, colors=colors, horizontal=True)
+        elif kind == "kpi_radar":
+            add_native_radar_chart(slide, chart_x, chart_y, chart_w, chart_h, tile["axes"], tile["values"], color=ctx.accent_main)
+        elif kind == "status_funnel":
+            add_funnel_chart(slide, chart_x, chart_y, chart_w, chart_h, tile["categories"], tile["values"], color=ctx.accent_main)
+        elif kind == "period_compare":
+            # color_b sengaja pakai accent_chart (BUKAN accent_light) — utk tema "gold"
+            # khususnya, accent_main (bronze) & accent_light (krem sangat pucat) kontrasnya
+            # rendah kalau berdampingan sbg 2 seri batang.
+            add_grouped_bar_chart(
+                slide, chart_x, chart_y, chart_w, chart_h,
+                tile["categories"], tile["series_a"], tile["series_b"],
+                label_a=tile["label_a"], label_b=tile["label_b"],
+                color_a=ctx.accent_main, color_b=ctx.accent_chart,
+            )
+        elif kind == "time_heatmap":
+            add_heatmap_grid(slide, chart_x, chart_y, chart_w, chart_h, tile["day_labels"], tile["hour_labels"], tile["grid"], color=ctx.accent_main)
+        elif kind == "trend_chart":
+            chart = tile["chart"]
+            if chart["type"] == "bar_line":
+                add_bar_line_chart(slide, chart_x, chart_y, chart_w, chart_h, chart["categories"], chart["values"], chart.get("cumulative"), color=ctx.accent_main)
+            else:
+                add_native_bar_chart(slide, chart_x, chart_y, chart_w, chart_h, chart["categories"], chart["values"], colors=[ctx.accent_main])
+        elif kind == "custom_topic":
+            # PERMINTAAN USER (Management Report "harus lebih banyak visualisasi"): section
+            # custom tulisan AI yang punya data perbandingan kategori digambar sbg chart
+            # sungguhan di sini (mirror export_pdf.py::_mgmt_tile_chart_html), bentuknya
+            # gantian bar/donat/susun per tile (lihat "chart_style" dari
+            # build_management_report_blocks) spy tidak seragam semua.
+            ct_labels, ct_values = tile.get("labels", []), tile.get("values", [])
+            ct_ramp = [ctx.accent_main, ctx.accent_chart, _light_safe(ctx.accent_light), _light_safe(ctx.accent_soft), GRAY_TEXT, ctx.accent_main]
+            ct_colors = [ct_ramp[i % len(ct_ramp)] for i in range(len(ct_values))]
+            ct_style = tile.get("chart_style", "bar")
+            if ct_style == "donut":
+                side = min(Emu(chart_w).inches, Emu(chart_h).inches * 0.62)
+                side_x = chart_x + Inches((Emu(chart_w).inches - side) / 2)
+                add_native_doughnut_chart(slide, side_x, chart_y, Inches(side), Inches(side), ct_labels, ct_values, colors=ct_colors, theme=ctx.theme)
+                _add_mini_legend(slide, chart_x, chart_y + Inches(side) + Inches(0.05), chart_w, ct_labels, ct_colors)
+            elif ct_style == "stacked":
+                bar_h = Inches(0.28)
+                add_stacked_proportion_bar(slide, chart_x, chart_y, chart_w, ct_values, colors=ct_colors, height=bar_h)
+                _add_mini_legend(slide, chart_x, chart_y + bar_h + Inches(0.08), chart_w, ct_labels, ct_colors)
+            else:
+                add_native_bar_chart(slide, chart_x, chart_y, chart_w, chart_h, ct_labels, ct_values, colors=ct_colors, horizontal=True)
+
+        if tile.get("caption"):
+            cap_box = slide.shapes.add_textbox(
+                Inches(cx_in + pad_in), Inches(cy_in + card_h_in - caption_h_in - pad_in * 0.5),
+                Inches(card_w_in - pad_in * 2), Inches(caption_h_in),
+            )
+            ctf = cap_box.text_frame
+            ctf.word_wrap = True
+            cp = ctf.paragraphs[0]
+            cp.text = tile["caption"]
+            _set_font(cp, BODY_FONT, Pt(8), color=GRAY_TEXT)
+
+    return slide
+
+
+def _build_management_action_items_slide(block: dict, ctx: _PptBlockContext):
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    add_logo(slide, ctx.logo_path)
+    add_kicker(slide, block.get("kicker", ""), color=ctx.accent_main)
+    title_bottom = add_title(slide, block.get("title", ""))
+
+    # Block rekomendasi sudah dipaginasi maksimal 6 item oleh report_render_logic.py, sehingga
+    # semua item tetap masuk tanpa membuat kartu keluar dari slide.
+    items = block.get("items", [])
+    start_y = max(title_bottom + 0.2, 1.9)
+    gap = 0.15
+    n = len(items) or 1
+    available_h = 7.5 - start_y - 0.4
+    card_h = min(1.1, max((available_h - gap * (n - 1)) / n, 0.62))
+
+    urgency_color = {
+        "critical": (RED_CRIT, RED_CRIT_BG),
+        "high": (RGBColor(0xEA, 0x58, 0x0C), RGBColor(0xFF, 0xF7, 0xED)),
+        "medium": (GOLD_MAIN, GOLD_CREAM_SOFT),
+        "low": (RGBColor(0x25, 0x63, 0xEB), RGBColor(0xEF, 0xF6, 0xFF)),
+    }
+
+    for i, it in enumerate(items):
+        cy = Inches(start_y + i * (card_h + gap))
+        fg, bg = urgency_color.get(it.get("urgency", "low"), (ctx.accent_main, IVORY))
+
+        rect = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, MARGIN_X, cy, CONTENT_W, Inches(card_h))
+        rect.fill.solid()
+        rect.fill.fore_color.rgb = bg
+        rect.line.color.rgb = fg
+        rect.line.width = Pt(1.2)
+
+        tb = slide.shapes.add_textbox(MARGIN_X + Inches(0.3), cy + Inches(0.1), CONTENT_W - Inches(0.6), Inches(card_h - 0.2))
+        tf = tb.text_frame
+        tf.word_wrap = True
+
+        p1 = tf.paragraphs[0]
+        p1.text = f"{it.get('number', i+1)}. {it.get('title', '')} [{it.get('urgency', '').upper()}]"
+        _set_font(p1, BODY_FONT, Pt(12), bold=True, color=TEXT_DARK)
+
+        if it.get("detail"):
+            p2 = tf.add_paragraph()
+            p2.text = it.get("detail", "")
+            _set_font(p2, BODY_FONT, Pt(10), color=GRAY_TEXT)
+
+    return slide
+
+
+def _build_management_asset_ranking_slide(block: dict, ctx: _PptBlockContext):
+    # Versi padat/batang khas Management Report — meniru persis cabang "bars" di
+    # _build_asset_cards_slide di atas, tapi TIDAK ikut ctx.asset_style (dipaksa selalu
+    # batang, supaya konsisten padat, tidak ikut pengacakan kartu/podium gaya SOC).
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    add_dark_bg(slide, theme=ctx.theme)
+    add_logo(slide, ctx.logo_path, dark=True)
+    add_kicker(slide, block.get("kicker", ""), color=ctx.accent_light)
+    title_bottom = add_title(slide, block.get("title", ""), color=WHITE)
+    items = block.get("items", [])
+    bars_y = max(title_bottom + 0.3, 2.0)
+    bars_row_h_in = 1.0
+    bars_content_h_in = len(items) * bars_row_h_in
+    bars_available_in = 6.6 - bars_y
+    if bars_available_in > bars_content_h_in:
+        bars_y += (bars_available_in - bars_content_h_in) / 2
+    add_asset_ranked_bars(slide, MARGIN_X, Inches(bars_y), CONTENT_W, items, row_h=Inches(bars_row_h_in), theme=ctx.theme)
+    return slide
+
+
+def _build_management_ai_narrative_slide(block: dict, ctx: _PptBlockContext):
+    # Narasi bebas tulisan AI (setara dynamic_section gaya SOC), ditampilkan sbg grid kartu
+    # ivory meniru gaya tile _build_management_visual_dashboard_slide di atas — supaya
+    # terasa menyatu dgn slide dashboard visual, bukan tempelan gaya SOC.
+    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
+    add_logo(slide, ctx.logo_path)
+    add_kicker(slide, block.get("kicker", ""), color=ctx.accent_main)
+    title_bottom = add_title(slide, block.get("title", ""))
+
+    items = block.get("items", [])
+    if not items:
+        return slide
+    cols = 2
+    rows = math.ceil(len(items) / cols)
+    gap_in = 0.25
+    start_y_in = max(title_bottom + 0.25, 1.9)
+    margin_x_in = Emu(MARGIN_X).inches
+    content_w_in = Emu(CONTENT_W).inches
+    content_h_in = max(3.0, 6.9 - start_y_in)
+    card_w_in = (content_w_in - gap_in * (cols - 1)) / cols
+    card_h_in = (content_h_in - gap_in * (rows - 1)) / rows
+
+    for i, it in enumerate(items):
+        r, c = divmod(i, cols)
+        cx_in = margin_x_in + c * (card_w_in + gap_in)
+        cy_in = start_y_in + r * (card_h_in + gap_in)
+
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(cx_in), Inches(cy_in), Inches(card_w_in), Inches(card_h_in))
+        card.fill.solid()
+        card.fill.fore_color.rgb = IVORY
+        card.line.color.rgb = PANEL_BORDER
+        card.line.width = Pt(0.75)
+        _no_shadow(card)
+        _modest_corner(card)
+
+        pad_in = 0.18
+        title_box = slide.shapes.add_textbox(Inches(cx_in + pad_in), Inches(cy_in + pad_in), Inches(card_w_in - pad_in * 2), Inches(0.32))
+        tp = title_box.text_frame.paragraphs[0]
+        tp.text = it.get("title", "")
+        _set_font(tp, BODY_FONT, Pt(11), bold=True, color=ctx.accent_main)
+
+        body_box = slide.shapes.add_textbox(
+            Inches(cx_in + pad_in), Inches(cy_in + pad_in + 0.4),
+            Inches(card_w_in - pad_in * 2), Inches(card_h_in - pad_in * 2 - 0.4),
+        )
+        btf = body_box.text_frame
+        btf.word_wrap = True
+        bp = btf.paragraphs[0]
+        bp.text = it.get("content", "")
+        _set_font(bp, BODY_FONT, Pt(9.5), color=GRAY_TEXT)
+
+    return slide
 
 
 # Panel yang PRAKTIS SELALU sendirian di halamannya (lihat bobot per panel_kind di
@@ -2302,7 +2792,7 @@ def _build_page_slide(block: dict, ctx: _PptBlockContext):
     dark = block["dark"]
     if dark:
         add_dark_bg(slide, theme=ctx.theme)
-    add_logo(slide, ctx.logo_path)
+    add_logo(slide, ctx.logo_path, dark=dark)
     add_kicker(slide, block.get("kicker") or "", color=(ctx.accent_light if dark else ctx.accent_main))
     title_bottom = add_title(slide, block.get("title") or "", color=(WHITE if dark else TEXT_DARK))
     content_top_in = max(title_bottom + 0.25, 1.7)
@@ -2325,6 +2815,11 @@ _PPT_BLOCK_BUILDERS = {
     "intro": _build_intro_slide,
     "page": _build_page_slide,
     "closing": _build_closing_slide,
+    "management_kpi_grid": _build_management_kpi_grid_slide,
+    "management_visual_dashboard": _build_management_visual_dashboard_slide,
+    "management_action_items": _build_management_action_items_slide,
+    "management_asset_ranking": _build_management_asset_ranking_slide,
+    "management_ai_narrative": _build_management_ai_narrative_slide,
 }
 
 
@@ -2336,7 +2831,11 @@ class PPTXExporter:
         prs.slide_height = SLIDE_H
 
         logo_path = _resolve_logo_path()
-        blocks = build_report_blocks(report)
+        _template = (report.template_type or "").strip().lower()
+        if "management" in _template:
+            blocks = build_management_report_blocks(report)
+        else:
+            blocks = build_report_blocks(report)
 
         # Varian tampilan (cover_style, category_style, dst) DIBACA dari report.visual_style,
         # BUKAN di-random di sini lagi — BUG YANG DIPERBAIKI (dilaporkan user): dulu tiap kali
@@ -2361,11 +2860,40 @@ class PPTXExporter:
         kicker_ringkasan = "Executive Summary" if is_english(report) else "Ringkasan Eksekutif"
         kicker_analisis = "DATA ANALYSIS" if is_english(report) else "ANALISIS DATA"
 
-        # Palet warna tema (report.theme_color) — accent_bar_color TIDAK LAGI dipakai untuk
-        # warna aksen (dulu diacak hijau/emas lewat visual_style, independen dari pilihan user
-        # di Report Settings). Sekarang accent_bar_color = ctx.accent_main, konsisten dgn tema.
+        # Palet warna tema (report.theme_color)
         theme_key = resolve_theme_color(report)
-        palette = THEME_PALETTES[theme_key]
+        if theme_key in THEME_PALETTES:
+            palette = THEME_PALETTES[theme_key]
+        elif str(theme_key).startswith("#"):
+            # 2 BUG DIPERBAIKI (mirror export_pdf.py, lihat catatan lengkap di sana):
+            # 1. "soft" sebelumnya RGBColor(0xF3,0xF4,0xF6) (abu-abu nyaris putih, tidak
+            #    senada) — MISMATCH dgn preview web (resolveThemeColors pakai GOLD_LIGHT).
+            # 2. "chart" sebelumnya = "main" APA ADANYA — 2 seri (mis. grouped bar
+            #    "Perbandingan Antar Paruh Periode") jadi TIDAK BISA DIBEDAKAN. "chart"
+            #    sekarang tint lebih terang dari warna kustom yang sama, bukan duplikat exact.
+            # 3. "bg" (latar cover/penutup) sebelumnya SELALU navy gelap tetap, terlepas dari
+            #    warna kustomnya — cover jadi terlihat seperti tidak menerapkan pilihan warna
+            #    user sama sekali (lihat docstring _darken).
+            #
+            # BUG BESAR TAMBAHAN (mirror export_pdf.py, lihat catatan lengkap di sana):
+            # "light"/"soft" sekarang KEEMPATNYA diturunkan dari SATU hue kustom yang sama
+            # (main=gelap, chart=medium, light=terang, soft=paling terang) — pola RAMP SAMA
+            # PERSIS yang sudah dipakai tema "gold" bawaan sendiri — BUKAN tetap GOLD_MAIN/
+            # GOLD_LIGHT (aksen emas tak terkait pilihan user, dipakai luas di kicker/pill/
+            # badge/panel gelap hampir tiap slide, penyebab utama "warnanya kurang kelihatan").
+            # BUG YANG DIPERBAIKI (dilaporkan user): "main" kustom dipakai APA ADANYA tanpa
+            # jaminan cukup gelap utk teks putih di atasnya (kartu KPI, cover/penutup) — warna
+            # terang (mis. ungu muda #CF87DA) bikin teks nyaris tak kelihatan. _light_safe()
+            # dipakai ulang di sini (ambang 0.45, tepat di atas luminance "main" tema gold
+            # bawaan ~0.42, tema PALING terang dari 4 tema tetap) supaya "main" kustom SELALU
+            # cukup gelap dipakai bersama teks putih.
+            c = _light_safe(_hex_to_rgb(str(theme_key)), max_luminance=0.45)
+            chart_shade = _blend_with_white(c, 0.6)
+            light_shade = _blend_with_white(c, 0.3)
+            soft_shade = _blend_with_white(c, 0.12)
+            palette = {"main": c, "bg": _darken(c), "chart": chart_shade, "light": light_shade, "soft": soft_shade}
+        else:
+            palette = THEME_PALETTES["green"]
         accent_bar_color = palette["main"]
 
         content_slides: list = []  # dipakai utk stamping footer di akhir (kecuali cover/penutup)

@@ -53,6 +53,15 @@ export const THEME_PALETTES: Record<ThemeColorKey, ThemeColors> = {
 };
 
 export function resolveThemeColors(themeColor?: string | null): ThemeColors {
+  if (themeColor && themeColor.startsWith("#")) {
+    return {
+      main: themeColor,
+      bg: "#111827",
+      chart: themeColor,
+      light: "#C9A227",
+      soft: "#E7C766",
+    };
+  }
   const key = (themeColor || "green").toLowerCase() as ThemeColorKey;
   return THEME_PALETTES[key] || THEME_PALETTES.green;
 }

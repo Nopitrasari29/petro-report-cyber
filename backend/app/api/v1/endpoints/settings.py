@@ -43,11 +43,16 @@ def load_settings_file() -> dict:
         return json.load(f)
 
 
-def load_settings() -> dict:
+def load_settings(db: Session | None = None) -> dict:
     """
     Membaca pengaturan organisasi dari database (tabel system_settings). Jika belum ada, buat default.
+    RCA-B05: Menerima sesi DB opsional agar memanfaatkan connection pool yang sudah ada.
     """
-    db = SessionLocal()
+    close_local = False
+    if db is None:
+        db = SessionLocal()
+        close_local = True
+
     try:
         setting = db.query(SystemSetting).filter(SystemSetting.key == "global").first()
         default_data = SettingsSchema().model_dump()
@@ -58,24 +63,26 @@ def load_settings() -> dict:
             return default_data
 
         merged_data = {**default_data, **(setting.value or {})}
-        # Buang key lama peninggalan skema sebelumnya (mis. security_2fa) yang mungkin
-        # masih tersimpan di DB lama, biar respons selalu bersih sesuai skema saat ini.
         cleaned = {k: v for k, v in merged_data.items() if k in default_data}
         return cleaned
     except Exception as e:
         logger.warning(f"Gagal memuat dari DB: {e}. Fallback ke file.")
         return load_settings_file()
     finally:
-        db.close()
+        if close_local:
+            db.close()
 
 
 @router.get("/")
-def get_settings(current_user = Depends(get_current_user)):
+def get_settings(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Mendapatkan pengaturan organisasi aktif saat ini. Wajib login.
     """
     try:
-        return load_settings()
+        return load_settings(db=db)
     except Exception as e:
         logger.error(f"Gagal memuat pengaturan: {e}")
         raise HTTPException(status_code=500, detail="Gagal memuat pengaturan. Silakan coba lagi atau hubungi admin.")
@@ -88,13 +95,18 @@ def update_settings(
     db: Session = Depends(get_db)
 ):
     """
-    Memperbarui pengaturan organisasi. Wajib login.
-    Catatan: saat ini semua user yang login boleh mengubah ini (belum ada pembatasan role/admin
-    khusus, karena sistem role belum diaktifkan di seluruh aplikasi). Kalau ke depannya cuma admin
-    yang boleh ubah, tambahkan pengecekan current_user.role di sini.
+    Memperbarui pengaturan organisasi.
+    RCA-A04: Membatasi izin ubah hanya untuk role 'Admin' atau 'Superadmin'.
     """
+    user_role = (current_user.role or "").strip().lower()
+    if user_role not in ("admin", "superadmin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Hanya administrator yang memiliki izin untuk mengubah pengaturan organisasi."
+        )
+
     try:
-        current_settings = load_settings()
+        current_settings = load_settings(db=db)
 
         for key, value in payload.items():
             current_settings[key] = value
@@ -116,7 +128,20 @@ def update_settings(
         except Exception:
             pass
 
+        # Catat ke audit log
+        try:
+            from app.crud.audit_log import log_action
+            log_action(
+                db, user_id=current_user.id, action="update_settings",
+                resource_type="settings", resource_id=None,
+                detail=f"Pengaturan organisasi diperbarui: org_name='{data.get('organization_name')}'",
+            )
+        except Exception:
+            pass
+
         return {"status": "success", "message": "Pengaturan organisasi berhasil diperbarui.", "settings": data}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Gagal memperbarui pengaturan: {e}")
-        raise HTTPException(status_code=500, detail="Gagal memperbarui pengaturan. Periksa kembali data yang dikirim atau hubungi admin.")
+        raise HTTPException(status_code=500, detail="Gagal memperbarui pengaturan. Periksa kembali data yang dikirim atau hubungi admin.")
