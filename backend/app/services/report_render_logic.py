@@ -18,6 +18,7 @@ paragraf tulisan AI yang menghormati bahasa ini, sementara semua judul/label tet
 Bahasa Indonesia apa pun pengaturannya.
 """
 import datetime
+import math
 import os
 import random
 import re
@@ -33,6 +34,57 @@ SEVERITY_LABEL = {
     "critical": "Critical", "high": "High", "medium": "Medium",
     "low": "Low", "informational": "Info",
 }
+
+
+def _balanced_chunks(items: list, max_per_page: int) -> list[list]:
+    """Bagi `items` jadi beberapa halaman TANPA PERNAH menyisakan 1 halaman terakhir berisi
+    cuma 1 item sendirian (kalau totalnya >= 2) — BUG NYATA YANG DIPERBAIKI (dilaporkan user,
+    disertai screenshot): chunking naif `range(0, len(items), max_per_page)` pada rekomendasi
+    (3 item, max 2/halaman) menghasilkan 2+1 — halaman pertama (2 item) memenuhi syarat gaya
+    "timeline" (butuh >=2 item), tapi halaman KEDUA (cuma 1 item leftover) tidak, jadi
+    otomatis jatuh ke gaya kartu biasa — 1 laporan yang sama jadi terlihat gonta-ganti gaya di
+    tengah jalan, padahal report.visual_style seharusnya konsisten SATU gaya per laporan.
+    Jumlah HALAMAN dihitung dulu (ceil(total/max_per_page)), baru total item diratakan
+    SEBISA MUNGKIN ke semua halaman itu (bukan selalu isi penuh max_per_page dulu baru sisa
+    dibuang ke halaman baru) — cara ini matematis TIDAK PERNAH menghasilkan halaman berisi 1
+    item sendirian selama total>=2 & max_per_page>=2."""
+    total = len(items)
+    if total == 0:
+        return []
+    num_pages = math.ceil(total / max_per_page)
+    base, extra = divmod(total, num_pages)
+    chunks = []
+    cursor = 0
+    for page_idx in range(num_pages):
+        size = base + 1 if page_idx < extra else base
+        chunks.append(items[cursor:cursor + size])
+        cursor += size
+    return chunks
+
+
+def best_grid_cols(n: int, min_cols: int = 2, max_cols: int = 3) -> int:
+    """Pilih jumlah kolom grid dashboard visual (Management Report — tile chart macam-macam
+    ditumpuk berdampingan, lihat build_management_report_blocks/visual_tiles) yang
+    MEMINIMALKAN ruang kosong di baris terakhir. PERMINTAAN USER: boleh cuma sedikit tile per
+    halaman (tidak harus selalu dipaksa banyak-banyak), TAPI baris terakhir tidak boleh
+    menyisakan banyak slot kosong (mis. 3 tile dgn 2 kolom tetap menyisakan 1 slot kosong di
+    baris kedua) — dicari kolom yang HABIS DIBAGI RATA dulu (mis. 3 tile -> 3 kolom, 1 baris
+    penuh), kalau tidak ada yang pas, pilih kolom yang baris terakhirnya PALING PENUH terisi.
+    Dipakai BERSAMA oleh export_pdf.py & export_ppt.py supaya keduanya konsisten."""
+    if n <= 0:
+        return min_cols
+    if n <= min_cols:
+        return n
+    for cols in range(max_cols, min_cols - 1, -1):
+        if n % cols == 0:
+            return cols
+    best_cols, best_fill = max_cols, -1.0
+    for cols in range(max_cols, min_cols - 1, -1):
+        remainder = n % cols
+        fill = 1.0 if remainder == 0 else remainder / cols
+        if fill > best_fill:
+            best_fill, best_cols = fill, cols
+    return best_cols
 
 
 def find_logo_path() -> str | None:
@@ -70,6 +122,24 @@ def _shorten_to_caption(text: str, max_sentences: int = 2) -> str:
         return text
     sentences = re.split(r"(?<=[.!?])\s+", text.strip())
     return " ".join(sentences[:max_sentences]).strip()
+
+
+def _hard_truncate(text: str, max_chars: int) -> str:
+    """Potong keras ke batas KARAKTER (bukan kalimat) — dipakai KHUSUS caption tile dashboard
+    Management (visual_tiles) yang tile-nya ditumpuk padat (sampai 6 per halaman, lihat
+    _build_management_visual_dashboard_block). BUG DIPERBAIKI (ditemukan lewat isolasi
+    render+bisection langsung, bukan dugaan): _shorten_to_caption() SAJA (batas per KALIMAT)
+    kadang tetap menghasilkan 1 kalimat majemuk Bahasa Indonesia yang panjang (100+ karakter,
+    mis. kalimat berkonjungsi "namun"/"meski"/"sehingga") — beberapa caption sepanjang itu
+    berdampingan dlm 1 baris grid TERBUKTI memicu bug WeasyPrint yang membuat SATU sel tile
+    gagal dirender sama sekali (hilang total, bukan cuma terpotong) tanpa exception apa pun di
+    sisi Python. Caption tile SEKARANG dijaga tetap pendek scr karakter juga, bukan cuma
+    kalimat, sekaligus sejalan dgn permintaan user: narasi tiap tile tidak wajib panjang."""
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars].rsplit(" ", 1)[0].rstrip(",;: ")
+    return truncated + "…"
 
 
 def _stable_color_index(name: str, n: int = 5) -> int:
@@ -183,8 +253,8 @@ def pick_visual_style(preset: str | None = None) -> dict:
         rnd = random.Random()
         result = {
             "cover_style": "solid",  # "split" dihapus dari opsi acak, lihat catatan di DEFAULT_VISUAL_STYLE
-            "category_style": rnd.choice(["bar", "donut", "stacked"]),
-            "status_style": rnd.choice(["bar", "donut", "stacked", "funnel"]),
+            "category_style": rnd.choice(["bar", "donut", "stacked", "treemap"]),
+            "status_style": rnd.choice(["bar", "donut", "stacked", "funnel", "treemap"]),
             "asset_style": rnd.choice(["cards", "podium", "bars"]),
             "recommendation_style": rnd.choice(["cards", "timeline", "banners"]),
             "panel_side": rnd.choice(["left", "right"]),
@@ -197,7 +267,7 @@ def pick_visual_style(preset: str | None = None) -> dict:
     return result
 
 
-VALID_THEME_COLORS = ("green", "navy", "dark", "gold")
+VALID_THEME_COLORS = ("green", "navy", "dark", "gold", "teal")
 
 
 def resolve_theme_color(report) -> str:
@@ -830,6 +900,11 @@ def build_report_blocks(report) -> list[dict]:
     }
 
     # ---------------- Latar Belakang & Tujuan (Domain & Language Aware) ----------------
+    # PERMINTAAN USER: halaman ini SEMPAT dihapus total, lalu user minta dikembalikan LAGI
+    # tapi KHUSUS gaya SOC/Standard (fungsi build_report_blocks ini) — gaya Management
+    # (build_management_report_blocks, fungsi TERPISAH) TETAP tidak pernah punya halaman ini
+    # sama sekali (memang dari awal begitu), jadi permintaan "SOC iya, Management tidak" ini
+    # otomatis terpenuhi cukup dgn mengembalikannya DI SINI saja.
     if domain == "financial":
         data_name = "financial transactions" if is_en else "data transaksi & operasional keuangan"
         obj1_title = "Map Financial Position" if is_en else "Memetakan Postur Keuangan"
@@ -1116,10 +1191,15 @@ def build_report_blocks(report) -> list[dict]:
     # — ini narasi topik spesifik tulisan AI, lebih pas diberi ruang teks penuh drpd dipaksa
     # ditemani chart generik yang seringnya kebetulan sama dgn chart di halaman lain.
     dynamic_sections = [s for s in (ai_summary.get("sections") or []) if isinstance(s, dict)]
-    # Section PERTAMA (order 0) DILEWATI — section_suggester.py/prompts.py SECARA DESAIN
-    # selalu mengharuskan order 0 berisi "ringkasan eksekutif tingkat tinggi", sudah
-    # ditampilkan di kandidat Ringkasan Eksekutif lewat caption di atas.
-    for idx, sec in enumerate(dynamic_sections[1:]):
+    # BUG DIPERBAIKI (dilaporkan user, disertai perbandingan checklist Include Sections vs
+    # laporan jadi — topik order 0 hilang total): section PERTAMA (order 0) SEBELUMNYA selalu
+    # dilewati di sini dgn asumsi isinya "ringkasan eksekutif tingkat tinggi" yang sudah
+    # ditampilkan di kandidat Ringkasan Eksekutif lewat caption di atas — asumsi itu TIDAK
+    # SELALU benar (topik order 0 bisa genuinely spesifik & berbeda, mis. "Overview of
+    # Production Performance" yang dicentang user tapi tidak pernah muncul sama sekali).
+    # Permintaan user JELAS: SEMUA topik yang dicentang HARUS masuk laporan, jadi section 0
+    # SEKARANG ikut diproses sama seperti section lainnya.
+    for idx, sec in enumerate(dynamic_sections):
         sec_title = sanitize_text(coerce_narrative_text(sec.get("title")))
         sec_content = sanitize_text(coerce_narrative_text(sec.get("content")))
         if not sec_title or not sec_content:
@@ -1440,11 +1520,14 @@ def build_report_blocks(report) -> list[dict]:
                 "detail": sanitize_text(detail_txt) if detail_txt else None,
             })
         prior_texts += [r["title"] for r in rec_items] + [r["detail"] for r in rec_items if r["detail"]]
-        # SOC memakai maksimal 2 rekomendasi per halaman agar judul dan keterangan panjang
-        # tetap terbaca. Semua rekomendasi tetap dipaginasi, tidak ada yang dibuang.
-        soc_recommendations_per_page = 2
-        for chunk_index in range(0, len(rec_items), soc_recommendations_per_page):
-            chunk = rec_items[chunk_index:chunk_index + soc_recommendations_per_page]
+        # SOC memakai maksimal 4 rekomendasi per halaman agar judul dan keterangan panjang
+        # tetap terbaca (dinaikkan dari 2 — lihat _balanced_chunks di atas utk alasan lengkap
+        # kenapa batas SEBELUMNYA 2 justru menyebabkan gaya visual gonta-ganti di tengah
+        # laporan: 3 rekomendasi kepotong 2+1, halaman ber-1-item otomatis jatuh ke gaya kartu
+        # biasa walau gaya "timeline" terkunci utk seluruh laporan). _balanced_chunks meratakan
+        # jumlah HALAMAN dulu baru itemnya, jadi tidak akan pernah ada 1 halaman leftover
+        # berisi cuma 1 item selama totalnya >= 2.
+        for chunk_index, chunk in enumerate(_balanced_chunks(rec_items, 4)):
             continuation = chunk_index > 0
             candidates.append(_candidate(
                 "recommendations", "action", min(0.9, 0.35 + 0.09 * len(chunk)), False,
@@ -1631,85 +1714,10 @@ def build_management_report_blocks(report) -> list[dict]:
         "is_management": True,
     })
 
-    # ---- KPI Grid — 6 kartu angka kunci, ISINYA ikut jenis data ----
-    if total_sev:
-        # Data punya dimensi severity (biasanya domain keamanan) — kartu bertema
-        # insiden/SLA genuinely bermakna di sini.
-        lbl_total = L("Total Insiden", "Total Incidents") if sec_domain else L("Total Event", "Total Events")
-        kpi_items = [
-            {"label": lbl_total, "value": str(total_records), "icon": "shield", "color": "blue", "delta": None},
-            {
-                "label": L("Critical", "Critical") if sec_domain else L("Prioritas Tertinggi", "Highest Priority"),
-                "value": str(critical_count), "icon": "fire", "color": "red",
-                "delta": L("Perlu tindakan segera", "Requires immediate action") if critical_count > 0 else L("Aman", "Safe"),
-            },
-            {"label": L("High", "High"), "value": str(high_count), "icon": "warning", "color": "orange", "delta": None},
-        ]
-        if status_col:
-            kpi_items.append({
-                "label": L("SLA Terpenuhi", "SLA Met"), "value": f"{sla_pct}%", "icon": "clock",
-                "color": "green" if sla_pct >= 80 else "red", "delta": L("Target: ≥ 80%", "Target: ≥ 80%"),
-            })
-            kpi_items.append({
-                "label": L("Terselesaikan", "Resolved"), "value": f"{resolved_pct}%", "icon": "check",
-                "color": "green" if resolved_pct >= 70 else "amber", "delta": f"{resolved_count} / {total_records}",
-            })
-            kpi_items.append({
-                "label": L("Masih Terbuka", "Still Open"), "value": str(open_count), "icon": "alert",
-                "color": "red" if open_count > 0 else "green",
-                "delta": L("Butuh perhatian", "Needs attention") if open_count > 0 else L("Semua tertangani", "All handled"),
-            })
-    else:
-        # Data non-keamanan (KPI/keuangan/pengadaan/operasional dkk) — TIDAK ADA konsep
-        # severity/SLA, jadi kartu dibangun dari kategori & kolom numerik yang genuinely
-        # terdeteksi (pola sama dgn stat_items di build_report_blocks/executive_summary).
-        kpi_items = [{"label": L("Total Data", "Total Records"), "value": str(total_records), "icon": "shield", "color": "blue", "delta": None}]
-        if category_pick:
-            label, items = category_pick
-            top_item = items[0]
-            cat_label = humanize_label(label, source_cols)
-            # BUG YANG DIPERBAIKI (dilaporkan user): kartu ini dulu label=nama kolom (mis.
-            # "Unit Produksi"), value=jumlah data kategori TERATAS, delta=nama kategori
-            # teratas — jadi terbaca seolah "Unit Produksi: 11" padahal 11 itu jumlah data
-            # Pabrik II B saja, bukan jumlah unit produksi. Sekarang value = nama kategori
-            # teratas, delta = jumlah datanya, supaya kartu ini jelas berarti "siapa yang
-            # teratas", bukan tercampur dgn metrik lain.
-            kpi_items.append({
-                "label": L(f"{cat_label} Teratas", f"Top {cat_label}"), "value": top_item["value"],
-                "icon": "tag", "color": "amber",
-                "delta": L(f"{top_item['count']} data", f"{top_item['count']} records"),
-            })
-        kpi_items.append({"label": L("Kategori Sumber", "Categories"), "value": str(len(top_categories)), "icon": "grid", "color": "green", "delta": None})
-        if status_col:
-            kpi_items.append({
-                "label": L("Sudah Ditangani", "Completed"), "value": f"{resolved_pct}%", "icon": "check",
-                "color": "green" if resolved_pct >= 70 else "amber", "delta": f"{resolved_count} / {total_records}",
-            })
-            kpi_items.append({
-                "label": L("Masih Terbuka", "Still Open"), "value": str(open_count), "icon": "alert",
-                "color": "red" if open_count > 0 else "green", "delta": None,
-            })
-        for col, nstats in numeric_summary.items():
-            if len(kpi_items) >= 6:
-                break
-            avg_val = nstats.get("mean")
-            if avg_val is None:
-                continue
-            formatted = f"{avg_val:,.0f}".replace(",", ".") if is_id else f"{avg_val:,.0f}"
-            kpi_items.append({
-                "label": L(f"Rata-rata {humanize_label(col, source_cols)}", f"Average {humanize_label(col, source_cols)}"),
-                "value": formatted, "icon": "chart", "color": "blue", "delta": None,
-            })
-    kpi_items = kpi_items[:6]
-    # total_records==0 = tidak ada data sama sekali (kasus tepi) — daripada kartu KPI
-    # tampil dgn angka nol semua, halaman ini di-skip juga.
-    if kpi_items and total_records and is_included("executive_summary"):
-        blocks.append({
-            "kind": "management_kpi_grid",
-            "kicker": L("RINGKASAN EKSEKUTIF", "EXECUTIVE SUMMARY"),
-            "title": L("Indikator Kinerja Utama", "Key Performance Indicators"),
-            "items": kpi_items,
-        })
+    # PERMINTAAN USER: halaman "Indikator Kinerja Utama" (grid KPI ringkas) DIHAPUS — user
+    # merasa isinya tidak jelas gunanya & redundan dgn halaman dashboard visual persis
+    # setelahnya (visual_tiles di bawah sudah menampilkan angka yang sama scr lebih detail/
+    # visual). Kalau perlu dikembalikan lagi nanti, lihat riwayat git commit sebelum ini.
 
     # PERMINTAAN USER: template "Visual tinggi" ini SEBELUMNYA menaruh tiap jenis
     # visualisasi (peta risiko, radar, funnel, perbandingan periode, heatmap waktu, tren) di
@@ -1768,7 +1776,18 @@ def build_management_report_blocks(report) -> list[dict]:
             # ("{'risk_assessment': [...]}") tampil apa adanya di laporan. sanitize_text() SENDIRI
             # cuma str(x), tidak meratakan struktur — coerce_narrative_text() WAJIB dipanggil
             # duluan (pola yang sama sudah dipakai di semua field naratif lain di file ini).
-            "caption": _shorten_to_caption(sanitize_text(coerce_narrative_text(risk_narrative)), max_sentences=1) if risk_narrative else None,
+            # BUG DIPERBAIKI (ditemukan lewat isolasi render+bisection langsung di laporan
+            # sungguhan, report id 165): _shorten_to_caption() SAJA (batas per KALIMAT) tetap
+            # bisa menghasilkan 1 kalimat AI yang panjang (100+ karakter) — caption tile
+            # SEPANJANG itu terbukti bikin TOTAL TINGGI grid dashboard (2 baris x 3 tile)
+            # melebihi tinggi halaman tetap (7.5in), lalu diam-diam terpotong oleh
+            # overflow:hidden di wrapper halaman (lihat _page() di export_pdf.py) — SATU tile
+            # (bisa yang mana pun, tergantung tile mana yang jatuh di baris ke-2) jadi terlihat
+            # "hilang total" di PDF/PPT padahal HTML/datanya sendiri benar & lengkap. _hard_truncate
+            # sebelumnya CUMA dipasang di caption custom_topic (lihat 90 char di bawah) — tile
+            # bawaan lain (risk_heatmap ini & trend_chart) belum ikut dibatasi scr karakter,
+            # padahal caption keduanya SAMA-SAMA dari narasi bebas AI (bukan template pendek).
+            "caption": _hard_truncate(_shorten_to_caption(sanitize_text(coerce_narrative_text(risk_narrative)), max_sentences=1), 100) if risk_narrative else None,
         })
 
     # ---- Perbandingan Multi-Indikator (radar) — HANYA kalau data punya >=3 kolom numerik
@@ -1782,10 +1801,10 @@ def build_management_report_blocks(report) -> list[dict]:
             "title": L("Perbandingan Capaian Multi-Indikator", "Multi-Indicator Achievement Comparison"),
             "axes": radar_data["axes"],
             "values": radar_data["values"],
-            "caption": L(
+            "caption": _hard_truncate(L(
                 f"{radar_data['axes'][top_axis_idx]} mencatat capaian tertinggi.",
                 f"{radar_data['axes'][top_axis_idx]} recorded the highest achievement.",
-            ),
+            ), 100),
         })
 
     # ---- Alur Status (funnel) — HANYA kalau data punya kolom status genuinely terdeteksi
@@ -1794,13 +1813,21 @@ def build_management_report_blocks(report) -> list[dict]:
     status_items = top_categories.get("status") or []
     if status_items and is_included("status_distribution"):
         order = sorted(status_items, key=lambda it: -it["count"])[:6]
+        # PERMINTAAN USER: tiap visualisasi harus disertai narasi singkat yang menjelaskan
+        # hasilnya (jangan biarkan chart tanpa keterangan sama sekali) — dihitung deterministik
+        # dari data ASLI di sini (bukan AI), grounded pada angka yang SAMA dgn yang digambar.
+        status_total = sum(it["count"] for it in order) or 1
+        top_status = order[0]
         visual_tiles.append({
             "tile_kind": "status_funnel",
             "kicker": L("STATUS PENANGANAN", "HANDLING STATUS"),
             "title": L("Alur Status Penanganan", "Handling Status Flow"),
             "categories": [it["value"] for it in order],
             "values": [it["count"] for it in order],
-            "caption": None,
+            "caption": _hard_truncate(L(
+                f"{top_status['value']} mendominasi alur ini ({top_status['count']} dari {status_total} data, {round(top_status['count']/status_total*100)}%).",
+                f"{top_status['value']} dominates this flow ({top_status['count']} of {status_total} records, {round(top_status['count']/status_total*100)}%).",
+            ), 100),
         })
 
     # ---- Perbandingan Antar Paruh Periode (grouped bar) — HANYA kalau ada kolom tanggal +
@@ -1811,6 +1838,16 @@ def build_management_report_blocks(report) -> list[dict]:
         _label, _items = category_pick
         compare_data = _compute_period_compare(parsed_data, date_col, source_cols.get(_label), [it["value"] for it in _items[:4]])
         if compare_data:
+            # PERMINTAAN USER: tiap visualisasi harus disertai narasi singkat — dihitung
+            # deterministik dari angka yang SAMA persis yang digambar di chart-nya.
+            total_a = sum(compare_data["series_a"]) or 0
+            total_b = sum(compare_data["series_b"]) or 0
+            if total_a == total_b:
+                arah_id, arah_en = "stabil", "stable"
+            elif total_b > total_a:
+                arah_id, arah_en = "naik", "up"
+            else:
+                arah_id, arah_en = "turun", "down"
             visual_tiles.append({
                 "tile_kind": "period_compare",
                 "kicker": L("PERBANDINGAN PERIODE", "PERIOD COMPARISON"),
@@ -1818,7 +1855,10 @@ def build_management_report_blocks(report) -> list[dict]:
                 "categories": compare_data["categories"],
                 "series_a": compare_data["series_a"], "series_b": compare_data["series_b"],
                 "label_a": L("Paruh Awal", "First Half"), "label_b": L("Paruh Akhir", "Second Half"),
-                "caption": None,
+                "caption": _hard_truncate(L(
+                    f"Aktivitas {arah_id} dari paruh awal ke paruh akhir ({total_a} → {total_b} kejadian pada kategori teratas).",
+                    f"Activity trended {arah_en} from the first half to the second ({total_a} → {total_b} events across top categories).",
+                ), 100),
             })
 
     # ---- Pola Kejadian per Hari/Jam (heatmap) — HANYA kalau kolom tanggal genuinely
@@ -1827,6 +1867,11 @@ def build_management_report_blocks(report) -> list[dict]:
     # hari/jam -> heatmap grid), bukan bar/ranking yang sudah dipakai di tile lain.
     heatmap_data = _compute_day_hour_pattern(parsed_data, date_col)
     if heatmap_data and is_included("time_heatmap"):
+        # PERMINTAAN USER: tiap visualisasi harus disertai narasi singkat — hari terpadat
+        # dihitung dari grid yang SAMA persis yang digambar sbg heatmap (jumlah tiap baris).
+        _day_totals = [sum(row) for row in heatmap_data["grid"]]
+        _peak_day_idx = max(range(len(_day_totals)), key=lambda i: _day_totals[i]) if _day_totals else 0
+        peak_day_id, peak_day_en = heatmap_data["day_labels"][_peak_day_idx]
         visual_tiles.append({
             "tile_kind": "time_heatmap",
             "kicker": L("POLA WAKTU", "TIME PATTERN"),
@@ -1834,7 +1879,50 @@ def build_management_report_blocks(report) -> list[dict]:
             "day_labels": [L(id_, en_) for id_, en_ in heatmap_data["day_labels"]],
             "hour_labels": heatmap_data["hour_labels"],
             "grid": heatmap_data["grid"],
-            "caption": None,
+            "caption": _hard_truncate(L(
+                f"Hari {peak_day_id} tercatat paling padat, {_day_totals[_peak_day_idx]} dari {heatmap_data['total']} data.",
+                f"{peak_day_en} is the busiest day, {_day_totals[_peak_day_idx]} of {heatmap_data['total']} records.",
+            ), 100),
+        })
+
+    # ---- Meteran Pencapaian (gauge) — PERMINTAAN USER (tambah jenis visualisasi baru):
+    # HANYA kalau ada kategori teratas yang genuinely terdeteksi, supaya persentase yang
+    # ditampilkan sbg meteran benar2 angka asli (share kategori teratas dari total data),
+    # bukan dikarang.
+    if category_pick and total_records and is_included("category_distribution"):
+        _gauge_label, _gauge_items = category_pick
+        top_item = _gauge_items[0]
+        top_pct = round(top_item["count"] / total_records * 100)
+        gauge_dim = humanize_label(_gauge_label, source_cols)
+        visual_tiles.append({
+            "tile_kind": "kpi_gauge",
+            "kicker": L("PANGSA TERBESAR", "LARGEST SHARE"),
+            "title": L(f"Pangsa {gauge_dim} Teratas", f"Top {gauge_dim} Share"),
+            "pct": top_pct,
+            "caption": _hard_truncate(L(
+                f"{top_item['value']} mendominasi dengan {top_pct}% dari total.",
+                f"{top_item['value']} dominates with {top_pct}% of the total.",
+            ), 100),
+        })
+
+    # ---- Sebaran 2 Dimensi (scatter/bubble) — PERMINTAAN USER (tambah jenis visualisasi
+    # baru): HANYA kalau ada pasangan kategori+angka numerik genuinely terkelompokkan (lihat
+    # data_profiler._compute_category_numeric_pairs) — 2 angka BERBEDA per entitas, bukan
+    # cuma 1 angka seperti tile lain di atas.
+    pairs = report_stats.get("category_numeric_pairs")
+    if pairs and is_included("category_distribution"):
+        pair_cat_label = humanize_label(pairs["category_label"], source_cols)
+        pair_num_label = humanize_label(pairs["numeric_label"], source_cols)
+        visual_tiles.append({
+            "tile_kind": "scatter_bubble",
+            "kicker": L("SEBARAN DATA", "DATA SPREAD"),
+            "title": L(f"{pair_cat_label} vs {pair_num_label}", f"{pair_cat_label} vs {pair_num_label}"),
+            "points": pairs["points"],
+            "x_label": L("Jumlah kemunculan", "Occurrence count"),
+            "caption": _hard_truncate(L(
+                f"Tiap titik mewakili satu {pair_cat_label.lower()}, diposisikan berdasarkan jumlah kemunculan dan rata-rata {pair_num_label.lower()}.",
+                f"Each point represents one {pair_cat_label.lower()}, positioned by occurrence count and average {pair_num_label.lower()}.",
+            ), 100),
         })
 
     # ---- Tren & Pola — chart SUNGGUHAN (bar+line utk deret waktu, atau bar ranking kalau
@@ -1861,7 +1949,9 @@ def build_management_report_blocks(report) -> list[dict]:
             "kicker": L("TREN & POLA", "TRENDS & PATTERNS"),
             "title": L("Analisis Tren Periode Ini", "Trend Analysis This Period"),
             "chart": trend_chart,
-            "caption": _shorten_to_caption(sanitize_text(coerce_narrative_text(trend_narrative)), max_sentences=1) if trend_narrative else None,
+            # Sama seperti risk_heatmap di atas — narasi bebas AI, dibatasi keras scr karakter
+            # juga (bukan cuma per kalimat) supaya tidak ikut memicu overflow tinggi halaman.
+            "caption": _hard_truncate(_shorten_to_caption(sanitize_text(coerce_narrative_text(trend_narrative)), max_sentences=1), 100) if trend_narrative else None,
         })
 
     # PERMINTAAN USER: section custom AI ("Insight Tambahan") sebelumnya SELALU jadi kartu
@@ -1872,11 +1962,29 @@ def build_management_report_blocks(report) -> list[dict]:
     # visualisasi per halaman" & bentuknya bervariasi (gantian bar/donat/susun), bukan halaman
     # teks terpisah. Section TANPA data kategori (chart:null, murni narasi kualitatif) tetap
     # jadi kartu teks di management_ai_narrative (lihat di bawah, setelah action items).
+    # BUG DIPERBAIKI (ditemukan lewat isolasi render+bisection langsung — bukan dugaan, sudah
+    # dikonfirmasi reproducible): "treemap" SENGAJA DIKELUARKAN dari rotasi khusus di sini.
+    # custom_topic (tile ini) bisa jatuh di BARIS KE-2+ grid dashboard (posisi bergantung
+    # urutan & jumlah tile lain, tidak selalu baris pertama) — pada kombinasi tertentu (baris
+    # pertama berisi caption panjang + tile treemap persis di kolom pertama baris kedua),
+    # WeasyPrint TERBUKTI gagal me-render SATU SEL itu sama sekali (hilang total, title dan
+    # semuanya, tanpa exception apa pun di sisi Python — root cause pastinya belum ditemukan
+    # walau sudah ditelusuri sampai ke tingkat menghapus/mengganti tiap elemen satu per satu).
+    # "treemap" TETAP dipakai aman di category_style/status_style (risk_heatmap SELALU jadi
+    # tile PERTAMA/baris pertama, & versi SOC-nya selalu 1 halaman penuh sendirian, keduanya
+    # TIDAK pernah berisiko jatuh di baris ke-2+ grid padat spt custom_topic).
     _custom_chart_styles = ["bar", "donut", "stacked"]
     _custom_chart_idx = 0
     dynamic_sections_all = [s for s in (ai_summary.get("sections") or []) if isinstance(s, dict)]
     narrative_items = []
-    for sec in dynamic_sections_all[1:]:
+    # BUG DIPERBAIKI (dilaporkan user, disertai perbandingan checklist Include Sections vs
+    # laporan jadi — topik order 0 hilang total): SEBELUMNYA section PERTAMA (order 0) selalu
+    # dilewati di sini dgn asumsi isinya "ringkasan eksekutif tingkat tinggi" yang sudah
+    # terwakili executive_summary bawaan — asumsi itu TIDAK SELALU benar (topik order 0 bisa
+    # genuinely spesifik, mis. "Overview of Production Performance" yang dicentang user tapi
+    # tidak pernah muncul sama sekali). Permintaan user JELAS: SEMUA topik yang dicentang HARUS
+    # masuk laporan, jadi section 0 SEKARANG ikut diproses sama seperti section lainnya.
+    for sec in dynamic_sections_all:
         sec_title = sanitize_text(coerce_narrative_text(sec.get("title")))
         sec_content = sanitize_text(coerce_narrative_text(sec.get("content")))
         if not sec_title or not sec_content:
@@ -1899,7 +2007,7 @@ def build_management_report_blocks(report) -> list[dict]:
                 "title": sec_title,
                 "labels": [sanitize_text(str(lbl)) for lbl in labels[:6]],
                 "values": [float(v) for v in values[:6]],
-                "caption": _shorten_to_caption(sec_content, max_sentences=1),
+                "caption": _hard_truncate(_shorten_to_caption(sec_content, max_sentences=1), 90),
             })
         else:
             narrative_items.append({"title": sec_title, "content": _shorten_to_caption(sec_content, max_sentences=3)})

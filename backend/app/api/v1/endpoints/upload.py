@@ -97,11 +97,17 @@ def count_threats(parsed_data: list) -> dict:
 def ping():
     return {"message": "upload module ready"}
 
-def _parse_uploaded_file_for_preview(file: UploadFile) -> list:
+def _parse_uploaded_file_for_preview(file: UploadFile) -> tuple:
     """Validasi ukuran & parse 1 berkas jadi list of dict — dipakai bareng oleh /detect-period
     dan /suggest-sections. Keduanya request HTTP terpisah (dipanggil BERSAMAAN oleh frontend,
     bukan salah satu menunggu yang lain), jadi berkas di-parse ulang di masing-masing, bukan
-    dicache lintas request — parsing sendiri cepat, yang lambat cuma pemanggilan AI-nya."""
+    dicache lintas request — parsing sendiri cepat, yang lambat cuma pemanggilan AI-nya.
+
+    Return (rows, period_hint) — `period_hint` (tuple start/end "YYYY-MM-DD", atau None) HANYA
+    terisi utk PDF yang tabelnya sendiri tidak punya kolom tanggal valid tapi ketemu pola
+    "From ... To ..." di teks bebas-nya (lihat PDFParser.detected_period_hint) — parser
+    lain (CSV/Excel) tidak punya atribut ini, aman diabaikan (getattr default None).
+    """
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     if file.size is not None and file.size > max_bytes:
         raise HTTPException(
@@ -111,7 +117,8 @@ def _parse_uploaded_file_for_preview(file: UploadFile) -> list:
     try:
         parser = ParserFactory.get_parser(file.filename)
         raw_parsed = parser.parse(file.file)
-        return sanitize_for_json(raw_parsed)
+        period_hint = getattr(parser, "detected_period_hint", None)
+        return sanitize_for_json(raw_parsed), period_hint
     finally:
         file.file.close()
 
@@ -135,10 +142,19 @@ def detect_period_from_file(
     Kalau data tidak punya kolom tanggal yang bisa dideteksi (contoh: cuma ada "bulan": "Januari"
     tanpa tahun), period_start & period_end dikembalikan null — di sini frontend harus fallback
     ke pengisian manual oleh user.
+
+    BUG DIPERBAIKI (dilaporkan user, PDF laporan traffic email — keterangan rentang tanggal
+    "From ... To ..." letaknya di LUAR tabel, jadi tabelnya sendiri tidak punya kolom tanggal
+    sama sekali): detect_period() dari isi tabel dicoba DULU seperti biasa; kalau itu gagal
+    (None, None) DAN parser-nya sempat menemukan pola "From ... To ..." di teks bebas PDF
+    (period_hint, lihat PDFParser.detected_period_hint), itu dipakai sbg fallback — supaya
+    file jenis ini juga bisa auto-terisi, bukan selalu minta diisi manual.
     """
     try:
-        parsed_data = _parse_uploaded_file_for_preview(file)
+        parsed_data, period_hint = _parse_uploaded_file_for_preview(file)
         period_start, period_end = detect_period(parsed_data)
+        if period_start is None and period_hint:
+            period_start, period_end = period_hint
         return {
             "period_start": period_start,
             "period_end": period_end,
@@ -173,7 +189,7 @@ def suggest_sections_from_file(
     setelah usulan ini kembali, itu di luar cakupan perbaikan ini (kasus tepi yang jarang).
     """
     try:
-        parsed_data = _parse_uploaded_file_for_preview(file)
+        parsed_data, _period_hint = _parse_uploaded_file_for_preview(file)
         columns = list(parsed_data[0].keys()) if parsed_data and len(parsed_data) > 0 else []
         suggestions = suggest_sections_for_file(columns=columns, sample_data=parsed_data, file_name=file.filename, language=language)
         return {

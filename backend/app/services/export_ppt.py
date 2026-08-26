@@ -31,11 +31,11 @@ from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
-from pptx.chart.data import CategoryChartData
+from pptx.chart.data import CategoryChartData, BubbleChartData
 from pptx.enum.chart import XL_CHART_TYPE
 
 from app.models.report import Report
-from app.services.report_render_logic import build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color
+from app.services.report_render_logic import build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style, resolve_theme_color, best_grid_cols, _hard_truncate
 
 # ============================================================================
 # Palet & font — persis sesuai brief, dipakai di SETIAP elemen (termasuk chart/tabel)
@@ -70,12 +70,18 @@ GOLD_BRONZE_MAIN = RGBColor(0x8A, 0x6A, 0x16)
 GOLD_BRONZE_BG = RGBColor(0x4A, 0x39, 0x08)
 GOLD_CREAM_LIGHT = RGBColor(0xF3, 0xE3, 0xAE)
 GOLD_CREAM_SOFT = RGBColor(0xFB, 0xF3, 0xDC)
+# PERMINTAAN USER ("bosan template segitu-gitu aja"): tema warna ke-5, lihat catatan lengkap
+# di export_pdf.py — nilai HEX PERSIS sama (0x0F6B64/0x0A3D39/0x35A398).
+TEAL_MAIN = RGBColor(0x0F, 0x6B, 0x64)
+TEAL_BG = RGBColor(0x0A, 0x3D, 0x39)
+TEAL_CHART = RGBColor(0x35, 0xA3, 0x98)
 
 THEME_PALETTES: dict[str, dict[str, RGBColor]] = {
     "green": {"main": GREEN_MAIN, "bg": GREEN_BG, "chart": GREEN_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
     "navy": {"main": NAVY_MAIN, "bg": NAVY_BG, "chart": NAVY_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
     "dark": {"main": DARK_MAIN, "bg": DARK_BG, "chart": DARK_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
     "gold": {"main": GOLD_BRONZE_MAIN, "bg": GOLD_BRONZE_BG, "chart": GOLD_MAIN, "light": GOLD_CREAM_LIGHT, "soft": GOLD_CREAM_SOFT},
+    "teal": {"main": TEAL_MAIN, "bg": TEAL_BG, "chart": TEAL_CHART, "light": GOLD_MAIN, "soft": GOLD_LIGHT},
 }
 
 SLIDE_W = Inches(13.33)
@@ -259,30 +265,13 @@ def add_footer(slide, page_num: int, total_pages: int):
 
 def add_logo(slide, logo_path, x=None, y=Inches(0.18), width=Inches(5.2), dark=False):
     """width digandakan lagi (PERMINTAAN USER — 2.6in -> 5.2in default, pemanggil cover/
-    penutup 3.5in -> 7.0in) drpd sebelumnya. `dark=True` (dioper pemanggil yang slide-nya
-    berlatar gelap, lihat add_dark_bg) menggambar "glow" oval putih lembut di belakang logo
-    — logo aslinya berwarna gelap/hitam (lihat frontend/public/LOGO_PETRO_DANANTARA.png),
-    tanpa treatment ini nyaris tak kelihatan di latar gelap. PERMINTAAN USER: SEBELUMNYA
-    kotak persegi (ROUNDED_RECTANGLE) solid putih — terlihat seperti stiker ditempel.
-    Diganti oval (tanpa sudut sama sekali, silhouette lebih lembut) berpadding lebih lapang
-    drpd sebelumnya, supaya terasa menyatu bukan kotak asing di atas latar gelap."""
+    penutup 3.5in -> 7.0in) drpd sebelumnya. `dark` sebelumnya menggambar chip/oval putih di
+    belakang logo di slide berlatar gelap, tapi PERMINTAAN USER: hasilnya terlihat aneh —
+    sekarang logo tampil polos tanpa background treatment apa pun, di latar apa saja."""
     if not logo_path:
         return
     x = x if x is not None else (SLIDE_W - width - Inches(0.35))
     try:
-        if dark:
-            pad = Inches(0.22)
-            # Rasio lebar:tinggi logo asli ~4.4:1 (lihat LOGO_PETRO_DANANTARA.png) — dipakai
-            # perkiraan tinggi gambar sblm add_picture (butuh ukuran chip SEBELUM gambar
-            # ditambahkan, python-pptx tidak expose intrinsic size sebelum add_picture jalan).
-            img_h = Emu(int(Emu(width) / 4.4))
-            chip = slide.shapes.add_shape(
-                MSO_SHAPE.OVAL, x - pad, y - pad, width + pad * 2, img_h + pad * 2,
-            )
-            chip.fill.solid()
-            chip.fill.fore_color.rgb = WHITE
-            chip.line.fill.background()
-            _no_shadow(chip)
         slide.shapes.add_picture(logo_path, x, y, width=width)
     except Exception:
         pass
@@ -1202,6 +1191,87 @@ def add_native_gauge(slide, x, y, cx, cy, value, max_value=100, label="", color=
     return gframe
 
 
+def add_native_bubble_chart(slide, x, y, cx, cy, points, color=None):
+    """PERMINTAAN USER (tambah jenis visualisasi baru): titik per entitas diposisikan
+    berdasar 2 angka ASLI berbeda sekaligus (jumlah kemunculan & rata-rata numerik, lihat
+    data_profiler._compute_category_numeric_pairs) - genuinely beda drpd chart lain di file
+    ini yang semuanya cuma 1 angka per kategori. python-pptx punya tipe chart BUBBLE native
+    (beda dari XY_SCATTER biasa - bubble menambah 1 dimensi lagi lewat ukuran titik), jadi
+    dipakai langsung, TIDAK perlu shape manual spt treemap di bawah."""
+    chart_data = BubbleChartData()
+    series = chart_data.add_series("Data")
+    for p in points:
+        series.add_data_point(p["count"], p["avg"], p["count"])
+    gframe = slide.shapes.add_chart(XL_CHART_TYPE.BUBBLE, x, y, cx, cy, chart_data)
+    chart = gframe.chart
+    chart.has_legend = False
+    chart.has_title = False
+    plot = chart.plots[0]
+    plot.has_data_labels = False
+    series_obj = plot.series[0]
+    series_obj.format.fill.solid()
+    series_obj.format.fill.fore_color.rgb = color or GREEN_MAIN
+    try:
+        chart.value_axis.has_major_gridlines = False
+        chart.value_axis.tick_labels.font.size = Pt(8)
+        chart.category_axis.has_major_gridlines = False
+        chart.category_axis.tick_labels.font.size = Pt(8)
+    except Exception:
+        pass
+    return gframe
+
+
+def add_treemap_shapes(slide, x, y, cx, cy, labels, values, colors=None, text_color=None):
+    """PERMINTAAN USER (tambah jenis visualisasi baru): proporsi banyak kategori sekaligus
+    lewat LUAS kotak. python-pptx TIDAK punya tipe chart treemap native (baru ada di Excel
+    2016+, belum diekspos python-pptx sama sekali) — didekati dgn shape RECTANGLE
+    diposisikan manual, algoritma "slice-and-dice" PERSIS SAMA dgn versi PDF (_treemap_svg di
+    export_pdf.py) supaya proporsinya identik di kedua format."""
+    ramp = colors or CATEGORY_COLOR_RAMP
+    total = sum(values) or 1
+    x_in, y_in, w_in, h_in = Emu(x).inches, Emu(y).inches, Emu(cx).inches, Emu(cy).inches
+    rects = []
+    cur_x, cur_y, cur_w, cur_h = x_in, y_in, w_in, h_in
+    horizontal = True
+    remaining_total = total
+    for label, val in zip(labels, values):
+        frac = (val / remaining_total) if remaining_total else 0
+        if horizontal:
+            seg_w = cur_w * frac
+            rects.append((cur_x, cur_y, seg_w, cur_h, label, val))
+            cur_x += seg_w
+            cur_w -= seg_w
+        else:
+            seg_h = cur_h * frac
+            rects.append((cur_x, cur_y, cur_w, seg_h, label, val))
+            cur_y += seg_h
+            cur_h -= seg_h
+        remaining_total -= val
+        horizontal = not horizontal
+    for i, (rx, ry, rw, rh, label, val) in enumerate(rects):
+        if rw < 0.05 or rh < 0.05:
+            continue
+        color = ramp[i % len(ramp)]
+        shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(rx), Inches(ry), Inches(rw), Inches(rh))
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = color
+        shape.line.color.rgb = WHITE
+        shape.line.width = Pt(1.5)
+        _no_shadow(shape)
+        if rw > 0.9 and rh > 0.5:
+            tf = shape.text_frame
+            tf.word_wrap = True
+            tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+            p1 = tf.paragraphs[0]
+            p1.text = str(label)
+            p1.alignment = PP_ALIGN.CENTER
+            _set_font(p1, BODY_FONT, Pt(9.5), bold=True, color=text_color or WHITE)
+            p2 = tf.add_paragraph()
+            p2.text = f"{val:g}"
+            p2.alignment = PP_ALIGN.CENTER
+            _set_font(p2, BODY_FONT, Pt(8.5), color=text_color or WHITE)
+
+
 def add_stacked_proportion_bar(slide, x, y, w, values, colors=None, height=Inches(0.5)):
     """Alternatif visual KETIGA (selain add_native_bar_chart/add_native_doughnut_chart) — satu
     batang penuh dibagi proporsional per kategori (gaya "100% stacked bar") — titik variasi
@@ -1852,7 +1922,13 @@ def _add_mini_legend(slide, x, y, w, categories, ramp, text_color=None):
         _no_shadow(sq)
         label_box = slide.shapes.add_textbox(x + swatch + Inches(0.08), row_y, w - swatch - Inches(0.08), row_h)
         lp = label_box.text_frame.paragraphs[0]
-        lp.text = str(cat)
+        # BUG DIPERBAIKI (rekan temuan sisi PDF, export_pdf.py::_mini_legend_html — nama
+        # kategori APA ADANYA dari data/AI bisa sangat panjang, mis. "Kalibrasi Alat Ukur
+        # Laboratorium"): di sini tiap baris legend punya tinggi TETAP (row_h=0.24in), label
+        # panjang yang wrap ke 2 baris akan visual overlap dgn baris legend berikutnya
+        # (posisi shape-nya sendiri tetap dlm batas slide, tapi teksnya tumpang tindih).
+        # Dibatasi keras scr karakter, sama seperti versi PDF.
+        lp.text = _hard_truncate(str(cat), 20)
         _set_font(lp, BODY_FONT, Pt(9), color=text_color)
 
 
@@ -2013,6 +2089,12 @@ def _draw_distribution_panel(slide, panel: dict, ctx: "_PptBlockContext", x, y, 
             bar_h_in = 0.4
             add_stacked_proportion_bar(slide, x, Inches(chart_top_in), w, vals, colors=colors, height=Inches(bar_h_in))
             visual_bottom_in = chart_top_in + bar_h_in
+        elif style == "treemap":
+            # PERMINTAAN USER (tambah jenis visualisasi baru): mirror export_pdf.py's
+            # category/status distribution treemap branch.
+            treemap_h_in = min(2.2, h_in - (chart_top_in - y_in) - 0.3)
+            add_treemap_shapes(slide, x, Inches(chart_top_in), w, Inches(treemap_h_in), cats, vals, colors=colors)
+            visual_bottom_in = chart_top_in + treemap_h_in
         else:
             chart_h_in = 1.8
             add_native_bar_chart(slide, x, Inches(chart_top_in), w, Inches(chart_h_in), list(reversed(cats)), list(reversed(vals)), horizontal=True, colors=[ctx.accent_bar_color])
@@ -2512,7 +2594,13 @@ def _build_management_visual_dashboard_slide(block: dict, ctx: _PptBlockContext)
     tiles = block.get("tiles", [])
     if not tiles:
         return slide
-    cols = 3 if len(tiles) >= 5 else 2
+    # PERMINTAAN USER: boleh tile-nya cuma sedikit, TAPI baris terakhir jangan menyisakan
+    # banyak ruang kosong — best_grid_cols() (report_render_logic.py) memilih kolom yang habis
+    # dibagi rata dulu (mis. 3 tile -> 3 kolom sekaligus, bukan 2 kolom yg sisa 1 slot kosong).
+    # Tinggi kartu (card_h_in di bawah) SUDAH otomatis meregang mengisi tinggi slide penuh
+    # berdasar jumlah baris — beda dgn versi PDF yang perlu pad_scale tambahan, di sini cukup
+    # kolom yang dibenahi.
+    cols = best_grid_cols(len(tiles))
     rows = math.ceil(len(tiles) / cols)
     gap_in = 0.25
     start_y_in = max(title_bottom + 0.25, 1.9)
@@ -2575,6 +2663,8 @@ def _build_management_visual_dashboard_slide(block: dict, ctx: _PptBlockContext)
             elif style == "funnel" and is_severity:
                 order = sorted(range(len(values)), key=lambda i: -values[i])
                 add_funnel_chart(slide, chart_x, chart_y, chart_w, chart_h, [labels[i] for i in order], [values[i] for i in order], color=ctx.accent_main)
+            elif style == "treemap":
+                add_treemap_shapes(slide, chart_x, chart_y, chart_w, chart_h, labels, values, colors=colors)
             else:
                 add_native_bar_chart(slide, chart_x, chart_y, chart_w, chart_h, labels, values, colors=colors, horizontal=True)
         elif kind == "kpi_radar":
@@ -2618,8 +2708,21 @@ def _build_management_visual_dashboard_slide(block: dict, ctx: _PptBlockContext)
                 bar_h = Inches(0.28)
                 add_stacked_proportion_bar(slide, chart_x, chart_y, chart_w, ct_values, colors=ct_colors, height=bar_h)
                 _add_mini_legend(slide, chart_x, chart_y + bar_h + Inches(0.08), chart_w, ct_labels, ct_colors)
+            elif ct_style == "treemap":
+                add_treemap_shapes(slide, chart_x, chart_y, chart_w, chart_h, ct_labels, ct_values, colors=ct_colors)
             else:
                 add_native_bar_chart(slide, chart_x, chart_y, chart_w, chart_h, ct_labels, ct_values, colors=ct_colors, horizontal=True)
+        elif kind == "kpi_gauge":
+            # PERMINTAAN USER (tambah jenis visualisasi baru): mirror export_pdf.py's _gauge_svg
+            # — add_native_gauge SUDAH ADA sebelumnya (dipakai key_findings), dipakai ulang di
+            # sini tanpa perlu bikin fungsi baru lagi.
+            gauge_side = min(Emu(chart_w).inches, Emu(chart_h).inches)
+            gauge_x = chart_x + Inches((Emu(chart_w).inches - gauge_side) / 2)
+            add_native_gauge(slide, gauge_x, chart_y, Inches(gauge_side), Inches(gauge_side * 0.75), tile["pct"], color=ctx.accent_main, theme=ctx.theme)
+        elif kind == "scatter_bubble":
+            # PERMINTAAN USER (tambah jenis visualisasi baru): mirror export_pdf.py's
+            # _scatter_bubble_svg — 2 angka BERBEDA per entitas via chart BUBBLE native.
+            add_native_bubble_chart(slide, chart_x, chart_y, chart_w, chart_h, tile["points"], color=ctx.accent_main)
 
         if tile.get("caption"):
             cap_box = slide.shapes.add_textbox(
@@ -2887,7 +2990,10 @@ class PPTXExporter:
             # dipakai ulang di sini (ambang 0.45, tepat di atas luminance "main" tema gold
             # bawaan ~0.42, tema PALING terang dari 4 tema tetap) supaya "main" kustom SELALU
             # cukup gelap dipakai bersama teks putih.
-            c = _light_safe(_hex_to_rgb(str(theme_key)), max_luminance=0.45)
+            # PERMINTAAN USER: ambang dinaikkan 0.45 -> 0.55 spy warna kustom sangat terang
+            # (mis. #ADF8FF) tidak digelapkan berlebihan — lihat catatan sama persis di
+            # export_pdf.py.
+            c = _light_safe(_hex_to_rgb(str(theme_key)), max_luminance=0.55)
             chart_shade = _blend_with_white(c, 0.6)
             light_shade = _blend_with_white(c, 0.3)
             soft_shade = _blend_with_white(c, 0.12)

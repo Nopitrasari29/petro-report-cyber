@@ -30,7 +30,7 @@ function AuthLeftPanel() {
         </div>
         <div className="flex flex-col leading-none">
           <span className="font-extrabold text-base">
-            {tx("AI Security Reports", "AI Security Reports")}
+            {tx("AI Report Generator", "AI Report Generator")}
           </span>
           <span className="text-[10px] text-white/70 font-semibold uppercase tracking-wider mt-0.5">
             {tx("PT Petrokimia Gresik", "PT Petrokimia Gresik")}
@@ -41,12 +41,12 @@ function AuthLeftPanel() {
       <div className="flex-1 flex flex-col justify-center gap-12 my-auto">
         <div className="space-y-4 text-left">
           <h1 className="text-3xl lg:text-4xl font-extrabold leading-tight text-white tracking-tight">
-            {tx("AI-Powered SOC Reporting", "AI-Powered SOC Reporting")}
+            {tx("AI-Powered Reporting", "AI-Powered Reporting")}
           </h1>
           <p className="text-sm lg:text-base text-white/80 leading-relaxed font-medium">
             {tx(
-              "Automate monthly SOC report generation with AI. Fast, accurate, and reliable.",
-              "Automate monthly SOC report generation with AI. Fast, accurate, and reliable.",
+              "Automate monthly report generation with AI. Fast, accurate, and reliable.",
+              "Automate monthly report generation with AI. Fast, accurate, and reliable.",
             )}
           </p>
         </div>

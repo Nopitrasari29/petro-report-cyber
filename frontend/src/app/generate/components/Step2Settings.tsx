@@ -779,44 +779,6 @@ export default function Step2Settings({
                               </button>
                             )}
 
-                            {/* Hex Monospace Input */}
-                            <div className="relative flex-1">
-                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 font-mono text-xs font-bold pointer-events-none">
-                                #
-                              </span>
-                              <input
-                                type="text"
-                                value={customHex.replace(/^#/, "")}
-                                maxLength={6}
-                                placeholder="004D25"
-                                onChange={(e) => {
-                                  const raw = e.target.value.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
-                                  const val = `#${raw}`;
-                                  setCustomHex(val);
-                                  if (raw.length === 6) {
-                                    setThemeColor && setThemeColor(val);
-                                    const [r, g, b] = hexToRgb(val);
-                                    setHsv(rgbToHsv(r, g, b));
-                                  }
-                                }}
-                                className="w-full bg-white border border-stone-200 rounded-xl pl-7 pr-3 py-2 text-xs font-mono font-extrabold text-stone-850 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green uppercase tracking-wider shadow-2xs"
-                              />
-                            </div>
-
-                            {/* Done Button */}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const formatted = customHex.startsWith("#") ? customHex : `#${customHex}`;
-                                if (/^#[0-9A-Fa-f]{6}$/.test(formatted)) {
-                                  setThemeColor && setThemeColor(formatted.toUpperCase());
-                                }
-                                setShowColorPicker(false);
-                              }}
-                              className="px-3.5 py-2 bg-stone-900 hover:bg-black text-white text-xs font-extrabold rounded-xl transition-colors shadow-xs cursor-pointer shrink-0"
-                            >
-                              OK
-                            </button>
                           </div>
                         </div>
                       </div>,
@@ -892,16 +854,57 @@ export default function Step2Settings({
                           />
                         </div>
 
-                        {/* Preview + Hex */}
+                        {/* Preview + Hex — PERMINTAAN USER: kode hex cuma muncul di SATU
+                            tempat (di sini, popup color wheel), bukan dobel dgn kotak di
+                            panel utama. Input inilah satu-satunya tempat ketik manual;
+                            customHex dipakai sbg buffer teks (sama seperti input lama)
+                            supaya ketikan parsial tidak langsung ketiban ulang oleh wheelHex
+                            sebelum genap 6 digit valid. */}
                         <div className="flex items-center gap-2.5 mt-3.5">
                           <span
                             className="w-8.5 h-8.5 rounded-full border-2 border-white shrink-0"
                             style={{ backgroundColor: wheelHex, boxShadow: "0 0 0 1px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.08)" }}
                           />
-                          <span className="font-mono text-[15px] font-extrabold text-stone-900 tracking-wide">
-                            <span className="text-stone-400 font-bold">#</span>
-                            {wheelHex.replace(/^#/, "")}
-                          </span>
+                          <div className="relative flex-1">
+                            <span className="absolute left-0 top-1/2 -translate-y-1/2 text-stone-400 font-mono text-[15px] font-bold pointer-events-none">
+                              #
+                            </span>
+                            <input
+                              type="text"
+                              value={customHex.replace(/^#/, "")}
+                              maxLength={6}
+                              onChange={(e) => {
+                                // PERMINTAAN USER: warna langsung berubah tiap ketik satu
+                                // karakter, tidak perlu tunggu genap 6 digit / Enter. Digit
+                                // yang belum diketik di-"isi sementara" dgn 0 di kanan cuma
+                                // utk keperluan preview warna — teks yang tampil di kotak
+                                // tetap persis apa yang diketik (raw), bukan versi di-pad.
+                                const raw = e.target.value.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+                                const val = `#${raw}`;
+                                setCustomHex(val);
+                                if (raw.length > 0) {
+                                  const padded = raw.padEnd(6, "0");
+                                  setThemeColor && setThemeColor(`#${padded}`);
+                                  const [r, g, b] = hexToRgb(`#${padded}`);
+                                  setHsv(rgbToHsv(r, g, b));
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                // PERMINTAAN USER: tekan Enter = warna itu yang dipakai,
+                                // selesai ngetik, DAN popup color wheel ini langsung
+                                // ketutup — bukan cuma blur input-nya doang.
+                                if (e.key !== "Enter") return;
+                                e.preventDefault();
+                                const raw = customHex.replace(/^#/, "");
+                                if (raw.length > 0) {
+                                  setCustomHex(`#${raw.padEnd(6, "0")}`);
+                                }
+                                e.currentTarget.blur();
+                                setShowColorWheel(false);
+                              }}
+                              className="w-full bg-transparent pl-3.5 font-mono text-[15px] font-extrabold text-stone-900 tracking-wide focus:outline-none"
+                            />
+                          </div>
                         </div>
 
                         {/* RGB Fields */}

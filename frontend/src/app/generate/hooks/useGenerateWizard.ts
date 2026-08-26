@@ -94,7 +94,7 @@ export function useGenerateWizard() {
   // tersimpan".
   const [templateType, setTemplateType] = useState("SOC Executive Summary");
   const [outputFormat, setOutputFormat] = useState("PDF");
-  const [language, setLanguage] = useState("English");
+  const [language, setLanguage] = useState("Indonesian");
 
   // Sinkronisasi default bahasa laporan dari preferensi personal user (/settings/profile).
   // Bukan lagi dari pengaturan global (/settings/), karena field "language" sudah dipindah

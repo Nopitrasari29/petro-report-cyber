@@ -444,20 +444,12 @@ def suggest_sections_for_file(
             logger.warning(f"Jalur AI gagal, fallback ke preset heuristik: {e}")
             ai_sections = None
 
-    # PERMINTAAN USER: batas 6 section custom SUDAH diminta lewat prompt di atas
-    # (SECTION_SUGGESTION_SYSTEM_PROMPT), tapi tetap dipagari lagi di sini (bukan cuma
-    # percaya instruksi) — supaya checklist yang dilihat & dicentang user TIDAK PERNAH
-    # menjanjikan lebih banyak drpd yang genuinely bisa ditulis lengkap oleh AI saat laporan
-    # sungguhan dibuat nanti (akar masalah nyata yang dilaporkan user: user centang N section,
-    # yang benar2 ditulis cuma sebagian, krn permintaan generation kelebihan beban). Yang
-    # "recommended" diprioritaskan dipertahankan drpd yang tidak, urutan asli tetap dijaga.
-    if ai_sections and len(ai_sections) > 6:
-        ai_sections = sorted(
-            enumerate(ai_sections),
-            key=lambda pair: (0 if pair[1].get("recommended") else 1, pair[0]),
-        )[:6]
-        ai_sections = [s for _, s in sorted(ai_sections, key=lambda pair: pair[0])]
-
+    # PERMINTAAN USER: batas 6 section custom (dulu dipagari di sini + di prompt) DIHAPUS —
+    # akar masalah aslinya (generation gagal kalau AI diminta menulis kebanyakan section
+    # SEKALIGUS dalam satu panggilan) sekarang diperbaiki di analysis_runner.py (naskah tiap
+    # section ditulis lewat beberapa panggilan AI kecil berkelompok, bukan satu panggilan
+    # raksasa), jadi checklist ini boleh menawarkan sebanyak topik yang genuinely relevan
+    # tanpa perlu dipotong demi menjaga reliabilitas generation.
     if ai_sections:
         # Section bebas tulisan AI + section bawaan (grafik/tabel visual) yang datanya
         # mendukung — digabung jadi SATU daftar ceklis di wizard (lihat _detect_fixed_sections).

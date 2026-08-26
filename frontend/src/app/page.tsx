@@ -74,7 +74,7 @@ export default function LandingPage() {
           {/* Garis vertikal pembatas tipis */}
           <div className="h-10 w-[1px] bg-white/20 shrink-0 hidden sm:block" />
           <div className="flex flex-col text-left leading-none">
-            <span className="font-extrabold text-sm text-white tracking-wide uppercase">{tx("AI Security Reports", "AI Security Reports")}</span>
+            <span className="font-extrabold text-sm text-white tracking-wide uppercase">{tx("AI Report Generator", "AI Report Generator")}</span>
             <span className="text-[9px] text-petro-yellow font-bold uppercase tracking-widest mt-1.5">{tx("PT Petrokimia Gresik", "PT Petrokimia Gresik")}</span>
           </div>
         </Link>
@@ -144,7 +144,7 @@ export default function LandingPage() {
               <img src="/LOGO_PETRO_DANANTARA.png" alt="Petrokimia Danantara Logo" className="h-9 lg:h-10 w-auto object-contain shrink-0" />
             </div>
             <div className="flex flex-col text-left leading-none">
-              <span className="font-extrabold text-sm text-white tracking-wide">{tx("AI Security Reports", "AI Security Reports")}</span>
+              <span className="font-extrabold text-sm text-white tracking-wide">{tx("AI Report Generator", "AI Report Generator")}</span>
               <span className="text-[9px] text-white/60 font-semibold tracking-wider mt-0.5">{tx("PT Petrokimia Gresik", "PT Petrokimia Gresik")}</span>
             </div>
           </div>

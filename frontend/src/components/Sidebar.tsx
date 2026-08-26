@@ -116,7 +116,7 @@ export default function Sidebar() {
         </div>
         <div className="flex flex-col text-left leading-none">
           <span className="font-extrabold text-sm tracking-tight text-white leading-snug">
-            {tx("AI Security Reports", "AI Security Reports")}
+            {tx("AI Report Generator", "AI Report Generator")}
           </span>
           <span className="text-[9px] text-white/60 font-semibold tracking-widest uppercase mt-0.5">
             PT Petrokimia Gresik

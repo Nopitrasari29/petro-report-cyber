@@ -1,7 +1,28 @@
-from typing import Any, BinaryIO, Dict, List, Optional, cast
+import re
+from typing import Any, BinaryIO, Dict, List, Optional, Tuple, cast
 import numpy as np
 import pandas as pd
 from app.services.parser.base import BaseParser
+from app.services.period_detector import find_date_column, _parse_dates
+
+# Dipakai _row_looks_like_data() — cocok untuk angka polos ("594"), desimal ("3.5"/"3,5"),
+# dan persentase ("42%"). Sengaja SEDERHANA (bukan validasi angka penuh) karena cuma dipakai
+# sbg heuristik "baris ini lebih mirip data atau header", bukan sumber kebenaran kritis.
+_NUMERIC_CELL_RE = re.compile(r"^-?\d+([.,]\d+)?%?$")
+
+# Dipakai _extract_period_hint() — token tanggal ISO ("2026-07-13") ATAU D/M/Y umum
+# ("13/07/2026"), keduanya boleh diikuti jam opsional. Dicocokkan dlm pola "From ... To ..."
+# (case-insensitive, boleh beda baris — lihat DOTALL) yang UMUM dipakai laporan
+# traffic/log security (mis. email gateway) sbg keterangan rentang waktu laporan, letaknya
+# TERPISAH dari tabel datanya sendiri (makanya tidak pernah ikut kebaca sbg kolom tabel).
+_DATE_TOKEN = (
+    r"\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?"
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?"
+)
+_PERIOD_TEXT_RE = re.compile(
+    r"from\s*[:\-]?\s*(?P<start>" + _DATE_TOKEN + r")\b.{0,80}?\bto\s*[:\-]?\s*(?P<end>" + _DATE_TOKEN + r")\b",
+    re.IGNORECASE | re.DOTALL,
+)
 
 try:
     import pdfplumber
@@ -33,7 +54,44 @@ class PDFParser(BaseParser):
     tren nilai yang sesungguhnya. Kolom persentase (mis. "42%") sengaja TETAP string karena
     simbol "%"-nya bikin parse angka gagal — sama seperti pandas juga tidak otomatis
     menghilangkan "%" dari kolom CSV/Excel bertipe teks.
-    """
+
+    `detected_period_hint` (diisi SETELAH parse() dipanggil, opsional dibaca pemanggil yang
+    butuh — lihat upload.py::_parse_uploaded_file_for_preview) — BUG DIPERBAIKI (dilaporkan
+    user, laporan traffic email PDF-nya PUNYA keterangan rentang tanggal "From ... To ..."
+    tapi teks itu di LUAR tabel, jadi period_start/period_end laporan tidak pernah otomatis
+    terisi dari file spt ini, harus diisi manual terus). Diisi HANYA kalau (1) tabel yang
+    berhasil diekstrak SAMA SEKALI tidak punya kolom tanggal yang genuinely valid, DAN (2)
+    ditemukan pola "From <tanggal> ... To <tanggal>" di teks bebas PDF-nya (lihat
+    _extract_period_hint) — supaya /detect-period tetap bisa mengisi Report Period otomatis
+    utk jenis file ini juga, bukan selalu kosong."""
+
+    detected_period_hint: Optional[Tuple[str, str]] = None
+
+    @staticmethod
+    def _extract_period_hint(full_text: str) -> Optional[Tuple[str, str]]:
+        match = _PERIOD_TEXT_RE.search(full_text or "")
+        if not match:
+            return None
+        start_parsed = _parse_dates([match.group("start")]).iloc[0]
+        end_parsed = _parse_dates([match.group("end")]).iloc[0]
+        if pd.isna(start_parsed) or pd.isna(end_parsed):
+            return None
+        return start_parsed.strftime("%Y-%m-%d"), end_parsed.strftime("%Y-%m-%d")
+
+    @staticmethod
+    def _row_looks_like_data(cells: List[str]) -> bool:
+        """Heuristik "baris ini lebih mirip DATA atau HEADER" — dipakai KHUSUS saat baris
+        pertama sebuah tabel (hasil find_tables()) TERNYATA bukan header genuine, melainkan
+        lanjutan data dari tabel sebelumnya yang terpotong ke halaman baru TANPA header
+        berulang (beda dari kasus umum yang SUDAH ditangani, header berulang persis). Header
+        asli hampir selalu berisi label teks; baris data mayoritas berisi angka polos. Kalau
+        LEBIH DARI SETENGAH sel non-kosong terlihat seperti angka, baris ini dianggap data,
+        BUKAN header baru."""
+        non_empty = [c for c in cells if c]
+        if not non_empty:
+            return False
+        numeric_like = sum(1 for c in non_empty if _NUMERIC_CELL_RE.match(c))
+        return numeric_like > len(non_empty) / 2
 
     @staticmethod
     def _coerce_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -123,7 +181,6 @@ class PDFParser(BaseParser):
             )
 
         file_content.seek(0)
-        header: Optional[List[str]] = None
         rows: List[Dict[str, Any]] = []
 
         def _clean_cell(c: Any) -> str:
@@ -131,20 +188,92 @@ class PDFParser(BaseParser):
 
         try:
             with pdfplumber.open(cast(Any, file_content)) as pdf:
+                # BUG DIPERBAIKI (dilaporkan user, PDF laporan traffic email berisi 2 tabel
+                # SEKALIGUS dgn struktur kolom BERBEDA — "Outbound Traffic" & "Inbound
+                # Traffic"): versi lama menggabungkan SEMUA tabel di file pakai HEADER TABEL
+                # PERTAMA yang ditemukan (extract_tables() dirata begitu saja) — tabel kedua
+                # (kolom beda, mis. "Blocked: Bad Recipient" bukan "Blocked: Policy") ikut
+                # "dipaksa" masuk ke kolom tabel pertama scr POSISI, datanya nyasar total
+                # (dibuktikan lewat reproduksi: nilai "Total Received" tabel kedua malah
+                # tersimpan sbg "Redirected"). Sekarang tiap tabel dibaca via find_tables()
+                # (bukan extract_tables()) supaya BATAS tiap tabel & posisinya di halaman
+                # (bbox) diketahui — struktur kolom yang BERBEDA dikenali sbg "grup" terpisah
+                # (dicocokkan by HEADER PERSIS SAMA, bukan cuma tabel pertama), grup dgn
+                # header identik (kasus umum: tabel yang sama diekspor lebih dari 1 halaman)
+                # tetap digabung seperti sebelumnya.
+                groups: List[Dict[str, Any]] = []
+                header_key_to_group: Dict[Tuple[str, ...], int] = {}
+
                 for page in pdf.pages:
-                    for table in page.extract_tables():
-                        for raw_row in table:
-                            if not any(_clean_cell(cell) for cell in raw_row):
-                                continue  # baris kosong total, lewati
+                    text_lines_cache: Optional[list] = None
 
-                            if header is None:
-                                header = [
-                                    (_clean_cell(cell) or f"column_{i + 1}")
-                                    for i, cell in enumerate(raw_row)
+                    def _nearest_heading_above(top_y: float) -> Optional[str]:
+                        # Cari baris teks TEPAT DI ATAS tabel (jarak <=45pt) — pola umum
+                        # laporan yang tiap tabelnya dikasih judul (mis. "Outbound Traffic")
+                        # persis sebelum tabelnya sendiri. Dipakai SEBAGAI LABEL kolom
+                        # "Section" kalau ternyata file ini punya >1 struktur tabel berbeda.
+                        nonlocal text_lines_cache
+                        if text_lines_cache is None:
+                            text_lines_cache = page.extract_text_lines()
+                        best_line, best_gap = None, None
+                        for line in text_lines_cache:
+                            gap = top_y - line["bottom"]
+                            if 0 <= gap <= 45 and (best_gap is None or gap < best_gap):
+                                best_gap, best_line = gap, line["text"].strip()
+                        return best_line or None
+
+                    try:
+                        found_tables = page.find_tables()
+                    except Exception:
+                        found_tables = []
+
+                    for table_obj in found_tables:
+                        try:
+                            raw_rows = table_obj.extract()
+                        except Exception:
+                            raw_rows = []
+                        if not raw_rows:
+                            continue
+
+                        header_row_cells = [_clean_cell(c) for c in raw_rows[0]]
+                        if not any(header_row_cells):
+                            continue
+
+                        # Baris pertama tabel ini TERLIHAT SEPERTI DATA (mayoritas angka),
+                        # bukan header baru genuine — kemungkinan besar lanjutan tabel
+                        # sebelumnya yang terpotong ke halaman baru TANPA header berulang.
+                        # Gabung ke grup TERAKHIR (kalau jumlah kolomnya cocok) & JANGAN buang
+                        # baris pertamanya (itu data sungguhan, bukan header).
+                        group_idx: Optional[int] = None
+                        data_start = 1
+                        if groups and self._row_looks_like_data(header_row_cells):
+                            last_idx = len(groups) - 1
+                            if len(header_row_cells) == len(groups[last_idx]["header"]):
+                                group_idx, data_start = last_idx, 0
+
+                        if group_idx is None:
+                            header_key = tuple(header_row_cells)
+                            if header_key in header_key_to_group:
+                                group_idx = header_key_to_group[header_key]
+                            else:
+                                this_header = [
+                                    (c or f"column_{i + 1}") for i, c in enumerate(header_row_cells)
                                 ]
-                                continue
+                                # Label dicari utk SEMUA grup termasuk yang pertama (bukan
+                                # cuma grup ke-2+) — waktu grup pertama diproses, belum tentu
+                                # ketahuan bakal ada grup lain menyusul, jadi labelnya tetap
+                                # disiapkan dari awal (baru DIPAKAI belakangan kalau ternyata
+                                # len(groups) > 1, lihat di bawah).
+                                section_label = _nearest_heading_above(table_obj.bbox[1])
+                                groups.append({"header": this_header, "rows": [], "section_label": section_label})
+                                group_idx = len(groups) - 1
+                                header_key_to_group[header_key] = group_idx
 
-                            normalized_row = [_clean_cell(cell) for cell in raw_row]
+                        header = groups[group_idx]["header"]
+                        for raw_row in raw_rows[data_start:]:
+                            if not any(_clean_cell(c) for c in raw_row):
+                                continue  # baris kosong total, lewati
+                            normalized_row = [_clean_cell(c) for c in raw_row]
                             if normalized_row == header:
                                 continue  # header yang berulang di halaman/tabel berikutnya
 
@@ -152,7 +281,22 @@ class PDFParser(BaseParser):
                             for col_idx, col_name in enumerate(header):
                                 value = raw_row[col_idx] if col_idx < len(raw_row) else None
                                 row_dict[col_name] = value.strip() if isinstance(value, str) else value
-                            rows.append(row_dict)
+                            groups[group_idx]["rows"].append(row_dict)
+
+                if len(groups) == 1:
+                    rows = groups[0]["rows"]
+                elif len(groups) > 1:
+                    # >1 struktur tabel berbeda genuinely ditemukan — gabung jadi 1 dataset,
+                    # ditandai kolom "Section" (isinya judul tabel masing2, mis. "Outbound
+                    # Traffic"/"Inbound Traffic") supaya (1) kolom yang beda antar tabel TIDAK
+                    # tercampur/nyasar (baris dari tabel lain otomatis None utk kolom yang
+                    # bukan miliknya, ditangani pd.DataFrame di bawah), (2) "Section" ini bisa
+                    # langsung dipakai analisis/chart sbg kategori pembanding (mis. grafik
+                    # inbound vs outbound per jam).
+                    for g in groups:
+                        label = g["section_label"] or "Table"
+                        for row_dict in g["rows"]:
+                            rows.append({"Section": label, **row_dict})
 
                 # Metode utama (strategi garis) sama sekali tidak menemukan tabel — biasanya
                 # PDF tabel BORDERLESS (tanpa garis vektor sungguhan, cuma teks berkolom rapi).
@@ -195,6 +339,24 @@ class PDFParser(BaseParser):
                             rows = []
                     else:
                         rows = []
+
+                # Fallback deteksi periode dari teks BEBAS (di luar tabel) — HANYA kalau tabel
+                # yang berhasil diekstrak SAMA SEKALI tidak punya kolom tanggal yang valid
+                # (lihat docstring detected_period_hint di atas). Dicek pakai find_date_column
+                # yang SAMA PERSIS dipakai detect_period() supaya kriteria "valid"-nya
+                # konsisten (termasuk penolakan kolom jam polos spt "Hour").
+                self.detected_period_hint = None
+                if rows:
+                    try:
+                        existing_date_col, _ = find_date_column(rows)
+                    except Exception:
+                        existing_date_col = None
+                    if existing_date_col is None:
+                        try:
+                            full_text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+                            self.detected_period_hint = self._extract_period_hint(full_text)
+                        except Exception:
+                            self.detected_period_hint = None
 
         except ValueError:
             raise

@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AI Security Reports | PT Petrokimia Gresik",
-  description: "Automated Monthly SOC Reporting System for IT Infrastructure Division of PT Petrokimia Gresik",
+  title: "AI Report Generator | PT Petrokimia Gresik",
+  description: "Automated Monthly Report Generation System for PT Petrokimia Gresik",
 };
 
 export default function RootLayout({

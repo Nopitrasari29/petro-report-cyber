@@ -10,6 +10,8 @@ from app.services.ai_engine.prompts import (
     get_analysis_prompt,
     SECTION_SUGGESTION_SYSTEM_PROMPT,
     get_section_suggestion_prompt,
+    SECTIONS_BATCH_SYSTEM_PROMPT,
+    get_sections_batch_prompt,
 )
 from app.services.ai_engine.data_profiler import (
     compute_statistics,
@@ -626,6 +628,196 @@ class OllamaClient:
             logger.warning(f"[SECTION SUGGESTER] Gagal mendapatkan usulan section dari AI: {e}")
             return None
 
+    def _compute_stats_and_schema(self, parsed_data: list, data_type: str, language: str | None = None):
+        """Precompute statistik & schema dari SELURUH data via pandas — dipakai BERSAMA oleh
+        analyze_security_data() (6 field wajib) dan generate_sections_for_topics() (batch
+        "sections") supaya keduanya menganalisis angka yang PERSIS sama, dihitung sekali per
+        pemanggil (bukan diduplikasi)."""
+        stats = compute_statistics(parsed_data, data_type)
+        stats_text = format_statistics_as_text(stats, language=language)
+        schema = compute_schema_summary(parsed_data)
+        schema_text = format_schema_as_text(schema)
+        return stats, stats_text, schema_text
+
+    def _attempt_sections_batch(
+        self,
+        batch: list[dict],
+        stats_text: str,
+        schema_text: str,
+        total_records,
+        data_type: str,
+        domain_type: str | None,
+        language: str | None,
+        tone: str | None,
+        default_level: str | None,
+        is_cancelled=None,
+    ) -> list[dict]:
+        """SATU kali panggilan AI utk SATU batch topik — TANPA retry sendiri (retry & fallback
+        per-topik dilakukan pemanggil, lihat generate_sections_for_topics). Return list kosong
+        kalau respons AI gagal diparse/kosong/tidak ada topik yang cocok — TIDAK raise, supaya
+        pemanggil bisa memutuskan langkah berikutnya (retry/fallback individual) dgn seragam."""
+        prompt = get_sections_batch_prompt(
+            data_type=data_type,
+            stats_text=stats_text,
+            schema_text=schema_text,
+            total_records=total_records,
+            domain_type=domain_type,
+            sections_batch=batch,
+            language=language,
+            tone=tone,
+            default_level=default_level,
+        )
+        if is_cancelled and is_cancelled():
+            raise GenerationCancelled()
+        try:
+            raw = self.generate(
+                prompt, system_prompt=SECTIONS_BATCH_SYSTEM_PROMPT, json_mode=True,
+                is_cancelled=is_cancelled,
+            )
+        except GenerationCancelled:
+            raise
+        except Exception as e:
+            logger.warning(f"[SECTIONS BATCH] panggilan AI gagal: {e}")
+            return []
+
+        text = raw.strip()
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.MULTILINE)
+        text = re.sub(r"\n?```\s*$", "", text, flags=re.MULTILINE).strip()
+
+        try:
+            parsed_json = json.loads(text)
+        except json.JSONDecodeError:
+            parsed_json = None
+
+        batch_sections = None
+        if isinstance(parsed_json, dict):
+            batch_sections = parsed_json.get("sections")
+        elif isinstance(parsed_json, list):
+            batch_sections = parsed_json
+
+        if not isinstance(batch_sections, list):
+            keyed_match = re.search(r'"sections"\s*:\s*(\[.*\])', text, re.DOTALL)
+            array_text = keyed_match.group(1) if keyed_match else None
+            if not array_text:
+                bare_match = re.search(r"\[.*\]", text, re.DOTALL)
+                array_text = bare_match.group(0) if bare_match else None
+            if array_text:
+                try:
+                    batch_sections = json.loads(array_text)
+                except json.JSONDecodeError:
+                    batch_sections = None
+
+        if not isinstance(batch_sections, list) or not batch_sections:
+            logger.warning("[SECTIONS BATCH] respons kosong/tidak dapat diparse")
+            return []
+
+        # Cocokkan balik ke topik yang BENAR2 diminta di batch ini via "id" (defensif kalau
+        # model keliru urutan/jumlah) — id asing di luar batch ini diabaikan.
+        by_id = {
+            str(item.get("id") or "").strip(): item
+            for item in batch_sections if isinstance(item, dict)
+        }
+        matched = []
+        for s in batch:
+            sid = str(s.get("key") or s.get("id") or "")
+            item = by_id.get(sid)
+            if not item:
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            chart = item.get("chart") if isinstance(item.get("chart"), dict) else None
+            matched.append({"id": sid, "title": s.get("title") or item.get("title") or "", "content": content, "chart": chart})
+        return matched
+
+    def generate_sections_for_topics(
+        self,
+        data_type: str,
+        parsed_data: list,
+        selected_sections: list[dict],
+        language: str | None = None,
+        domain_type: str | None = None,
+        tone: str | None = None,
+        default_level: str | None = None,
+        batch_size: int = 4,
+        is_cancelled=None,
+    ) -> list[dict]:
+        """
+        Tuliskan naskah "sections" (topik custom yang dicentang user di Include Sections) lewat
+        BEBERAPA panggilan AI KECIL berkelompok — TERPISAH dari analyze_security_data() (yang
+        sekarang HANYA menulis 6 field wajib, tidak lagi dibebani "sections" sama sekali).
+
+        PERMINTAAN USER (akar masalah asli sesi ini, ditelusuri sampai database — 71 laporan
+        berturut-turut 0% section custom berhasil ditulis): dulu SEMUA topik dicentang diminta
+        ditulis SEKALIGUS bersamaan dgn 6 field wajib dalam 1 panggilan — model lokal kewalahan
+        begitu jumlahnya banyak. Perbaikan pertama (dibatasi 6 topik) DITOLAK user — instruksi
+        eksplisitnya: "jangan diusahakan, tapi HARUS" semua topik yang dicentang masuk, berapa
+        pun jumlahnya. Jadi di sini bukan cuma "coba sebisanya" — ada 2 LAPIS jaring pengaman:
+        (1) tiap KELOMPOK `batch_size` topik dicoba s.d. 2x, (2) topik mana pun yang MASIH belum
+        berhasil setelah itu (baik krn kelompoknya gagal total, atau cuma sebagian topik di
+        kelompok itu yang keisi) dicoba ULANG SATU-SATU (batch berisi 1 topik saja — permintaan
+        SERINGAN mungkin ke AI, paling kecil kemungkinan gagalnya) s.d. 2x lagi PER topik.
+        Praktiknya: satu topik baru benar2 dianggap gagal kalau sudah dicoba s.d. 4x (2x
+        berkelompok + 2x sendirian) dan AI tetap tidak bisa menjawabnya — sesuatu yang jauh
+        lebih jarang terjadi drpd kegagalan krn KEBANYAKAN topik diminta sekaligus (akar masalah
+        asli yang sudah diperbaiki di sini). Konsekuensi jumlah topik banyak HANYA di waktu
+        proses (lebih banyak batch/panggilan AI), bukan lagi di keandalan.
+        """
+        if not selected_sections or not parsed_data:
+            return []
+        if not self.is_available():
+            return []
+
+        stats, stats_text, schema_text = self._compute_stats_and_schema(parsed_data, data_type, language)
+        total_records = stats.get("total_records")
+
+        def _try(batch: list[dict]) -> list[dict]:
+            return self._attempt_sections_batch(
+                batch, stats_text, schema_text, total_records, data_type, domain_type,
+                language, tone, default_level, is_cancelled,
+            )
+
+        results: list[dict] = []
+        for batch_start in range(0, len(selected_sections), batch_size):
+            batch = selected_sections[batch_start:batch_start + batch_size]
+            matched: list[dict] = []
+            for attempt in range(2):
+                matched = _try(batch)
+                if len(matched) == len(batch):
+                    break
+                logger.warning(
+                    f"[SECTIONS BATCH] kelompok {[s.get('key') or s.get('id') for s in batch]} "
+                    f"attempt {attempt + 1}/2: {len(matched)}/{len(batch)} topik terisi."
+                )
+            results.extend(matched)
+
+            # LAPIS KEDUA (permintaan user — semua topik HARUS masuk, bukan sekadar diusahakan):
+            # topik yang MASIH belum berhasil setelah kelompoknya dicoba 2x, dicoba ULANG
+            # SATU-SATU (permintaan paling ringan yang mungkin ke AI) sebelum benar2 dianggap
+            # gagal.
+            matched_ids = {m["id"] for m in matched}
+            still_missing = [s for s in batch if str(s.get("key") or s.get("id") or "") not in matched_ids]
+            for s in still_missing:
+                solo_matched: list[dict] = []
+                for attempt in range(2):
+                    solo_matched = _try([s])
+                    if solo_matched:
+                        break
+                    logger.warning(
+                        f"[SECTIONS BATCH] topik tunggal '{s.get('title')}' "
+                        f"attempt {attempt + 1}/2 gagal."
+                    )
+                if solo_matched:
+                    results.extend(solo_matched)
+                else:
+                    logger.error(
+                        f"[SECTIONS BATCH] topik '{s.get('title')}' GAGAL TOTAL setelah "
+                        f"2x berkelompok + 2x sendirian — dilewati."
+                    )
+
+        return results
+
     def analyze_security_data(
         self,
         data_type: str,
@@ -678,10 +870,7 @@ class OllamaClient:
 
         # Precompute statistik & schema dari SELURUH data (bukan sampel) via pandas — deterministik,
         # selalu benar. Model tinggal MENARASIKAN angka ini, bukan menghitung sendiri dari data mentah.
-        stats = compute_statistics(parsed_data, data_type)
-        stats_text = format_statistics_as_text(stats, language=language)
-        schema = compute_schema_summary(parsed_data)
-        schema_text = format_schema_as_text(schema)
+        stats, stats_text, schema_text = self._compute_stats_and_schema(parsed_data, data_type, language)
 
         # RCA nyata (bukan dugaan — dikonfirmasi dari laporan produksi): mengirim contoh BARIS
         # mentah (walau cuma 15 baris) membuat qwen3:8b kadang menarasikan key_findings/

@@ -105,7 +105,7 @@ export default function UserGuideModal({ isOpen, onClose, tx }: UserGuideModalPr
                 {tx("User Guide", "Panduan Pengguna")}
               </h2>
               <p className="text-white/70 text-[10px] font-semibold mt-0.5">
-                AI Security Reports — PT Petrokimia Gresik
+                AI Report Generator — PT Petrokimia Gresik
               </p>
             </div>
           </div>
@@ -123,8 +123,8 @@ export default function UserGuideModal({ isOpen, onClose, tx }: UserGuideModalPr
         <div className="px-6 py-5 max-h-[55vh] overflow-y-auto">
           <p className="text-xs text-stone-500 font-semibold mb-4 leading-relaxed">
             {tx(
-              "Panduan singkat penggunaan sistem AI Security Reports untuk menghasilkan laporan keamanan siber secara otomatis.",
-              "Quick guide for using the AI Security Reports system to generate cybersecurity reports automatically."
+              "Panduan singkat penggunaan sistem AI Report Generator untuk menghasilkan laporan otomatis dari data Anda.",
+              "Quick guide for using the AI Report Generator system to automatically generate reports from your data."
             )}
           </p>
 

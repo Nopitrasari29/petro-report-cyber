@@ -163,6 +163,13 @@ def run_analysis_job(report_id: int) -> None:
                         logger.warning(f"Gagal baca parsed_data dari file ({db_report.parsed_data_path}): {fs_read_err}")
                         parsed_data_to_use = db_report.parsed_data
 
+                # BUG DIPERBAIKI (permintaan user): `selected_sections` TIDAK LAGI dioper ke
+                # panggilan 6-field-wajib ini — dulu section custom ditulis SEKALIGUS di sini,
+                # bersamaan dgn beban 6 field wajib, jadi makin banyak topik dicentang makin
+                # besar risiko section custom gagal ditulis. Sekarang panggilan ini SELALU
+                # cuma menulis 6 field wajib (ringan & konsisten cepat berapa pun banyak topik
+                # dicentang user) — section custom ditulis TERPISAH lewat
+                # generate_sections_for_topics() di bawah, lihat catatan lengkap di sana.
                 raw_result = ollama_client.analyze_security_data(
                     data_type=db_report.data_type,
                     parsed_data=parsed_data_to_use,
@@ -171,7 +178,6 @@ def run_analysis_job(report_id: int) -> None:
                     template_type=db_report.template_type,
                     language=db_report.language,
                     domain_type=db_report.domain_type,
-                    selected_sections=selected_sections,
                     tone=db_report.tone,
                     default_level=db_report.default_level,
                     on_progress=on_progress,
@@ -188,23 +194,6 @@ def run_analysis_job(report_id: int) -> None:
                     raise RuntimeError(
                         f"AI mengembalikan {default_hit_count}/6 bagian berupa teks default "
                         f"(key tidak dikenali atau model gagal menjawab)."
-                    )
-
-                # BUG DIPERBAIKI (dilaporkan user): sebelumnya field opsional "sections" (narasi
-                # custom AI utk section yg dicentang user) TIDAK PERNAH dicek sama sekali di sini —
-                # kalau AI kembalikan 0 section padahal user minta N section custom, laporan tetap
-                # dianggap "berhasil sempurna", tidak pernah dicoba ulang (beda dgn 6 field wajib
-                # di atas yg SUDAH auto-retry). Sekarang ikut memicu retry (pakai budget attempt yg
-                # sama, tidak menambah delay/percobaan baru) — TAPI kalau di PERCOBAAN TERAKHIR
-                # masih tetap kosong, laporan TETAP disimpan sbg sukses (bukan digagalkan total):
-                # 6 field wajib sudah cukup utk laporan yg lengkap & berguna, section custom cuma
-                # pelengkap tambahan — tidak sepadan kalau sampai menggagalkan seluruh laporan
-                # hanya gara-gara bagian bonus ini.
-                sections_missing = bool(selected_sections) and not analysis_result.get("sections")
-                if sections_missing and attempt < MAX_RETRIES:
-                    raise RuntimeError(
-                        f"AI tidak menuliskan section custom yang diminta "
-                        f"(0/{len(selected_sections)} section terisi)."
                     )
 
                 last_err = None
@@ -238,6 +227,37 @@ def run_analysis_job(report_id: int) -> None:
             except Exception as notif_err:
                 logger.warning(f"Gagal buat notifikasi failure: {notif_err}")
             return
+
+        # PERMINTAAN USER: SEMUA topik "Include Sections" yang dicentang (berapa pun jumlahnya,
+        # tidak dibatasi 6 lagi) ditulis di sini, TERPISAH dari 6 field wajib di atas, lewat
+        # beberapa panggilan AI kecil berkelompok — lihat catatan lengkap di
+        # OllamaClient.generate_sections_for_topics(). Non-fatal kalau gagal (6 field wajib
+        # sudah cukup utk laporan yg lengkap & berguna) — KECUALI user membatalkan job saat ini
+        # berjalan, itu tetap dihormati sbg pembatalan penuh seperti biasa.
+        if selected_sections:
+            try:
+                sections_result = ollama_client.generate_sections_for_topics(
+                    data_type=db_report.data_type,
+                    parsed_data=parsed_data_to_use,
+                    selected_sections=selected_sections,
+                    language=db_report.language,
+                    domain_type=db_report.domain_type,
+                    tone=db_report.tone,
+                    default_level=db_report.default_level,
+                    is_cancelled=lambda: is_analysis_cancelled(report_id),
+                )
+                analysis_result["sections"] = sections_result
+                if len(sections_result) < len(selected_sections):
+                    logger.warning(
+                        f"Report {report_id}: {len(sections_result)}/{len(selected_sections)} "
+                        f"section custom berhasil ditulis."
+                    )
+            except (AnalysisCancelled, GenerationCancelled):
+                logger.info(f"Analisis report {report_id} dihentikan oleh user (saat menulis section custom).")
+                return
+            except Exception as sec_err:
+                logger.warning(f"Report {report_id}: gagal menulis section custom: {sec_err}")
+                analysis_result.setdefault("sections", [])
 
         elapsed_time = round(time.time() - start_time)
         if elapsed_time <= 0:

@@ -23,7 +23,8 @@ Format keluaran analisis Anda HARUS berupa JSON valid dengan struktur 6 kunci ut
   "recommendations": [
     {"title": "Judul singkat tindakan 1 (frasa aksi, maks 6-8 kata)", "detail": "Penjelasan 1-2 kalimat kenapa & bagaimana tindakan cepat/mitigasi segera ini dilakukan."},
     {"title": "Judul singkat tindakan 2 (frasa aksi, maks 6-8 kata)", "detail": "Penjelasan 1-2 kalimat untuk tindakan jangka menengah/kebijakan operasional ini."},
-    {"title": "Judul singkat tindakan 3 (frasa aksi, maks 6-8 kata)", "detail": "Penjelasan 1-2 kalimat untuk tindakan jangka panjang/perbaikan sistem ini."}
+    {"title": "Judul singkat tindakan 3 (frasa aksi, maks 6-8 kata)", "detail": "Penjelasan 1-2 kalimat untuk tindakan jangka panjang/perbaikan sistem ini."},
+    {"title": "... (JUMLAH TOTAL TIDAK HARUS 3, lihat KONTRAK di bawah) ...", "detail": "..."}
   ],
   "conclusion": "Kesimpulan akhir mengenai kondisi/postur saat ini dan langkah strategis ke depan."
 }
@@ -32,6 +33,18 @@ PENTING:
 - Respon HARUS ditulis menggunakan bahasa yang diminta pengguna (default: Bahasa Indonesia yang formal, taktis, dan profesional).
 - Jangan menambahkan teks penjelasan, pengantar, atau penutup di luar objek JSON tersebut. Hasilkan HANYA kode JSON valid.
 - TULIS DENGAN KADAR TEKNIS/EKSEKUTIF YANG PAS, HINDARI FRASA FILLER KLISE (misal: JANGAN gunakan 'Secara keseluruhan', 'Berdasarkan analisis di atas', 'Perlu dicatat bahwa', 'Dapat disimpulkan bahwa'). Langsung sampaikan temuan & implikasinya.
+- GAYA WAJIB "HASIL, BUKAN DESKRIPSI DATA" (permintaan eksplisit user - gaya presentasi hasil,
+  BUKAN gaya laporan administratif yang cuma menjelaskan data mentahnya): JANGAN sekadar
+  MENDESKRIPSIKAN angka/data apa adanya. Setiap kalimat WAJIB berbentuk SEBAB-AKIBAT yang
+  mengarah ke IMPLIKASI BISNIS, lalu dirujuk ke BUKTI dari angka/visualisasi terkait - pola:
+  (1) apa yang TERJADI/ditemukan, (2) KENAPA itu terjadi atau APA DAMPAKNYA ke bisnis/operasional,
+  (3) sebutkan angka/pola yang jadi buktinya (seolah menunjuk ke chart-nya).
+  * SALAH (cuma deskripsi data, DILARANG): "Pabrik II B tercatat sebanyak 11 kali dalam data,
+    menjadikannya unit dengan frekuensi tertinggi."
+  * BENAR (sebab-akibat + bukti, WAJIB gaya ini): "Konsentrasi produksi menumpuk di Pabrik II B
+    (11 dari 48 data, 22.9%) - dominasi sebesar ini berisiko membebani kapasitas unit tersebut
+    sementara unit lain kurang termanfaatkan, terlihat dari kesenjangan tajam pada distribusi
+    kategori."
 - "executive_summary", "trend_analysis", "severity_analysis", "risk_assessment", "conclusion", dan
   "sections[].content" NILAINYA HARUS STRING TEKS NARATIF BIASA (kalimat/paragraf mengalir) —
   JANGAN PERNAH berupa object/array JSON bersarang, walau instruksi topiknya menyebut
@@ -41,6 +54,13 @@ PENTING:
   pernah lakukan ini): {"level": "tinggi", "entities": ["A","B","C"]}.
 
 KONTRAK "recommendations" (WAJIB DIPATUHI PERSIS):
+- JUMLAH tindakan TIDAK WAJIB selalu 3 (contoh di atas cuma ilustrasi pola cepat/menengah/
+  panjang, BUKAN patokan jumlah baku) - tulis SEBANYAK tindakan yang genuinely berbeda &
+  didukung STATISTIK TERHITUNG, idealnya 3-6. Kalau datanya kaya (banyak temuan/risiko
+  berbeda yang perlu ditindaklanjuti terpisah), JANGAN berhenti di 3 saja - lanjutkan sampai
+  6 selama tiap tindakan benar-benar berdiri sendiri (bukan variasi kalimat dari tindakan yang
+  sama). Kalau datanya tipis, JANGAN dipaksa sampai 6 - boleh berhenti di 3-4 saja, jangan
+  menambah rekomendasi generik/filler cuma demi mengejar jumlah.
 - HARUS array of OBJECT {"title": "...", "detail": "..."} - BUKAN array of string polos.
 - "title": frasa aksi SINGKAT (maksimal 6-8 kata, ideal di bawah 50 karakter) yang bisa dibaca
   sekilas sebagai headline kartu - JANGAN berupa kalimat penuh/lengkap dengan subjek-predikat
@@ -451,6 +471,122 @@ yang sudah dijelaskan di SYSTEM_PROMPT (key_findings, chart_captions, sections).
 
 
 # ============================================================================
+# Section batch writer - dipakai analysis_runner.py utk menuliskan naskah "sections" (topik
+# custom yang dicentang user) lewat beberapa panggilan AI KECIL berkelompok, TERPISAH dari
+# panggilan get_analysis_prompt() di atas (yang sekarang HANYA menulis 6 field wajib).
+#
+# PERMINTAAN USER (akar masalah asli sesi ini): dulu SEMUA section custom diminta ditulis
+# SEKALIGUS dalam 1 panggilan AI raksasa bersamaan dengan 6 field wajib - model lokal
+# (qwen3:8b, CPU-only) kewalahan begitu jumlahnya banyak (>6), section custom jadi 0% berhasil
+# ditulis. Solusinya BUKAN membatasi jumlah section yang boleh dicentang user, tapi memecah
+# permintaan penulisannya jadi beberapa panggilan kecil (lihat SECTIONS_BATCH_SIZE di
+# analysis_runner.py) - tiap panggilan cuma diminta menulis segelintir topik SAJA, TANPA beban
+# 6 field wajib sama sekali, jadi seberapa pun banyak topik yang dicentang user, semuanya tetap
+# bisa diproses (lebih lama total waktunya, tapi tidak ada lagi yang terlewat begitu saja).
+# ============================================================================
+SECTIONS_BATCH_SYSTEM_PROMPT = """
+Anda adalah Senior Data Analyst yang MENULISKAN NASKAH untuk BEBERAPA BAGIAN/SECTION tertentu
+dari sebuah laporan (bukan seluruh laporan) berdasarkan skema kolom & statistik data yang
+diberikan.
+
+Format keluaran HARUS berupa SATU JSON OBJECT valid dengan TEPAT SATU key top-level "sections",
+berisi ARRAY objek {"id","title","content","chart"} - PERSIS SEBANYAK & SAMA URUTAN topik yang
+diminta di bagian "DAFTAR TOPIK YANG WAJIB DITULIS" pada prompt user, JANGAN menambah atau
+mengurangi jumlahnya:
+{
+  "sections": [
+    {
+      "id": "sama_persis_seperti_diberikan",
+      "title": "Sama persis seperti diberikan",
+      "content": "Narasi PENDEK 1-3 kalimat saja, grounded pada STATISTIK TERHITUNG yang diberikan - dilarang mengarang angka.",
+      "chart": {"chart_type": "bar", "labels": ["...dari STATISTIK TERHITUNG..."], "values": [1, 2, 3]}
+    },
+    {
+      "id": "topik_lain_tanpa_chart",
+      "title": "Topik Lain Tanpa Chart",
+      "content": "Narasi pendek lain, tanpa perbandingan kategori.",
+      "chart": null
+    }
+  ]
+}
+
+PENTING:
+- "id"/"title": SAMA PERSIS (karakter demi karakter) seperti yang diberikan di daftar topik.
+- "content": narasi PENDEK 1-3 kalimat SAJA, grounded pada STATISTIK TERHITUNG - dilarang
+  mengarang/membulatkan angka atau menyebut angka yang tidak ada di STATISTIK TERHITUNG.
+- GAYA WAJIB "HASIL, BUKAN DESKRIPSI DATA" (gaya presentasi hasil, BUKAN administratif):
+  JANGAN sekadar mendeskripsikan angka apa adanya. Setiap "content" WAJIB pola SEBAB-AKIBAT:
+  (1) apa yang terjadi, (2) kenapa/apa dampaknya ke bisnis, (3) rujuk angka buktinya. SALAH:
+  "Pabrik II B tercatat 11 kali, tertinggi di antara unit lain." BENAR: "Konsentrasi produksi
+  menumpuk di Pabrik II B (11 dari 48 data) - berisiko membebani kapasitas unit ini sementara
+  unit lain kurang termanfaatkan."
+- "chart": OPSIONAL, objek {"chart_type": "bar" atau "donut", "labels": [...], "values": [...]}
+  HANYA kalau topik ini SECARA ALAMI membahas perbandingan/proporsi antar beberapa kategori
+  (mis. "per metode", "top vendor", "per departemen") - "labels"/"values" harus PERSIS dari
+  STATISTIK TERHITUNG, JANGAN mengarang. Kalau topik tidak melibatkan perbandingan kategori
+  (mis. cuma 1 angka tunggal atau narasi kualitatif), set "chart": null.
+- JANGAN menambahkan key top-level lain selain "sections". JANGAN menambahkan teks penjelasan,
+  pengantar, atau penutup di luar objek JSON tersebut. Hasilkan HANYA JSON valid.
+"""
+
+
+def get_sections_batch_prompt(
+    data_type: str,
+    stats_text: str,
+    schema_text: str,
+    total_records: int | None,
+    domain_type: str | None,
+    sections_batch: list[dict],
+    language: str | None = None,
+    tone: str | None = None,
+    default_level: str | None = None,
+) -> str:
+    """Prompt utk SATU kelompok kecil topik "sections" (lihat SECTIONS_BATCH_SYSTEM_PROMPT di
+    atas) - dipanggil sekali per batch oleh OllamaClient.generate_sections_for_topics(), BUKAN
+    sekali untuk semua topik sekaligus."""
+    if language and language.strip().lower() == "english":
+        lang_str = "PENTING: Seluruh nilai teks dalam objek JSON HARUS ditulis dalam Bahasa Inggris (English)."
+    else:
+        lang_str = "PENTING: Seluruh nilai teks dalam objek JSON HARUS ditulis dalam Bahasa Indonesia."
+
+    _LEVEL_INSTRUCTIONS = {
+        "standard": "Narasi tiap topik 1-3 kalimat, cukup memberi konteks tanpa bertele-tele.",
+        "detailed": "Narasi tiap topik boleh sedikit lebih lengkap (maksimal 4 kalimat), tetap padat.",
+        "summary only": "Narasi tiap topik SEPADAT mungkin, 1 kalimat saja kalau bisa.",
+    }
+    level_str = _LEVEL_INSTRUCTIONS.get((default_level or "standard").strip().lower(), _LEVEL_INSTRUCTIONS["standard"])
+
+    lines = []
+    for s in sections_batch:
+        sid = s.get("key") or s.get("id") or ""
+        s_title = s.get("title") or ""
+        s_desc = s.get("description") or ""
+        lines.append(f'- id="{sid}", title="{s_title}" - {s_desc}')
+    topics_text = "\n".join(lines)
+
+    return f"""
+Data yang dianalisis bertipe '{data_type}', total {total_records if total_records is not None else "seperti tertulis di STATISTIK TERHITUNG"} baris.
+{lang_str}
+{level_str}
+
+--- SKEMA DATA (nama kolom, tipe, contoh nilai) ---
+{schema_text}
+--- AKHIR SKEMA ---
+
+--- STATISTIK TERHITUNG (SATU-SATUNYA sumber angka yang sah, dilarang mengarang angka lain) ---
+{stats_text}
+--- AKHIR STATISTIK ---
+
+--- DAFTAR TOPIK YANG WAJIB DITULIS (isi "sections", urutan HARUS sama persis) ---
+{topics_text}
+--- AKHIR DAFTAR TOPIK ---
+
+Tuliskan naskah utk PERSIS topik-topik di atas saja, ikuti kontrak JSON "sections" yang sudah
+dijelaskan. {lang_str}
+"""
+
+
+# ============================================================================
 # AI Section Suggester - dipakai section_suggester.py (Part A1), TERPISAH dari
 # SYSTEM_PROMPT/get_analysis_prompt di atas (tugasnya beda: merancang STRUKTUR
 # laporan, bukan menulis ISI-nya) supaya kontrak JSON keduanya tidak tercampur.
@@ -465,15 +601,23 @@ umum (ringkasan eksekutif, analisis tren, dst) - BEBAS mengusulkan judul section
 itu bila data benar-benar menuntutnya (mis. "Analisis Distribusi Regional" untuk data dengan
 kolom lokasi, atau "Perbandingan Shift Kerja" untuk data operasional dengan kolom shift).
 
-JUMLAH SECTION: MAKSIMAL 6, TIDAK BOLEH LEBIH - pilih 6 topik yang PALING relevan & PALING
-berbeda nilai analisisnya kalau data punya lebih banyak dimensi drpd itu (JANGAN asal ambil 6
-pertama, bandingkan semua kandidat dulu lalu pilih yang paling bernilai). Data sederhana dengan
-sedikit kolom/dimensi analisis wajar cuma menghasilkan 3-4 section - JANGAN dipaksa sampai 6
-kalau memang tidak ada 6 topik yang genuinely berbeda nilainya (JANGAN menambahkan section
-"filler"/pengisi generik cuma untuk mengejar angka 6). Batas 6 ini SENGAJA (bukan usulan) -
-laporan akhir nanti menuliskan narasi PENUH utk tiap section yang dicentang user, jadi kalau
-section yang diusulkan disini kebanyakan, akan ada section yang gagal ditulis lengkap saat
-laporan sungguhan dibuat nanti walau sudah dicentang user - HINDARI ITU dgn disiplin di batas 6.
+JUMLAH SECTION: TIDAK ADA BATAS KAKU - usulkan SEBANYAK topik yang genuinely relevan & berbeda
+nilai analisisnya dari data (naskah tiap section nanti ditulis lewat beberapa panggilan AI
+kecil berkelompok saat laporan sungguhan dibuat, jadi jumlah section TIDAK mempengaruhi
+keandalan penulisannya lagi). Data sederhana dengan sedikit kolom/dimensi analisis wajar cuma
+menghasilkan 3-4 section, data kaya dimensi boleh lebih dari 6 - yang penting JANGAN
+menambahkan section "filler"/pengisi generik cuma untuk mengejar jumlah tertentu; tiap section
+yang diusulkan harus genuinely punya sudut analisis berbeda dari section lain.
+
+WAJIB GABUNGKAN topik yang SEBENARNYA bercerita hal yang SAMA dari sudut yang cuma sedikit
+beda (permintaan eksplisit user): kalau 2+ calon topik ujung-ujungnya akan menyimpulkan
+insight yang sama/tumpang tindih besar (mis. "Ringkasan Performa Unit" dan "Analisis Unit
+Produksi" yang keduanya cuma membahas performa per unit dari sisi berbeda tipis), JANGAN
+dipecah jadi section terpisah - GABUNGKAN jadi SATU section yang mencakup semuanya sekaligus,
+selama gabungannya tetap 1 topik yang nyambung/koheren (bukan asal ditempel jadi 1 judul
+umum). Section terpisah HANYA utk topik yang benar2 punya sudut pandang analisis BERBEDA
+(mis. "per unit" vs "per produk" vs "tren waktu" vs "gap target" - ini genuinely berbeda,
+boleh terpisah), BUKAN variasi kecil dari topik yang sama.
 
 Format keluaran HARUS berupa SATU JSON OBJECT valid dengan TEPAT SATU key top-level "sections"
 berisi ARRAY (JANGAN mengembalikan array telanjang di root - HARUS dibungkus objek seperti

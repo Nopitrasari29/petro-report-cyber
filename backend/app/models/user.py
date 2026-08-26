@@ -25,7 +25,7 @@ class User(Base):
 
     # Preferensi personal per-user (BUKAN pengaturan global) — tiap user ubah sendiri,
     # tidak mempengaruhi user lain sama sekali.
-    language = Column(String, default="English")
+    language = Column(String, default="Indonesian")
     appearance = Column(String, default="light")
     notify_report_success = Column(Boolean, default=True)
     notify_report_failed = Column(Boolean, default=True)

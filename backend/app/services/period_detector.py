@@ -19,6 +19,30 @@ MIN_VALID_RATIO = 0.7
 # MEMATIKAN dayfirst khusus untuk format ini (lihat _parse_dates).
 _ISO_LEADING_YEAR_RE = re.compile(r"^\s*\d{4}[-/]")
 
+# BUG DIPERBAIKI (ditemukan lewat reproduksi PDF laporan traffic email sungguhan — kolom
+# "Hour" isinya JAM POLOS per baris, mis. "00:00"/"01:00", TANPA komponen tanggal sama
+# sekali): pandas to_datetime() TETAP berhasil "memaksa" string jam polos jadi Timestamp
+# (asumsi diam-diam = tanggal HARI INI + jam itu), rasio berhasil-parse-nya jadi tinggi &
+# lolos MIN_VALID_RATIO — kolom seperti ini kepilih sbg "kolom tanggal" di find_date_column(),
+# padahal SEMUA baris akhirnya kebaca tanggal yang SAMA (hari file itu diproses, BUKAN
+# tanggal asli datanya) — period_start/period_end laporan jadi SALAH TOTAL tanpa ada error
+# apa pun yang kelihatan. Kolom yang isinya mayoritas jam polos (tanpa digit tahun/tanggal
+# sama sekali) SEKARANG dikeluarkan dari kandidat kolom tanggal SEJAK AWAL, sebelum sempat
+# diparse pandas.
+_BARE_TIME_RE = re.compile(r"^\s*\d{1,2}:\d{2}(:\d{2})?\s*(am|pm|AM|PM)?\s*$")
+
+
+def _looks_like_bare_time_column(values: List[Any], min_ratio: float = 0.7) -> bool:
+    """True kalau MAYORITAS nilai non-kosong di kolom ini adalah jam polos ("00:00", "8:15
+    PM") tanpa komponen tanggal — kolom seperti ini TIDAK BOLEH dipakai utk deteksi periode
+    laporan (lihat catatan _BARE_TIME_RE di atas), walau pandas SANGGUP memparsingnya jadi
+    Timestamp valid (dgn tanggal hari ini yang keliru, bukan tanggal asli data)."""
+    str_values = [str(v).strip() for v in values if v is not None and str(v).strip()]
+    if not str_values:
+        return False
+    bare_time_count = sum(1 for v in str_values if _BARE_TIME_RE.match(v))
+    return bare_time_count / len(str_values) >= min_ratio
+
 
 def _parse_dates(values: List[Any]) -> "pd.Series":
     """
@@ -109,10 +133,11 @@ def find_date_column(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], 
     date_col_is_numeric = isinstance(date_col_sample_value, bool) or isinstance(date_col_sample_value, (int, float))
     if date_col and not date_col_is_numeric:
         raw_values = [row.get(date_col) for row in parsed_data if isinstance(row, dict)]
-        parsed = _parse_dates(raw_values)
-        valid = parsed.dropna()
-        if len(raw_values) > 0 and len(valid) / len(raw_values) >= MIN_VALID_RATIO:
-            return date_col, parsed
+        if not _looks_like_bare_time_column(raw_values):
+            parsed = _parse_dates(raw_values)
+            valid = parsed.dropna()
+            if len(raw_values) > 0 and len(valid) / len(raw_values) >= MIN_VALID_RATIO:
+                return date_col, parsed
 
     # 4. Fallback berbasis isi: coba tiap kolom bertipe teks/tanggal (bukan angka murni),
     #    ambil yang proporsi berhasil-parse-nya paling tinggi.
@@ -126,7 +151,7 @@ def find_date_column(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], 
             continue
 
         raw_values = [row.get(key) for row in parsed_data if isinstance(row, dict)]
-        if not raw_values:
+        if not raw_values or _looks_like_bare_time_column(raw_values):
             continue
 
         parsed = _parse_dates(raw_values)

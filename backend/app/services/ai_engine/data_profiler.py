@@ -282,6 +282,67 @@ def _compute_time_series(date_series: "pd.Series", max_buckets: int = 12) -> Dic
     }
 
 
+def _compute_category_numeric_pairs(
+    df: pd.DataFrame, category_cols: Dict[str, str], numeric_cols: List[str], top_n: int = 8,
+) -> Optional[Dict[str, Any]]:
+    """PERMINTAAN USER: tambah jenis visualisasi baru (scatter/bubble) — butuh 2 angka
+    genuinely BERBEDA per entitas (mis. jumlah transaksi vendor VS rata-rata nilai
+    kontraknya), bukan cuma 1 angka tunggal seperti chart yang sudah ada. `top_categories`/
+    `numeric_summary` yang sudah ada TIDAK cukup sendirian (yang satu cuma hitungan
+    kemunculan, yang satu cuma agregat SATU kolom independen dari kategori) — fungsi ini
+    MENGELOMPOKKAN kolom numerik utama berdasarkan kolom kategori utama, supaya tiap entitas
+    kategori (mis. tiap vendor) punya SEPASANG angka asli (jumlah kemunculan & rata-rata
+    numerik) yang bisa diplot sbg satu titik scatter/bubble - TETAP angka asli dari data,
+    bukan dikarang."""
+    if not category_cols or not numeric_cols:
+        return None
+
+    def _looks_numeric_code(series: pd.Series) -> bool:
+        """True kalau nilai kolom ini SEMUA kelihatan seperti angka/kode (mis. ID numerik),
+        bukan label entitas sungguhan (mis. nama vendor) — BUG DIPERBAIKI (ditemukan lewat
+        tes langsung): tanpa cek ini, kolom kategori PERTAMA yang kebetulan terdeteksi
+        (urutan deteksi di _detect_main_category_columns, bukan berdasar makna) bisa berupa
+        kode angka, hasilnya scatter/bubble menampilkan titik berlabel "2.0"/"1.2" yang sama
+        sekali tidak bermakna sbg identitas entitas."""
+        sample = series.dropna().astype(str).unique()[:5]
+        if sample.size == 0:
+            return False
+        for v in sample:
+            try:
+                float(v)
+            except (ValueError, TypeError):
+                return False
+        return True
+
+    cat_label, cat_col = None, None
+    for lbl, col in category_cols.items():
+        if col not in df.columns:
+            continue
+        if _looks_numeric_code(df[col]):
+            continue
+        cat_label, cat_col = lbl, col
+        break
+    if not cat_col:
+        return None
+    num_col = numeric_cols[0]
+    if num_col not in df.columns:
+        return None
+    grouped = df.groupby(cat_col)[num_col].agg(["count", "mean"]).reset_index()
+    grouped = grouped.sort_values("count", ascending=False).head(top_n)
+    if len(grouped) < 3:
+        # Scatter/bubble butuh beberapa titik biar bermakna - kalau kategorinya cuma 1-2
+        # nilai unik, chart lain (bar/donat) sudah lebih pas & lebih mudah dibaca.
+        return None
+    return {
+        "category_label": cat_label,
+        "numeric_label": num_col,
+        "points": [
+            {"label": str(row[cat_col]), "count": int(row["count"]), "avg": round(float(row["mean"]), 2)}
+            for _, row in grouped.iterrows()
+        ],
+    }
+
+
 def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dict[str, Any]:
     """
     Entry point poin 1. Mengembalikan dict statistik terhitung (deterministik, pandas) siap
@@ -327,6 +388,11 @@ def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dic
     numeric_summary = _compute_numeric_summary(df, exclude=exclude_for_numeric)
     if numeric_summary:
         stats["numeric_summary"] = numeric_summary
+
+    if category_cols and numeric_summary:
+        pairs = _compute_category_numeric_pairs(df, category_cols, list(numeric_summary.keys()))
+        if pairs:
+            stats["category_numeric_pairs"] = pairs
 
     return stats
 
