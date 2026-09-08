@@ -3937,6 +3937,21 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 cards = cards[:sum(_rows_n)]
                 _need = len(_rows_n) * _need_row + (len(_rows_n) - 1) * _NESTED_CARD_ROW_GAP_IN
                 cards_h = min(_avail_cards, _need)
+                # BUG NYATA DIPERBAIKI (ditemukan tes luberan yang baru dipasang - 26 shape
+                # di luar slide, sampai y=8.63in): kotak Catatan digambar mengalir dari bawah
+                # kartu TANPA memeriksa apakah muat. Pola yang sama utk keenam kalinya, dan
+                # kali ini di kode yang baru saja saya tulis. Tinggi catatan dihitung DULU;
+                # kalau tidak muat, butir paling belakang dilepas satu per satu sampai muat -
+                # bukan digambar menembus batas slide di mana pembaca tidak bisa melihatnya.
+                _bawah = title_bottom_in + avail_h_in
+                if notes:
+                    _sisa = _bawah - (y + cards_h + 0.08)
+                    while notes and _note_box_height_in(col_w, notes) > _sisa:
+                        if len(notes) == 1 and cards_h > _need_row:
+                            cards_h = max(_need_row, cards_h - 0.3)
+                            _sisa = _bawah - (y + cards_h + 0.08)
+                            continue
+                        notes = notes[:-1]
                 notes_consumed = _insight_detail_row(
                     slide, cards, x, col_w, cards_h, y, theme=ctx.theme, notes=None, is_en=is_en,
                 )

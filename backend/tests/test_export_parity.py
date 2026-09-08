@@ -462,10 +462,11 @@ def test_management_dashboard_pages_are_densely_filled():
     exemptions = []
     try:
         # SELURUH laporan Visual (bukan 8 teratas) - lihat catatan di _sample_report_ids.
-        # Sisi Deskriptif masih dicuplik: jalur itu belum dikerjakan (ditunda user), jadi
-        # memeriksa 101 laporan di sana cuma memperpanjang daftar gagal yang sudah diketahui.
         report_ids = [(rid, "management") for rid in _sample_report_ids("management", None)]
-        report_ids += [(rid, "soc") for rid in _sample_report_ids("", 8)]
+        # SELURUH laporan Deskriptif juga (bukan 8 teratas): di sesi ini, setiap kali cakupan
+        # pengukuran diperlebar SELALU ada yang muncul - tanpa kecuali. 8 laporan tidak cukup
+        # utk memutuskan apa pun tentang jalur ini.
+        report_ids += [(rid, "soc") for rid in _sample_report_ids("", None)]
         for rid, style in report_ids:
             report = db.get(Report, rid)
             if report is None:
@@ -872,3 +873,95 @@ def test_single_entity_gauge_pages_do_not_duplicate_other_pages():
         db.rollback()
         db.close()
     assert not problems, "Halaman gauge mengulang halaman lain:\n" + "\n".join(problems[:15])
+
+_CANVAS_W_IN = 13.333
+_CANVAS_H_IN = 7.5
+_CANVAS_TOL_IN = 0.02
+# cover & closing SENGAJA py hiasan menembus tepi (garis diagonal) - terukur 160 shape tanpa
+# teks di 20 laporan, semuanya di dua jenis halaman ini. Halaman ISI tidak punya hiasan
+# semacam itu: SETIAP shape di luar slide pada halaman isi terbukti isi yang hilang.
+_BLEED_PAGE_KINDS = {"cover", "closing"}
+
+
+def test_no_element_is_drawn_outside_the_slide():
+    """Tidak ada elemen yang digambar DI LUAR kanvas slide (13.333 x 7.5in).
+
+    KELAS BUG YANG BERBEDA DARI KEPADATAN, dan tes kepadatan BUTA terhadapnya: kepadatan
+    mengukur BERAPA BANYAK isi di satu halaman, bukan APAKAH isinya masih di dalam slide.
+    Shape yang jatuh di luar slide tetap terhitung penuh sbg elemen & karakter - jadi halaman
+    yang isinya tidak terlihat pembaca justru bisa terbaca "padat".
+
+    Ditemukan lewat pemeriksaan koordinat, bukan lewat tes: 15 dari 28 slide "Tindak Lanjut"
+    menggambar blok Kesimpulan sampai y=8.76in (batas 7.5in) - di 15 laporan Kesimpulan tidak
+    pernah terlihat pembaca. Halaman executive_summary jalur Deskriptif bahkan menggambar
+    CHART DONAT UTUH beserta legendanya di bawah slide.
+
+    Akarnya selalu sama & sudah lima kali terulang di tempat berbeda: tinggi elemen yang
+    bergantung isi tidak dihitung SEBELUM elemen tetangganya ditata, jadi ruangnya tidak
+    pernah dipesan. Catatan permanen saja tidak cukup - karena itu ditegakkan lewat tes.
+
+    Sisi PDF ikut diperiksa meski WeasyPrint MEMOTONG di batas halaman (terukur: 0 blok teks
+    di luar halaman dari 20 laporan) - di sana isi yang tidak muat HILANG diam-diam, bukan
+    menonjol keluar; itu yang dijaga tes kepadatan. Pemeriksaan PDF di sini penjaga kalau
+    engine-nya berubah."""
+    db = SessionLocal()
+    failures = []
+    try:
+        report_ids = [(rid, "management") for rid in _sample_report_ids("management", None)]
+        # SELURUH laporan Deskriptif juga (bukan 8 teratas): di sesi ini, setiap kali cakupan
+        # pengukuran diperlebar SELALU ada yang muncul - tanpa kecuali. 8 laporan tidak cukup
+        # utk memutuskan apa pun tentang jalur ini.
+        report_ids += [(rid, "soc") for rid in _sample_report_ids("", None)]
+        for rid, style in report_ids:
+            report = db.get(Report, rid)
+            if report is None:
+                continue
+            blocks = build_management_report_blocks(report) if style == "management" else build_report_blocks(report)
+            kinds = [b.get("kind") for b in blocks]
+
+            prs = Presentation(io.BytesIO(eppt.PPTXExporter.generate_ppt_report(report)))
+            for i, slide in enumerate(prs.slides):
+                kind = kinds[i] if i < len(kinds) else "?"
+                if kind in _BLEED_PAGE_KINDS:
+                    continue
+                for shape in slide.shapes:
+                    try:
+                        left, top = Emu(shape.left).inches, Emu(shape.top).inches
+                        right, bottom = left + Emu(shape.width).inches, top + Emu(shape.height).inches
+                    except Exception:
+                        continue
+                    if (bottom > _CANVAS_H_IN + _CANVAS_TOL_IN or right > _CANVAS_W_IN + _CANVAS_TOL_IN
+                            or top < -_CANVAS_TOL_IN or left < -_CANVAS_TOL_IN):
+                        label = ""
+                        if shape.has_text_frame and shape.text_frame.text.strip():
+                            label = f" '{shape.text_frame.text.strip()[:34]}'"
+                        failures.append(
+                            f"report {rid} PPT slide {i} ({kind}): {shape.shape_type} "
+                            f"kiri={left:.2f} atas={top:.2f} kanan={right:.2f} bawah={bottom:.2f}{label}"
+                        )
+
+            doc = fitz.open(stream=ep.PDFExporter.generate_pdf_report(report), filetype="pdf")
+            for i, page in enumerate(doc):
+                kind = kinds[i] if i < len(kinds) else "?"
+                if kind in _BLEED_PAGE_KINDS:
+                    continue
+                pw, ph = page.rect.width, page.rect.height
+                for block in page.get_text("dict").get("blocks", []):
+                    x0, y0, x1, y1 = block["bbox"]
+                    if x1 > pw + 1.0 or y1 > ph + 1.0 or x0 < -1.0 or y0 < -1.0:
+                        failures.append(
+                            f"report {rid} PDF page {i} ({kind}): blok teks di luar halaman "
+                            f"({x0:.0f},{y0:.0f})-({x1:.0f},{y1:.0f}) vs {pw:.0f}x{ph:.0f}"
+                        )
+            doc.close()
+    finally:
+        db.rollback()
+        db.close()
+
+    _pesan = [
+        f"Elemen digambar DI LUAR kanvas ({_CANVAS_W_IN}x{_CANVAS_H_IN}in) - "
+        "isinya ADA tapi tidak terlihat pembaca:",
+    ] + failures[:40]
+    if len(failures) > 40:
+        _pesan.append(f"... dan {len(failures) - 40} lagi")
+    assert not failures, chr(10).join(_pesan)
