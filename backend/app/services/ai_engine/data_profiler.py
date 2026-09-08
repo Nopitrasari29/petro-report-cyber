@@ -12,11 +12,15 @@ di-hardcode — dipakai ulang dari chart_generator.py (_find_col, _rank_categori
 dan period_detector.py (find_date_column) supaya konsisten dengan deteksi yang sudah dipakai
 di fitur chart, bukan implementasi terpisah yang bisa berbeda hasil.
 """
+import os
 import re
 from typing import Any, Dict, List, Optional
 import pandas as pd
 
-from app.services.chart_generator import _find_col, _find_numeric_cols, _rank_categorical_candidates
+from app.services.chart_generator import (
+    _find_col, _find_numeric_cols, _rank_categorical_candidates,
+    _classify_indo_numeric_column, _coerce_indo_numeric_series,
+)
 from app.services.period_detector import find_date_column
 
 # Kata kunci nama kolom per "niat" kategori utama yang disebutkan pengguna — dicoba dulu
@@ -64,12 +68,44 @@ def _classify_severity_value(val_str: str) -> Optional[str]:
     return None
 
 
+def _column_looks_like_severity(series: "pd.Series") -> bool:
+    """Cek ISI (bukan cuma nama) - kolom genuinely severity keamanan HANYA kalau mayoritas
+    (>=70%, SAMA persis dgn ambang _compute_severity_distribution) nilainya cocok kosakata
+    keparahan baku (_classify_severity_value: critical/high/medium/low/informational & sinonim
+    umumnya)."""
+    values = series.dropna()
+    if values.empty:
+        return False
+    classified = sum(1 for v in values if _classify_severity_value(str(v)))
+    return classified >= 0.7 * len(values)
+
+
 def _detect_severity_column(df: pd.DataFrame, exclude: List[str]) -> Optional[str]:
+    """BUG NYATA DIPERBAIKI (dilaporkan user, dibuktikan langsung ke data - LEBIH SERIUS dari
+    bug format angka Indonesia): SEBELUM INI kolom dipilih HANYA dari NAMANYA cocok kata kunci
+    (_SEVERITY_KEYWORDS - termasuk "status", kata generik lintas domain, bukan eksklusif
+    keamanan) TANPA PERNAH mengecek ISINYA genuinely kosakata keparahan. Kolom "Status"
+    pengadaan berisi "Menunggu Persetujuan"/"Dalam Proses" (BUKAN severity keamanan sama
+    sekali) tetap "terpilih" jadi sev_col cuma krn namanya cocok - lalu (lihat
+    compute_statistics) DIKECUALIKAN dari deteksi kategori & nilai aslinya HILANG dari
+    report_stats, DIGANTIKAN histogram keamanan generik yang semuanya nol. Ini BUKAN cuma
+    "kolom tidak terbaca" (spt bug angka Indonesia, yang datanya sekadar hilang tanpa
+    menggantikan apa pun) - ini MENGGANTI data asli dgn HASIL ANALISIS PALSU yang tampil
+    seolah valid (severity_distribution kosong terlihat spt "genuinely tidak ada temuan",
+    bukan "kolomnya salah baca").
+
+    Sekarang kolom kandidat (baik dari nama YANG cocok maupun fallback berbasis isi) WAJIB
+    JUGA lolos cek ISI (_column_looks_like_severity) sebelum dipakai - kalau tidak ada satu pun
+    yang lolos, return None (BUKAN kolom severity sama sekali), bukan "dipakai tapi hasilnya
+    kosong"."""
     col = _find_col(df, _SEVERITY_KEYWORDS)
-    if col:
+    if col and _column_looks_like_severity(df[col]):
         return col
     candidates = _rank_categorical_candidates(df, exclude=exclude, max_unique=8)
-    return candidates[0] if candidates else None
+    for cand in candidates:
+        if _column_looks_like_severity(df[cand]):
+            return cand
+    return None
 
 
 def _compute_severity_distribution(df: pd.DataFrame, sev_col: Optional[str]) -> Dict[str, int]:
@@ -144,6 +180,40 @@ def _normalize_category_key(value: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip().lower()
 
 
+_PREFIX_BOUNDARY_CHARS = set("/\\.-_: ")
+
+
+def _strip_shared_prefix(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Kalau SEMUA label kategori yang mau ditampilkan berbagi awalan sama persis (mis. path
+    "/Common/" di depan tiap hostname F5/BIG-IP: "/Common/vs.pekapg...", "/Common/vs.abc..."),
+    pangkas awalan itu dari SEMUA label sebelum dipakai sbg kategori chart/legend — utk
+    path/hostname, bagian yang MEMBEDAKAN biasanya justru di belakang, jadi awalan seragam di
+    depan cuma makan tempat (bikin label kepanjangan/terpotong di chart) tanpa nilai informasi
+    tambahan (semua baris toh sama-sama "/Common/").
+
+    Mundur ke batas pemisah TERAKHIR di dalam awalan yang ditemukan (bukan pangkas character-
+    by-character mentah) supaya tidak motong di TENGAH token yang kebetulan sama beberapa huruf
+    pertamanya (mis. "vs.pekapg" vs "vs.abc" -> awalan mentah cuma "vs." sampai huruf pembeda
+    pertama, sudah pas berhenti di batas "."; tapi "server1" vs "server22" awalan mentah
+    "server" tidak diakhiri pemisah -> dibatalkan, jangan sampai jadi "1"/"22" yang ambigu)."""
+    if len(items) < 2:
+        return items
+    values = [str(it["value"]) for it in items]
+    prefix = os.path.commonprefix(values)
+    cut = max((i + 1 for i, ch in enumerate(prefix) if ch in _PREFIX_BOUNDARY_CHARS), default=0)
+    prefix = prefix[:cut]
+    if len(prefix) < 2:
+        return items
+    stripped = [v[len(prefix):] for v in values]
+    if any(not s for s in stripped) or len(set(stripped)) != len(set(values)):
+        # Awalan makan SELURUH salah satu label (jadi string kosong), atau ada 2 label beda
+        # yang kebetulan jadi SAMA setelah dipangkas -> batalkan, pertahankan label asli utuh.
+        return items
+    for it, new_val in zip(items, stripped):
+        it["value"] = new_val
+    return items
+
+
 def _top_values(df: pd.DataFrame, col: str, n: int = 10) -> List[Dict[str, Any]]:
     series = df[col].dropna()
     if pd.api.types.is_float_dtype(series) and not series.empty and (series % 1 == 0).all():
@@ -163,7 +233,7 @@ def _top_values(df: pd.DataFrame, col: str, n: int = 10) -> List[Dict[str, Any]]
             merged[key]["value"] = val
         merged[key]["count"] += int(cnt)
     items = sorted(merged.values(), key=lambda x: x["count"], reverse=True)[:n]
-    return items
+    return _strip_shared_prefix(items)
 
 
 _INDEX_COLUMN_NAMES = {"no", "no.", "nomor", "id", "index", "idx", "num", "urut", "row", "row_number", "#"}
@@ -335,12 +405,210 @@ def _compute_category_numeric_pairs(
         return None
     return {
         "category_label": cat_label,
+        "category_col": cat_col,
         "numeric_label": num_col,
         "points": [
             {"label": str(row[cat_col]), "count": int(row["count"]), "avg": round(float(row["mean"]), 2)}
             for _, row in grouped.iterrows()
         ],
     }
+
+
+_AGGREGATE_ROW_MARKERS = {
+    "total", "grand total", "jumlah", "subtotal", "sub total", "all", "overall",
+    "rata-rata", "rata rata", "average", "keseluruhan", "summary",
+}
+
+
+def _is_aggregate_row_marker(value) -> bool:
+    return str(value).strip().lower() in _AGGREGATE_ROW_MARKERS
+
+
+def _drop_aggregate_rows(df: pd.DataFrame, category_cols: Dict[str, str]) -> pd.DataFrame:
+    """Buang baris yang nilainya di SALAH SATU kolom kategori cocok penanda ringkasan umum
+    (mis. "Total") — baris semacam itu RINGKASAN bawaan tabel sumber (umum di PDF hasil
+    ekstraksi, mis. baris "Total" di akhir tabel per-jam), bukan record data sungguhan.
+
+    BUG NYATA DITEMUKAN (dibuktikan lewat generate ulang sungguhan): sebelum fungsi ini dipakai
+    di _compute_numeric_summary/_compute_category_numeric_pairs, baris "Total" itu ikut
+    dihitung sbg salah satu titik data numerik biasa - hasilnya "max"/"rata-rata" satu kolom
+    (mis. "Authentication Failure") jadi angka TOTAL HARIAN (13111), BUKAN nilai per-jam
+    tertinggi yang sebenarnya (671) - lalu angka salah itu genuinely (dan jujur, sesuai
+    instruksi "jangan mengarang") dikutip AI di narasi ("Authentication Failure mencatat angka
+    tertinggi 13111"), krn memang itu yang tertulis di STATISTIK TERHITUNG. AI-nya benar
+    mengikuti instruksi - datanya sendiri yang perlu dibersihkan lebih dulu, bukan instruksinya
+    yang ditambah lagi. _compute_category_numeric_breakdown SUDAH memfilter ini scr internal
+    (per kolom kategori yang dipakainya) - fungsi ini menggeneralisasi filter yang sama ke
+    fungsi lain yang JUGA melakukan groupby/agregasi per kolom kategori, supaya "Total" tidak
+    bisa lolos lewat jalur numerik mana pun."""
+    if df.empty or not category_cols:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for cat_col in category_cols.values():
+        if cat_col not in df.columns:
+            continue
+        mask = mask | df[cat_col].astype(str).map(_is_aggregate_row_marker)
+    return df[~mask] if mask.any() else df
+
+
+def _compute_category_numeric_breakdown(
+    df: pd.DataFrame, category_cols: Dict[str, str], numeric_cols: List[str],
+    max_categories: int = _MAX_CATEGORY_COLUMNS, max_numeric_per_category: int = 20, max_buckets: int = 60,
+    numeric_units: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """Rincian ASLI nilai satu kolom numerik PER NILAI KATEGORI (mis. 'Authentication Failure'
+    per 'Hour': 00:00->594, 01:00->577, dst) — BEDA dari _compute_category_numeric_pairs (itu
+    (jumlah kemunculan, rata-rata) per ENTITAS, utk scatter/bubble); ini satu angka numerik ASLI
+    per bucket, dibentuk supaya jadi SATU-SATUNYA sumber angka berlabel-lengkap yang valid utk
+    field "chart" section custom AI (lihat SECTIONS_BATCH_SYSTEM_PROMPT/get_sections_batch_prompt
+    di prompts.py — instruksinya sudah lama mewajibkan "labels"/"values" persis dari STATISTIK
+    TERHITUNG, tapi SEBELUM breakdown ini ada, TIDAK ADA baris STATISTIK TERHITUNG yang benar2
+    memberi pasangan label->nilai per bucket — model cuma diberi agregat min/max/rata2 SATU
+    kolom + beberapa contoh nilai TANPA label. BUG NYATA DIBUKTIKAN lewat data asli (laporan
+    "Authentication Failure Trend"): tanpa ground truth ini, model menukar nilai MAX/Total
+    harian (13111) ke slot jam 00:00 yang seharusnya 594, sementara 2 slot lain kebetulan masih
+    benar (577/596) — angkanya asli, cuma tertukar slot, krn model tidak pernah diberi tabel
+    jam->nilai yang valid utk disalin.
+
+    Baris yang nilai kategorinya cocok penanda agregat umum (mis. "Total") DIBUANG SEBELUM
+    groupby — baris semacam itu RINGKASAN bawaan tabel sumber (umum di PDF hasil ekstraksi,
+    mis. baris "Total" di akhir tabel per-jam), bukan bucket data sungguhan, dan justru itulah
+    SUMBER tertukarnya nilai di atas kalau ikut disertakan.
+
+    Dibatasi `max_categories`/`max_numeric_per_category`/`max_buckets` — kategori dgn nilai
+    unik >max_buckets (mis. ratusan alamat IP) dilewati sepenuhnya, sudah lebih cocok diwakili
+    top_categories (top-10 by count), bukan breakdown lengkap per bucket.
+
+    BUG NYATA DIPERBAIKI (ditemukan lewat pengukuran 30 laporan): `max_categories` DULU default
+    3, padahal `_detect_main_category_columns` (data_profiler.py) & allowlist eksplisit
+    "Kolom KATEGORI yang BOLEH dipakai ..." (format_statistics_as_text) sama-sama memakai
+    _MAX_CATEGORY_COLUMNS (5) - akibatnya kategori ke-4/ke-5 (mis. "Deskripsi_Barang_Jasa")
+    DIIZINKAN dipilih AI di allowlist TAPI tidak pernah genuinely dapat baris "Rincian kolom ...
+    per ..." (breakdown-nya berhenti di 3 kategori pertama) - trend_analysis yang menunjuk
+    kategori ke-4/ke-5 SELALU dibuang walau AI sudah patuh persis pada allowlist yang diberikan.
+    Disamakan ke _MAX_CATEGORY_COLUMNS supaya "kategori yang boleh dipakai" dan "kategori yang
+    genuinely dihitung breakdown-nya" selalu SATU daftar yang sama, tidak ada lagi celah di
+    antara keduanya.
+
+    BUG NYATA DIPERBAIKI (ditemukan lewat generate ulang laporan management sungguhan — report
+    dgn 33 aset unik): dulu `items` DIPOTONG di sini juga (`max_items_per_line`, dibuat awalnya
+    cuma supaya baris teks "Rincian ..." ke prompt AI tetap ringkas) — akibatnya kartu bersarang
+    di RENDER (_build_insight_page/_compute_multi_metric_items, TIDAK berhubungan dgn prompt AI
+    sama sekali) cuma kebagian 12 entitas PERTAMA scr urutan kemunculan, bukan SEMUA 33 — kartu
+    yg entitasnya "top-N by value" (bukan top-N by APPEARANCE ORDER) sering tidak ketemu di 12
+    itu, sub-item-nya kosong padahal datanya genuinely ada. `items` SEKARANG disimpan LENGKAP di
+    sini (dibatasi cuma oleh `max_buckets` scr KATEGORI, bukan lagi jumlah baris per kategori) —
+    pemotongan "biar teks prompt AI ringkas" dipindah ke SATU tempat yang tepat memangkasnya:
+    format_statistics_as_text (lapisan teks-ke-prompt), bukan di lapisan data yang dipakai ulang
+    utk render juga."""
+    if not category_cols or not numeric_cols:
+        return []
+    results: List[Dict[str, Any]] = []
+    categories_used = 0
+    for cat_label, cat_col in category_cols.items():
+        if categories_used >= max_categories:
+            break
+        if cat_col not in df.columns:
+            continue
+        working = df[~df[cat_col].astype(str).map(_is_aggregate_row_marker)]
+        n_unique = working[cat_col].dropna().nunique()
+        if n_unique < 2 or n_unique > max_buckets:
+            continue
+        pairs_this_category = 0
+        for num_col in numeric_cols:
+            if pairs_this_category >= max_numeric_per_category:
+                break
+            if num_col not in working.columns:
+                continue
+            # PERMINTAAN USER: kolom persentase TIDAK BOLEH dijumlahkan spt nilai biasa
+            # (jumlah beberapa persentase antar kategori tidak bermakna apa-apa) - rata-rata
+            # per kategori yang genuinely mewakili "seberapa besar realisasi kategori ini".
+            if (numeric_units or {}).get(num_col) == "percent":
+                grouped = working.groupby(cat_col, sort=False)[num_col].mean().dropna()
+            else:
+                grouped = working.groupby(cat_col, sort=False)[num_col].sum(min_count=1).dropna()
+            if len(grouped) < 2:
+                continue
+            items = [{"label": str(idx), "value": round(float(v), 2)} for idx, v in grouped.items()]
+            results.append({
+                "category_label": cat_label,
+                "category_col": cat_col,
+                "numeric_col": num_col,
+                "items": items,
+            })
+            pairs_this_category += 1
+        if pairs_this_category:
+            categories_used += 1
+    return results
+
+
+def _compute_category_count_breakdown(
+    df: pd.DataFrame, category_cols: Dict[str, str], max_categories: int = 5, max_buckets: int = 60,
+) -> List[Dict[str, Any]]:
+    """Jumlah kemunculan (count) ASLI per nilai kategori — pasangan Grup A utk "metric":"count"
+    (lihat report_render_logic.py::_resolve_templated_narrative), MELENGKAPI
+    _compute_category_numeric_breakdown di atas (itu utk nilai SUATU KOLOM ANGKA per kategori;
+    ini menjawab pertanyaan yang BEDA & SAMA SAHnya - "kategori mana paling sering muncul" -
+    TIDAK butuh kolom angka sama sekali).
+
+    BUG NYATA DIPERBAIKI (dilaporkan user, dgn koreksi tegas: ini BUKAN AI berhalusinasi):
+    sebelum breakdown ini ada, AI yang genuinely ingin membahas frekuensi kemunculan per
+    kategori terpaksa MENGARANG nama kolom angka palsu ("Total records") krn kontrak lama
+    HANYA menyediakan jalan menunjuk kolom angka asli (numeric_col) - tidak ada cara sah utk
+    bilang "hitung saja jumlah barisnya". Kontraknya yang belum lengkap, bukan modelnya yang
+    menebak sembarangan.
+
+    Beda dari stats["top_categories"] (dipotong ke 10 tertinggi per kolom, dibuat utk ringkasan
+    umum di prompt) - SEMUA nilai unik disimpan di sini (dibatasi cuma oleh max_buckets), supaya
+    "kategori PALING JARANG muncul" tetap genuinely akurat kalau AI membahasnya, bukan cuma
+    "ke-10 tersering dari yang kebetulan ditampilkan"."""
+    if not category_cols:
+        return []
+    results: List[Dict[str, Any]] = []
+    categories_used = 0
+    for cat_label, cat_col in category_cols.items():
+        if categories_used >= max_categories:
+            break
+        if cat_col not in df.columns:
+            continue
+        working = df[~df[cat_col].astype(str).map(_is_aggregate_row_marker)]
+        counts = working[cat_col].dropna().astype(str).value_counts()
+        if len(counts) < 2 or len(counts) > max_buckets:
+            continue
+        items = [{"label": str(idx), "value": int(v)} for idx, v in counts.items()]
+        results.append({"category_label": cat_label, "category_col": cat_col, "items": items})
+        categories_used += 1
+    return results
+
+
+def _coerce_indo_numeric_columns(df: pd.DataFrame) -> "tuple[pd.DataFrame, Dict[str, str]]":
+    """Jalan SEKALI di awal compute_statistics(), SEBELUM deteksi kolom kategori/numerik apa
+    pun — ubah kolom angka-tersimpan-sbg-teks (Rupiah "40.000.000", persentase "65%") jadi
+    float ASLI di DataFrame-nya sendiri (bukan cuma "ditandai numerik" sementara nilainya tetap
+    teks — .sum()/.mean() pandas di kolom teks akan gabung string atau error, bukan menghitung).
+
+    Sesudah ini, `pd.api.types.is_numeric_dtype` utk kolom yang berhasil dikonversi otomatis
+    True - _find_numeric_cols/_detect_main_category_columns/dst TIDAK PERLU diubah sama sekali,
+    keduanya sudah benar begitu dikasih DataFrame yang sudah genuinely numerik.
+
+    Return DataFrame baru (df asli tidak diubah) + dict {nama_kolom: "percent"|"currency"} utk
+    kolom yang unit-nya berhasil dikenali - dipakai lapisan teks/narasi (format_statistics_as_text)
+    & agregasi (_compute_category_numeric_breakdown, persentase pakai mean bukan sum) di bawah,
+    SUPAYA SATUANNYA TIDAK HILANG bukan cuma angkanya yang keselamatan."""
+    df = df.copy()
+    units: Dict[str, str] = {}
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        if not (pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col])):
+            continue
+        info = _classify_indo_numeric_column(df[col].dropna(), col_name=col)
+        if not info:
+            continue
+        df[col] = _coerce_indo_numeric_series(df[col], info)
+        if info["unit"]:
+            units[col] = info["unit"]
+    return df, units
 
 
 def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dict[str, Any]:
@@ -355,7 +623,13 @@ def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dic
     if df.empty:
         return {"total_records": 0}
 
+    df, numeric_units = _coerce_indo_numeric_columns(df)
+
     stats: Dict[str, Any] = {"total_records": len(df)}
+    if numeric_units:
+        # Prefix underscore = bukan bagian narasi AI (sama konvensinya dgn _source_columns) -
+        # dipakai lapisan teks/render utk tahu kolom mana yang butuh sufiks "%"/"Rp".
+        stats["_numeric_units"] = numeric_units
 
     date_col, date_series = find_date_column(parsed_data)
     exclude_for_categorical = [date_col] if date_col else []
@@ -363,8 +637,14 @@ def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dic
     sev_col = _detect_severity_column(df, exclude=exclude_for_categorical)
     stats["severity_distribution"] = _compute_severity_distribution(df, sev_col)
 
-    exclude_for_top = exclude_for_categorical + ([sev_col] if sev_col else [])
-    category_cols = _detect_main_category_columns(df, exclude=exclude_for_top)
+    # PERMINTAAN USER (poin 2, perbaikan bug severity "Status" pengadaan): kolom severity yang
+    # genuinely valid TIDAK LAGI otomatis dikecualikan dari deteksi kategori utama - nilai
+    # mentahnya (dipakai top_categories/chart_source/category_numeric_breakdown/dst) HARUS
+    # TETAP tersedia utk agregasi & narasi, bukan CUMA dikonsumsi severity_distribution lalu
+    # hilang dari semua tempat lain ("simpan sbg kolom tambahan, jangan menimpa yang asli" -
+    # severity & kategori sekarang BOLEH dual-purpose memakai kolom sumber yang sama). Kolom
+    # tanggal TETAP dikecualikan (genuinely jalur analisis lain, lihat time_series/time_pattern).
+    category_cols = _detect_main_category_columns(df, exclude=exclude_for_categorical)
     stats["top_categories"] = {
         label: _top_values(df, col) for label, col in category_cols.items()
     }
@@ -384,15 +664,32 @@ def compute_statistics(parsed_data: List[Dict[str, Any]], data_type: str) -> Dic
         if time_series:
             stats["time_series"] = time_series
 
-    exclude_for_numeric = exclude_for_top + list(category_cols.values())
-    numeric_summary = _compute_numeric_summary(df, exclude=exclude_for_numeric)
+    # BUG NYATA DIPERBAIKI (dibuktikan lewat generate ulang sungguhan - lihat docstring
+    # _drop_aggregate_rows): baris ringkasan bawaan tabel sumber (mis. "Total" di akhir tabel
+    # per-jam) HARUS dibuang SEBELUM dihitung min/max/rata-rata/dst, supaya angka-angka itu
+    # genuinely mewakili record data sungguhan - bukan lagi tercampur baris ringkasan.
+    df_no_agg = _drop_aggregate_rows(df, category_cols)
+
+    exclude_for_numeric = exclude_for_categorical + ([sev_col] if sev_col else []) + list(category_cols.values())
+    numeric_summary = _compute_numeric_summary(df_no_agg, exclude=exclude_for_numeric)
     if numeric_summary:
         stats["numeric_summary"] = numeric_summary
 
     if category_cols and numeric_summary:
-        pairs = _compute_category_numeric_pairs(df, category_cols, list(numeric_summary.keys()))
+        pairs = _compute_category_numeric_pairs(df_no_agg, category_cols, list(numeric_summary.keys()))
         if pairs:
             stats["category_numeric_pairs"] = pairs
+
+        breakdown = _compute_category_numeric_breakdown(
+            df_no_agg, category_cols, list(numeric_summary.keys()), numeric_units=numeric_units,
+        )
+        if breakdown:
+            stats["category_numeric_breakdown"] = breakdown
+
+    if category_cols:
+        count_breakdown = _compute_category_count_breakdown(df_no_agg, category_cols)
+        if count_breakdown:
+            stats["category_count_breakdown"] = count_breakdown
 
     return stats
 
@@ -409,6 +706,20 @@ def _humanize_stats_label(label: str, source_cols: Dict[str, str]) -> str:
         if real_name:
             return str(real_name).replace("_", " ").strip().title()
     return label.replace("_", " ").title()
+
+
+def _fmt_unit_value(val: float, unit: Optional[str]) -> str:
+    """Tempel satuan ke angka utk teks prompt AI - PERMINTAAN USER: satuan (persen/Rupiah)
+    HARUS ikut tersimpan/tertampil, bukan cuma angka polosnya, supaya AI tidak menulis "65"
+    padahal maksudnya "65%". Duplikat kecil gaya format Barat (koma pemisah ribuan) yang SAMA
+    dgn _fmt_count di report_render_logic.py - tidak diimpor dari sana spy tidak circular-
+    import (report_render_logic.py yang mengimpor DARI modul ini, lihat _humanize_stats_label)."""
+    num_str = f"{int(val):,}" if float(val) == int(val) else f"{val:,.2f}"
+    if unit == "percent":
+        return f"{num_str}%"
+    if unit == "currency":
+        return f"Rp {num_str}"
+    return num_str
 
 
 _DAY_NAME_ID = {
@@ -468,8 +779,95 @@ def format_statistics_as_text(stats: Dict[str, Any], language: str | None = None
                 f"{t['second_half_count']} event ({arah} {abs(t['pct_change'])}%)"
             )
 
+    # PERMINTAAN USER (perbaikan Grup A poin 2): sebelum baris ini ada, satu-satunya cara AI
+    # "tahu" kolom kategori/angka mana yang valid adalah MENYIMPULKAN SENDIRI dari baris
+    # "Rincian kolom ..."/schema_text di bawah — BUG NYATA DIBUKTIKAN: AI kadang tetap
+    # menunjuk kolom TANGGAL (mis. "Tanggal_PO") sbg category_col krn kolom itu memang ADA di
+    # schema_text, padahal SENGAJA dikecualikan dari deteksi kategori (tanggal punya analisis
+    # tren waktu sendiri) — bukan AI menebak sembarangan, instruksinya yang tidak eksplisit.
+    # Sekarang daftar yang BOLEH dipakai dinyatakan LANGSUNG (bukan lagi disimpulkan) - PERSIS
+    # kolom yang sama yang dipakai membangun "Rincian kolom ..."/"Rincian jumlah kemunculan"
+    # di bawah, supaya tidak ada ruang menerka nama kolom lain di luar daftar ini.
+    allowed_category_cols = [v for k, v in source_cols.items() if k not in ("date", "severity") and v]
+    if allowed_category_cols:
+        lines.append(
+            "Kolom KATEGORI yang BOLEH dipakai sbg 'category_col' (trend_analysis/chart_source): "
+            + ", ".join(dict.fromkeys(allowed_category_cols))
+        )
+    allowed_numeric_cols = list((stats.get("numeric_summary") or {}).keys())
+    if allowed_numeric_cols:
+        lines.append(
+            "Kolom ANGKA yang BOLEH dipakai sbg 'numeric_col' (trend_analysis/chart_source): "
+            + ", ".join(allowed_numeric_cols)
+        )
+    # PERMINTAAN USER (perbaikan Grup A poin, susulan): kolom tanggal SENGAJA tidak masuk
+    # daftar "Kolom KATEGORI ..." di atas (analisis tren waktu jalurnya sendiri, lihat
+    # "Rincian jumlah data per waktu" di bawah) - tapi kalau tidak dinyatakan di sini AI tidak
+    # tahu ke NAMA APA kolom tanggal itu harus dirujuk kalau genuinely ingin membahas pola
+    # waktu (bentuk kontrak "date_col") - dinyatakan eksplisit spy tidak perlu menerka dari
+    # schema_text lagi.
+    allowed_date_col = (stats.get("_source_columns") or {}).get("date")
+    if allowed_date_col:
+        lines.append(
+            "Kolom TANGGAL yang BOLEH dipakai sbg 'date_col' (trend_analysis, bentuk pola waktu): "
+            + allowed_date_col
+        )
+
+    numeric_units = stats.get("_numeric_units") or {}
     for col, s in (stats.get("numeric_summary") or {}).items():
-        lines.append(f"Kolom '{col}': min {s['min']}, max {s['max']}, rata-rata {s['mean']}")
+        unit = numeric_units.get(col)
+        lines.append(
+            f"Kolom '{col}': min {_fmt_unit_value(s['min'], unit)}, max {_fmt_unit_value(s['max'], unit)}, "
+            f"rata-rata {_fmt_unit_value(s['mean'], unit)}"
+        )
+
+    # BUG NYATA DIPERBAIKI (dilaporkan user, dibuktikan lewat data asli): sebelum baris ini
+    # ada, model TIDAK PERNAH diberi tabel label->nilai berpasangan utk kolom numerik per
+    # kategori/bucket (mis. per-jam) — cuma agregat min/max/rata2 di atas + contoh nilai lepas
+    # tanpa label di schema_text. Akibatnya model kadang menukar nilai MAX/agregat ke slot
+    # bucket pertama saat menulis field "chart" (mis. "Authentication Failure Trend" menampilkan
+    # 13.111 - itu Total harian - di slot jam 00:00 yang seharusnya 594). Baris ini jadi SATU-
+    # SATUNYA sumber angka berlabel-lengkap yang valid utk chart bertopik "per kategori/per
+    # waktu" — instruksi WAJIB menyalin PERSIS dari sini ada di SECTIONS_BATCH_SYSTEM_PROMPT.
+    # `item["items"]` di sini bisa panjang (SEMUA nilai unik kategori itu, lihat docstring
+    # _compute_category_numeric_breakdown - sengaja TIDAK dipotong di sana lagi supaya lapisan
+    # render juga kebagian data lengkap). Dipotong ke 12 baris pertama KHUSUS utk teks prompt
+    # AI di sini saja (model kecil makin buruk kalau kontexnya kepanjangan) - potongan ini
+    # TIDAK memengaruhi apa yang dipakai render (report_render_logic.py membaca stats dict-nya
+    # langsung, bukan teks hasil fungsi ini).
+    _STATS_TEXT_MAX_ITEMS_PER_LINE = 12
+    for item in (stats.get("category_numeric_breakdown") or []):
+        cat_name = _humanize_stats_label(item["category_label"], source_cols)
+        item_unit = numeric_units.get(item["numeric_col"])
+        pairs_str = ", ".join(
+            f"{p['label']}: {_fmt_unit_value(p['value'], item_unit)}"
+            for p in item["items"][:_STATS_TEXT_MAX_ITEMS_PER_LINE]
+        )
+        lines.append(f"Rincian kolom '{item['numeric_col']}' per '{cat_name}': {pairs_str}")
+
+    # PERMINTAAN USER (perbaikan Grup A poin 1): pasangan "Rincian jumlah kemunculan" utk
+    # metrik "count" - ground truth JUMLAH BARIS per kategori (bukan nilai kolom angka apa
+    # pun), supaya AI yang genuinely ingin membahas frekuensi kemunculan (mis. "vendor mana
+    # paling sering dipakai") punya jalan sah menunjuk category_col + "metric":"count" di
+    # trend_analysis, bukan terpaksa mengarang nama kolom angka palsu.
+    for item in (stats.get("category_count_breakdown") or []):
+        cat_name = _humanize_stats_label(item["category_label"], source_cols)
+        pairs_str = ", ".join(
+            f"{p['label']}: {p['value']}" for p in item["items"][:_STATS_TEXT_MAX_ITEMS_PER_LINE]
+        )
+        lines.append(f"Rincian jumlah kemunculan per '{cat_name}': {pairs_str}")
+
+    # PERMINTAAN USER (perbaikan Grup A poin 2, residu kolom tanggal): ground truth utk bentuk
+    # kontrak "date_col" - jumlah data per bucket WAKTU (harian/mingguan/bulanan, granularitas
+    # SUDAH otomatis dipilih _compute_time_series dari rentang data, bukan pilihan AI). Sebelum
+    # baris ini ada, AI yang genuinely ingin membahas pola waktu ("tanggal mana paling sibuk")
+    # tidak pernah diberi tabel bucket->jumlah yang valid utk dikutip - PERSIS gap yang sama
+    # dgn sebelum "Rincian jumlah kemunculan" ada utk metrik count.
+    ts = stats.get("time_series") or {}
+    if ts.get("labels"):
+        _unit_label = {"day": "harian", "week": "mingguan", "month": "bulanan"}.get(ts.get("unit"), ts.get("unit"))
+        pairs_str = ", ".join(f"{lbl}: {c}" for lbl, c in zip(ts["labels"], ts["counts"]))
+        lines.append(f"Rincian jumlah data per waktu (bucket {_unit_label}): {pairs_str}")
 
     return "\n".join(lines)
 

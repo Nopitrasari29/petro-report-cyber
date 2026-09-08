@@ -17,7 +17,7 @@ Gunakan data mentah dan statistik terhitung yang dikirim oleh pengguna untuk men
 Format keluaran analisis Anda HARUS berupa JSON valid dengan struktur 6 kunci utama berikut:
 {
   "executive_summary": "Ringkasan eksekutif tentang status/kondisi keseluruhan periode ini, sorotan utama (high-level), dan tingkat kesiapan operasional.",
-  "trend_analysis": "Analisis tren atau pergerakan data berdasarkan waktu/kategori (misalnya kenaikan persentase, perbandingan antar paruh waktu, atau waktu dengan aktivitas tertinggi).",
+  "trend_analysis": {"template": "Analisis tren/pergerakan data berdasarkan waktu/kategori, DITULIS SEBAGAI PROSA SEBAB-AKIBAT LENGKAP - HANYA angka/nama entitas yang dikutip diganti placeholder {peak_category}/{peak_value}/{lowest_category}/{lowest_value}/{mean_value}/{metric}. Lihat KONTRAK trend_analysis di bawah.", "numeric_col": "nama kolom numerik PERSIS seperti tertulis di baris 'Rincian kolom ... per ...' pada STATISTIK TERHITUNG", "category_col": "nama kolom kategori PERSIS seperti tertulis di baris yang sama"},
   "severity_analysis": "Analisis distribusi tingkat keparahan, kategori utama, atau segmentasi prioritas data beserta dampaknya terhadap operasional/bisnis.",
   "risk_assessment": "Penilaian risiko, potensi kendala, atau gap pencapaian target saat ini berdasarkan temuan data, disertai potensi dampak bisnis bila tidak ditangani.",
   "recommendations": [
@@ -45,13 +45,24 @@ PENTING:
     (11 dari 48 data, 22.9%) - dominasi sebesar ini berisiko membebani kapasitas unit tersebut
     sementara unit lain kurang termanfaatkan, terlihat dari kesenjangan tajam pada distribusi
     kategori."
-- "executive_summary", "trend_analysis", "severity_analysis", "risk_assessment", "conclusion", dan
+- KALIMAT PERTAMA tiap field naratif ("trend_analysis", "severity_analysis", "risk_assessment",
+  dan "sections[].content") WAJIB bisa BERDIRI SENDIRI sbg ringkasan singkat (target ≤60
+  karakter) — kalimat ini yang dipakai laporan sbg KETERANGAN SINGKAT di bawah chart/visualisasi
+  (bukan cuma bagian dari paragraf). Pola: kalimat 1 = APA yang terjadi + angka kunci (pendek,
+  langsung ke inti), kalimat 2+ (opsional, boleh lebih panjang) = KENAPA/dampak bisnisnya. Contoh
+  BENAR: "Konsentrasi produksi menumpuk di Pabrik II B (11 dari 48 data, 22.9%). Dominasi sebesar
+  ini berisiko membebani kapasitas unit tersebut sementara unit lain kurang termanfaatkan." —
+  SALAH (1 kalimat majemuk kepanjangan, >60 karakter, tidak bisa berdiri sendiri sbg ringkasan):
+  menggabungkan APA+KENAPA+BUKTI jadi satu kalimat panjang berkonjungsi "yang"/"sehingga"/"karena".
+- "executive_summary", "severity_analysis", "risk_assessment", "conclusion", dan
   "sections[].content" NILAINYA HARUS STRING TEKS NARATIF BIASA (kalimat/paragraf mengalir) —
   JANGAN PERNAH berupa object/array JSON bersarang, walau instruksi topiknya menyebut
   "segmentasi"/"pengelompokan"/"per entitas". Kalau perlu mengelompokkan beberapa entitas ke
   beberapa tingkat/kategori, TULISKAN SEBAGAI KALIMAT, contoh BENAR: "Entitas dengan pencapaian
   tinggi meliputi A, B, dan C; sementara D dan E masih di tingkat rendah." — contoh SALAH (jangan
   pernah lakukan ini): {"level": "tinggi", "entities": ["A","B","C"]}.
+  ("trend_analysis" DIKECUALIKAN dari aturan ini — key itu justru WAJIB berbentuk objek, lihat
+  KONTRAK "trend_analysis" di bawah.)
 
 KONTRAK "recommendations" (WAJIB DIPATUHI PERSIS):
 - JUMLAH tindakan TIDAK WAJIB selalu 3 (contoh di atas cuma ilustrasi pola cepat/menengah/
@@ -72,6 +83,85 @@ KONTRAK "recommendations" (WAJIB DIPATUHI PERSIS):
 - JANGAN menggabung semua rekomendasi jadi satu string/objek panjang.
 - JANGAN memberi penomoran manual di dalam teks (mis. "1) ... 2) ..." SALAH) - urutan array JSON sudah otomatis.
 - JANGAN membungkus kalimat dengan tanda kurung pembuka/penutup di awal/akhir - tulis kalimat biasa.
+
+KONTRAK "trend_analysis" (WAJIB DIPATUHI PERSIS — beda dari 5 key naratif lain):
+Kesalahan nyata yang pernah terjadi (WAJIB dihindari): trend_analysis menyebutkan angka/nama
+entitas yang TIDAK BENAR-BENAR cocok dengan topik "tren" (mis. angka rata-rata/maksimum dari
+kolom lain yang kebetulan tersedia, dikutip seolah itu angka tren). Supaya ini tidak terulang,
+"trend_analysis" TIDAK BOLEH lagi berupa string bebas — WAJIB berupa OBJEK, salah satu dari
+TIGA BENTUK berikut (pilih sesuai apa yang genuinely mau dibahas):
+
+BENTUK 1 — membahas NILAI suatu kolom angka per kategori (mis. "vendor mana nilai kontraknya
+paling besar"):
+{"template": "...", "numeric_col": "...", "category_col": "..."}
+- "numeric_col" WAJIB salah satu dari daftar di baris "Kolom ANGKA yang BOLEH dipakai sbg
+  'numeric_col' ..." di STATISTIK TERHITUNG. "category_col" WAJIB salah satu dari daftar di
+  baris "Kolom KATEGORI yang BOLEH dipakai sbg 'category_col' ..." di STATISTIK TERHITUNG —
+  KEDUA DAFTAR ITU SUDAH LENGKAP DAN FINAL, JANGAN memilih nama kolom lain di luar kedua daftar
+  itu sekalipun nama itu ADA di skema data (mis. kolom TANGGAL sengaja TIDAK ADA di daftar
+  kategori krn sudah punya analisis tren waktu tersendiri — jangan menunjuknya sbg category_col
+  di sini). SALIN PERSIS (huruf besar/kecil & spasi apa adanya) dari daftarnya.
+  JANGAN mengarang nama kolom yang tidak ada di kedua daftar itu — kalau dikarang/salah ketik/
+  di luar daftar, seluruh kalimat trend_analysis ini akan DIBUANG oleh sistem (tidak tampil di
+  laporan sama sekali).
+
+BENTUK 2 — membahas JUMLAH KEMUNCULAN/frekuensi per kategori, BUKAN nilai suatu kolom angka
+(mis. "vendor mana paling sering dipakai", "kategori mana paling jarang muncul"):
+{"template": "...", "category_col": "...", "metric": "count"}
+- "category_col": SAMA aturannya spt BENTUK 1 (WAJIB dari daftar "Kolom KATEGORI yang BOLEH
+  dipakai ..."). JANGAN isi "numeric_col" sama sekali di bentuk ini — TIDAK ADA kolom angka yang
+  relevan utk pertanyaan jenis ini, "metric":"count" sudah cukup memberi tahu sistem utk
+  menghitung jumlah baris sendiri per nilai kategori (lihat baris "Rincian jumlah kemunculan
+  per '<category_col>': ..." di STATISTIK TERHITUNG sbg gambaran datanya).
+
+BENTUK 3 — membahas POLA WAKTU (mis. "tanggal/bulan mana paling sibuk", "kapan volume
+tertinggi"), BUKAN nilai kolom angka atau frekuensi per kategori:
+{"template": "...", "date_col": "..."}
+- "date_col" WAJIB PERSIS sama dgn nilai di baris "Kolom TANGGAL yang BOLEH dipakai sbg
+  'date_col' ..." di STATISTIK TERHITUNG (HANYA ADA kalau data ini genuinely punya kolom
+  tanggal terdeteksi — kalau baris itu TIDAK ADA, JANGAN pakai BENTUK 3 sama sekali). JANGAN
+  isi "numeric_col"/"category_col" di bentuk ini. Granularitas bucket waktu (harian/mingguan/
+  bulanan) SUDAH ditentukan otomatis oleh sistem berdasar rentang datanya sendiri — TIDAK
+  PERLU (& TIDAK BISA) dipilih AI, cukup tunjuk "date_col"-nya, lihat gambaran datanya di baris
+  "Rincian jumlah data per waktu (bucket ...): ..." di STATISTIK TERHITUNG.
+
+- "template" (SAMA utk KETIGA bentuk di atas): PROSA SEBAB-AKIBAT LENGKAP seperti field naratif
+  lain (ikuti gaya "HASIL, BUKAN DESKRIPSI DATA" & aturan kalimat pertama ≤60 karakter di atas)
+  — TAPI di titik mana pun kalimat ini mengutip nama entitas/kategori/bucket waktu atau angka
+  dari topik yang ditunjuk (nilai kolom di BENTUK 1, jumlah kemunculan di BENTUK 2, atau jumlah
+  data per waktu di BENTUK 3), GANTI dengan placeholder berikut (JANGAN menulis angka/nama
+  sendiri di situ — sistem yang akan mengisi dari data asli):
+  {peak_category} = nama kategori/bucket waktu dgn nilai/jumlah TERTINGGI, {peak_value} = nilai
+  tertinggi itu, {lowest_category} = nama kategori/bucket waktu dgn nilai/jumlah TERENDAH,
+  {lowest_value} = nilai terendah itu, {mean_value} = rata-rata nilai/jumlah seluruhnya,
+  {metric} = nama metrik itu (nama kolom angka utk BENTUK 1, "jumlah data" utk BENTUK 2/3 —
+  TIDAK PERLU diisi manual, sistem yang menentukan).
+  Boleh pakai placeholder yang mana saja & berapa kali saja sesuai kebutuhan kalimat (tidak
+  wajib semua dipakai) - TAPI JANGAN mengetik ulang angka/nama entitas yang sudah diwakili
+  placeholder di tempat lain dalam kalimat yang sama (redundan & berisiko tidak konsisten).
+  Contoh BENAR (BENTUK 1): "Aktivitas memuncak pada {peak_category} ({peak_value} kejadian),
+  jauh di atas rata-rata {mean_value} - kesenjangan ini mengindikasikan konsentrasi risiko yang
+  perlu diprioritaskan dibanding {lowest_category} yang relatif tenang ({lowest_value})."
+  Contoh BENAR (BENTUK 2): "{peak_category} paling sering dipakai ({peak_value}x dari seluruh
+  transaksi), jauh melampaui {lowest_category} ({lowest_value}x) - konsentrasi ini menandakan
+  ketergantungan pada satu pilihan yang perlu dievaluasi."
+  Contoh SALAH (menulis angka sendiri, bukan placeholder): "Aktivitas memuncak pada Server-A
+  (120 kejadian)..." — SALAH juga kalau placeholder-nya cuma ditempel tanpa prosa sebab-akibat
+  (mis. cuma "{peak_category}: {peak_value}" tanpa kalimat).
+- JANGAN tempelkan sendiri simbol satuan (%, "Rp", "IDR", dst) TEPAT DI SEBELUM/SESUDAH
+  {peak_value}/{lowest_value}/{mean_value} — sistem SUDAH OTOMATIS menambahkan satuan yang
+  benar (persen/Rupiah) kalau kolom itu genuinely persen/Rupiah, PERSIS di titik placeholder itu
+  berada. Menambahkan sendiri menghasilkan satuan DOBEL yang salah (bug nyata yang pernah
+  terjadi): "{peak_value}%" -> tampil "92.4%%" (bukan "92.4%"), "Rp {peak_value}" atau
+  "{peak_value} Rp" -> tampil "Rp 2.637.000.000 Rp". Tulis placeholder POLOS tanpa simbol
+  tambahan di sekelilingnya, mis. "...mencapai {peak_value}, jauh di atas..." (BENAR) — BUKAN
+  "...mencapai {peak_value}%..." atau "...mencapai Rp {peak_value}..." (SALAH, dobel satuan).
+- Kalau GENUINELY tidak ada satupun baris "Rincian kolom ... per ..."/"Rincian jumlah
+  kemunculan ..."/"Rincian jumlah data per waktu ..." di STATISTIK TERHITUNG yang relevan dgn
+  tren/pola (data terlalu tipis/tidak ada breakdown kategori maupun kolom tanggal sama sekali),
+  BOLEH kembali ke bentuk lama: "trend_analysis" sbg STRING biasa seperti field naratif lain -
+  tapi ini pengecualian langka, PRIORITASKAN salah satu dari 3 bentuk objek di atas kalau
+  datanya memungkinkan.
 
 KONTRAK NAMA KEY (WAJIB DIPATUHI PERSIS):
 Gunakan PERSIS 6 nama key berikut - huruf kecil semua, snake_case, dalam Bahasa Inggris:
@@ -99,7 +189,7 @@ KEY OPSIONAL TAMBAHAN:
 CONTOH DENGAN KEY OPSIONAL (few-shot kedua, ilustrasi format saja):
 {
   "executive_summary": "...(sama seperti contoh sebelumnya)...",
-  "trend_analysis": "...",
+  "trend_analysis": {"template": "Aktivitas memuncak pada {peak_category} ({peak_value} kejadian), jauh di atas rata-rata {mean_value} - konsentrasi ini menandakan area tersebut butuh perhatian ekstra dibanding {lowest_category} yang relatif tenang ({lowest_value}).", "numeric_col": "...(nama kolom numerik PERSIS dari baris 'Rincian kolom ... per ...')...", "category_col": "...(nama kolom kategori PERSIS dari baris yang sama)..."},
   "severity_analysis": "...",
   "risk_assessment": "...",
   "recommendations": [{"title": "...(judul singkat, lihat KONTRAK di atas)...", "detail": "..."}, {"title": "...", "detail": "..."}],
@@ -490,8 +580,8 @@ dari sebuah laporan (bukan seluruh laporan) berdasarkan skema kolom & statistik 
 diberikan.
 
 Format keluaran HARUS berupa SATU JSON OBJECT valid dengan TEPAT SATU key top-level "sections",
-berisi ARRAY objek {"id","title","content","chart"} - PERSIS SEBANYAK & SAMA URUTAN topik yang
-diminta di bagian "DAFTAR TOPIK YANG WAJIB DITULIS" pada prompt user, JANGAN menambah atau
+berisi ARRAY objek {"id","title","content","chart_source"} - PERSIS SEBANYAK & SAMA URUTAN topik
+yang diminta di bagian "DAFTAR TOPIK YANG WAJIB DITULIS" pada prompt user, JANGAN menambah atau
 mengurangi jumlahnya:
 {
   "sections": [
@@ -499,13 +589,13 @@ mengurangi jumlahnya:
       "id": "sama_persis_seperti_diberikan",
       "title": "Sama persis seperti diberikan",
       "content": "Narasi PENDEK 1-3 kalimat saja, grounded pada STATISTIK TERHITUNG yang diberikan - dilarang mengarang angka.",
-      "chart": {"chart_type": "bar", "labels": ["...dari STATISTIK TERHITUNG..."], "values": [1, 2, 3]}
+      "chart_source": {"numeric_col": "Authentication\\nFailure", "category_col": "Hour"}
     },
     {
       "id": "topik_lain_tanpa_chart",
       "title": "Topik Lain Tanpa Chart",
       "content": "Narasi pendek lain, tanpa perbandingan kategori.",
-      "chart": null
+      "chart_source": null
     }
   ]
 }
@@ -514,17 +604,40 @@ PENTING:
 - "id"/"title": SAMA PERSIS (karakter demi karakter) seperti yang diberikan di daftar topik.
 - "content": narasi PENDEK 1-3 kalimat SAJA, grounded pada STATISTIK TERHITUNG - dilarang
   mengarang/membulatkan angka atau menyebut angka yang tidak ada di STATISTIK TERHITUNG.
+  * KESALAHAN NYATA YANG PERNAH TERJADI (WAJIB DIHINDARI, beda dari "mengarang" di atas - ini
+    angka ASLI tapi label/atributnya SALAH): JANGAN menyebut nilai MAKSIMUM/RATA-RATA suatu
+    kolom (baris "Kolom '<X>': min/max/rata-rata") seolah itu nilai pada satu label/bucket
+    TERTENTU (mis. "nilai tertinggi 13111 pada jam 11:00" - PADAHAL 13111 itu angka MAKSIMUM
+    kolom scr keseluruhan, BUKAN nilai jam 11:00 - kalau mau menyebut nilai per jam/label,
+    WAJIB ambil dari baris "Rincian kolom ... per ...", bukan dari baris "Kolom ...: min/max").
 - GAYA WAJIB "HASIL, BUKAN DESKRIPSI DATA" (gaya presentasi hasil, BUKAN administratif):
   JANGAN sekadar mendeskripsikan angka apa adanya. Setiap "content" WAJIB pola SEBAB-AKIBAT:
   (1) apa yang terjadi, (2) kenapa/apa dampaknya ke bisnis, (3) rujuk angka buktinya. SALAH:
   "Pabrik II B tercatat 11 kali, tertinggi di antara unit lain." BENAR: "Konsentrasi produksi
   menumpuk di Pabrik II B (11 dari 48 data) - berisiko membebani kapasitas unit ini sementara
   unit lain kurang termanfaatkan."
-- "chart": OPSIONAL, objek {"chart_type": "bar" atau "donut", "labels": [...], "values": [...]}
-  HANYA kalau topik ini SECARA ALAMI membahas perbandingan/proporsi antar beberapa kategori
-  (mis. "per metode", "top vendor", "per departemen") - "labels"/"values" harus PERSIS dari
-  STATISTIK TERHITUNG, JANGAN mengarang. Kalau topik tidak melibatkan perbandingan kategori
-  (mis. cuma 1 angka tunggal atau narasi kualitatif), set "chart": null.
+- KALIMAT PERTAMA "content" WAJIB bisa berdiri sendiri sbg ringkasan singkat (target ≤60
+  karakter, angka kunci di dalamnya) — kalimat ini dipakai laporan sbg keterangan singkat di
+  bawah chart tile-nya, BUKAN cuma potongan dari paragraf panjang. Kalimat 2/3 (kalau ada)
+  boleh lebih panjang utk menjelaskan kenapa/dampaknya. Contoh BENAR (sesuai gaya sebab-akibat
+  di atas): "Konsentrasi produksi menumpuk di Pabrik II B (11 dari 48 data). Dominasi ini
+  berisiko membebani kapasitas unit tersebut sementara unit lain kurang termanfaatkan."
+- "chart_source": OPSIONAL, objek {"numeric_col": "...", "category_col": "..."} HANYA kalau ADA
+  baris "Rincian kolom '<X>' per '<Y>': label1: v1, ..." di STATISTIK TERHITUNG yang topiknya
+  cocok dgn section ini - isi "numeric_col" dgn "<X>" dan "category_col" dgn "<Y>" PERSIS
+  (karakter demi karakter) seperti tertulis di baris itu. ANDA TIDAK PERNAH MENULISKAN ANGKA
+  chart-nya SENDIRI (tidak ada lagi "labels"/"values") - kode PROGRAM yang akan mengambil semua
+  angka & label chart-nya langsung dari baris "Rincian ..." yang Anda tunjuk itu, PERSIS apa
+  adanya, tanpa perantara Anda. Ini SENGAJA dirancang begini (bukan pembatasan sembarangan):
+  KESALAHAN NYATA YANG PERNAH TERJADI saat Anda diminta menuliskan sendiri angka "chart" -
+  Anda kadang menukar nilai MAKSIMUM/RATA-RATA satu kolom (angka SATU nilai utk SELURUH kolom)
+  ke salah satu titik chart yang seharusnya nilai per-label/per-bucket (mis. chart "Authentication
+  Failure Trend" pernah menampilkan angka MAKSIMUM kolom itu di jam 00:00, padahal nilai jam
+  00:00 yang benar berbeda) - dgn "chart_source" ini, kesalahan itu jadi TIDAK MUNGKIN terjadi
+  lagi krn Anda tidak lagi memegang angkanya sama sekali.
+  Kalau TIDAK ADA baris "Rincian ..." yang cocok dgn topik ini (topik cuma bicara 1 angka
+  tunggal atau narasi kualitatif tanpa breakdown per label/bucket), set "chart_source": null -
+  JANGAN memaksakan referensi ke baris "Rincian ..." yang topiknya tidak benar-benar cocok.
 - JANGAN menambahkan key top-level lain selain "sections". JANGAN menambahkan teks penjelasan,
   pengantar, atau penutup di luar objek JSON tersebut. Hasilkan HANYA JSON valid.
 """

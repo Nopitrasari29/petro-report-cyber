@@ -1,9 +1,31 @@
 import re
+import unicodedata
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple, cast
 import numpy as np
 import pandas as pd
 from app.services.parser.base import BaseParser
 from app.services.period_detector import find_date_column, _parse_dates
+
+
+def _strip_decorative_symbols(text: str) -> str:
+    """Buang simbol dekoratif (▼ ▲ ▣ ■ • dst — biasanya penanda urut/bullet VISUAL di header
+    tabel PDF/aplikasi web, mis. ikon sort "▼" nempel di judul kolom "Illegal Requests",
+    BUKAN bagian nama kolom sungguhan) dari AWAL & AKHIR nama kolom — BUG DIPERBAIKI
+    (dilaporkan user, reproduksi dari foto tabel WAF/Virtual Server: header "▼ Illegal
+    Requests" kebaca APA ADANYA termasuk ikon urutnya, nyangkut jadi bagian nama kolom &
+    ikut muncul di label laporan). Dicek via kategori Unicode "So"/"Sk" (Symbol, other/
+    modifier — mencakup panah, bentuk geometris, dingbat, dll) SUPAYA tanda baca NORMAL yang
+    memang bagian sah nama kolom (":", "(", ")", "-", dst — mis. "Blocked: Policy") tidak
+    ikut kepotong. Cuma dipangkas di UJUNG (awal/akhir), bukan tengah teks — simbol semacam
+    itu di TENGAH nama kolom kemungkinan besar genuinely bagian nama, bukan dekorasi."""
+    chars = list(text)
+    start = 0
+    while start < len(chars) and (chars[start].isspace() or unicodedata.category(chars[start]) in ("So", "Sk")):
+        start += 1
+    end = len(chars)
+    while end > start and (chars[end - 1].isspace() or unicodedata.category(chars[end - 1]) in ("So", "Sk")):
+        end -= 1
+    return "".join(chars[start:end])
 
 # Dipakai _row_looks_like_data() — cocok untuk angka polos ("594"), desimal ("3.5"/"3,5"),
 # dan persentase ("42%"). Sengaja SEDERHANA (bukan validasi angka penuh) karena cuma dipakai
@@ -76,6 +98,14 @@ class PDFParser(BaseParser):
         end_parsed = _parse_dates([match.group("end")]).iloc[0]
         if pd.isna(start_parsed) or pd.isna(end_parsed):
             return None
+        # BUG DIPERBAIKI: "start"/"end" di sini MURNI dari posisi kata "From"/"To" di teks —
+        # kalau format tanggalnya ambigu (mis. salah tafsir D/M vs M/D, lihat _parse_dates)
+        # atau labelnya kebetulan tertukar di sumbernya, hasilnya bisa start > end tanpa
+        # terdeteksi. Ditukar kalau ternyata terbalik, supaya period_start yang dikembalikan
+        # SELALU <= period_end (jaminan yang sama seperti detect_period(), yang otomatis
+        # aman krn pakai min()/max()).
+        if start_parsed > end_parsed:
+            start_parsed, end_parsed = end_parsed, start_parsed
         return start_parsed.strftime("%Y-%m-%d"), end_parsed.strftime("%Y-%m-%d")
 
     @staticmethod
@@ -184,7 +214,20 @@ class PDFParser(BaseParser):
         rows: List[Dict[str, Any]] = []
 
         def _clean_cell(c: Any) -> str:
-            return "" if c is None else str(c).strip()
+            # BUG DIPERBAIKI (ditemukan via tes parity export_pdf.py/export_ppt.py, laporan
+            # sungguhan report id 166 dari file PDF traffic asli user): sel HEADER yang
+            # tekstnya wrap ke 2 baris di dalam PDF-nya sendiri (mis. "Rate" baris atas,
+            # "Controlled" baris bawah, SATU sel tabel yang sama) diekstrak pdfplumber APA
+            # ADANYA termasuk newline "\n" di tengahnya — nama kolom jadi literal
+            # "Rate\nControlled", ikut kebawa sampai ke judul chart (mis. scatter_bubble
+            # "Hour vs Rate\nControlled") & bikin tampilannya beda antara PDF/PPT tergantung
+            # bagaimana masing2 me-render newline mentah itu. Newline/whitespace ganda di
+            # DALAM satu sel (bukan whitespace di awal/akhir, yang sudah ditangani .strip())
+            # cuma artefak wrap baris tabel, bukan makna semantik yang perlu dipertahankan —
+            # diratakan jadi 1 spasi.
+            if c is None:
+                return ""
+            return re.sub(r"\s+", " ", str(c)).strip()
 
         try:
             with pdfplumber.open(cast(Any, file_content)) as pdf:
@@ -257,7 +300,7 @@ class PDFParser(BaseParser):
                                 group_idx = header_key_to_group[header_key]
                             else:
                                 this_header = [
-                                    (c or f"column_{i + 1}") for i, c in enumerate(header_row_cells)
+                                    (_strip_decorative_symbols(c) or f"column_{i + 1}") for i, c in enumerate(header_row_cells)
                                 ]
                                 # Label dicari utk SEMUA grup termasuk yang pertama (bukan
                                 # cuma grup ke-2+) — waktu grup pertama diproses, belum tentu
@@ -280,7 +323,7 @@ class PDFParser(BaseParser):
                             row_dict: Dict[str, Any] = {}
                             for col_idx, col_name in enumerate(header):
                                 value = raw_row[col_idx] if col_idx < len(raw_row) else None
-                                row_dict[col_name] = value.strip() if isinstance(value, str) else value
+                                row_dict[col_name] = _strip_decorative_symbols(value) if isinstance(value, str) else value
                             groups[group_idx]["rows"].append(row_dict)
 
                 if len(groups) == 1:
@@ -311,7 +354,7 @@ class PDFParser(BaseParser):
                             continue
                         if fb_header is None:
                             fb_header = [
-                                (_clean_cell(c) or f"column_{i + 1}")
+                                (_strip_decorative_symbols(_clean_cell(c)) or f"column_{i + 1}")
                                 for i, c in enumerate(raw_row)
                             ]
                             continue
@@ -319,7 +362,11 @@ class PDFParser(BaseParser):
                         if normalized_row == fb_header:
                             continue
                         row_dict = {
-                            col_name: (raw_row[col_idx].strip() if isinstance(raw_row[col_idx], str) else raw_row[col_idx])
+                            col_name: (
+                                _strip_decorative_symbols(raw_row[col_idx])
+                                if isinstance(raw_row[col_idx], str)
+                                else raw_row[col_idx]
+                            )
                             for col_idx, col_name in enumerate(fb_header)
                             if col_idx < len(raw_row)
                         }

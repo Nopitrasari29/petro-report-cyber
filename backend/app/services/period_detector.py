@@ -73,7 +73,25 @@ def _parse_dates(values: List[Any]) -> "pd.Series":
         # kritis), jadi warning pandas soal format ambigu/tidak seragam sengaja diredam supaya
         # tidak membanjiri log tiap kali ada file diupload.
         warnings.simplefilter("ignore")
-        return pd.to_datetime(pd.Series(values), errors="coerce", dayfirst=not looks_iso)
+        if looks_iso:
+            return pd.to_datetime(pd.Series(values), errors="coerce", dayfirst=False)
+        # BUG DIPERBAIKI: dayfirst=True SEBELUMNYA dipaksakan ke SEMUA format non-ISO (asumsi
+        # konvensi Indonesia D/M/Y) TANPA pernah dicek apakah asumsi itu genuinely cocok —
+        # dataset yang KEBETULAN format M/D/Y asli (mis. sumber sistem Amerika) akan salah
+        # tafsir TANPA pernah kelihatan gagal (tanggal yang salah tetap "valid" scr kalender
+        # kalau komponen hari<=12, cuma hari&bulannya tertukar diam-diam). Sekarang KEDUA
+        # interpretasi dicoba, dipilih yang menghasilkan LEBIH BANYAK tanggal berhasil
+        # diparse (NaT lebih sedikit) — seri M/D/Y asli yang dipaksa dayfirst=True akan GAGAL
+        # TOTAL (NaT) utk tanggal dgn "bulan" aslinya >12 (mis. "07/25/2025", 25 bukan hari
+        # valid di bulan ke-7 kalau dibaca dayfirst) — sinyal kuat formatnya sebenarnya M/D.
+        # Seri yang genuinely D/M/Y (konvensi Indonesia) TIDAK terpengaruh (kedua interpretasi
+        # sama2 valid kalau hari & bulan sama-sama <=12); dayfirst=True tetap jadi tie-breaker
+        # saat keduanya berhasil sama banyak, mempertahankan asumsi default lama.
+        parsed_dayfirst = pd.to_datetime(pd.Series(values), errors="coerce", dayfirst=True)
+        parsed_monthfirst = pd.to_datetime(pd.Series(values), errors="coerce", dayfirst=False)
+        if parsed_monthfirst.notna().sum() > parsed_dayfirst.notna().sum():
+            return parsed_monthfirst
+        return parsed_dayfirst
 
 
 def find_date_column(parsed_data: List[Dict[str, Any]]) -> Tuple[Optional[str], Optional["pd.Series"]]:

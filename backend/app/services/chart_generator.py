@@ -134,6 +134,99 @@ def _looks_numeric_series(series: "pd.Series") -> bool:
     return (numeric_count / len(series)) >= 0.9
 
 
+_PERCENT_SUFFIX_RE = re.compile(r"%\s*$")
+_CURRENCY_PREFIX_RE = re.compile(r"^(?:rp\.?|idr|\$)\s*", re.IGNORECASE)
+_CURRENCY_COLNAME_RE = re.compile(r"(?:^|_)rp$|rupiah", re.IGNORECASE)
+
+
+def _parse_number_token(token: str, is_indo: bool) -> float:
+    """Ubah SATU token angka-sbg-teks yang sudah dilucuti simbol (%/Rp/$) jadi float, sesuai
+    format yang SUDAH DIPUTUSKAN utk seluruh kolom (`is_indo`, lihat _classify_indo_numeric_column
+    — keputusan format WAJIB per kolom, bukan per nilai, supaya "1.048" di kolom yang sama tidak
+    ditafsirkan dobel: 1048 di satu baris, 1.048 di baris lain)."""
+    if is_indo:
+        return float(token.replace(".", "").replace(",", "."))
+    return float(token.replace(",", ""))
+
+
+def _classify_indo_numeric_column(series: "pd.Series", col_name: str = "") -> Optional[Dict[str, Any]]:
+    """BUG NYATA DIPERBAIKI (dilaporkan user, dibuktikan langsung dari data laporan pengadaan &
+    realisasi anggaran): kolom angka Rupiah ("40.000.000") atau persentase ("65%") yang
+    disimpan sbg teks TIDAK PERNAH masuk hitungan statistik (numeric_summary/
+    category_numeric_breakdown/dst) krn cuma dicek `pd.api.types.is_numeric_dtype`, yang False
+    utk kolom teks apa pun formatnya. `_looks_numeric_series` di atas SUDAH bisa MENDETEKSI pola
+    ini (dipakai buat MENGECUALIKAN dari kandidat kategori) tapi tidak pernah dipakai utk benar2
+    MENGUBAH nilainya jadi angka asli yang bisa dihitung - fungsi ini MELUASKAN logika yang sama
+    (regex _INDO_THOUSANDS_RE yang sudah ada, TIDAK dibangun ulang dari nol) supaya kolom itu
+    genuinely bisa ikut agregasi pandas.
+
+    KEPUTUSAN FORMAT PER KOLOM, BUKAN PER NILAI (permintaan eksplisit user - alasannya konkret):
+    "1.048" ambigu sendirian (bisa berarti 1048 gaya Indonesia, bisa berarti 1,048 gaya Inggris).
+    Diputuskan SEKALI dgn melihat SELURUH kolom: kalau ADA nilai lain di kolom yang sama dgn 2+
+    titik (mis. "40.000.000", tidak ambigu sama sekali - cuma bisa berarti pemisah ribuan), ATAU
+    kalau SEMUA nilai berisi-titik di kolom itu konsisten berpola "titik diikuti tepat 3 digit"
+    (_INDO_THOUSANDS_RE - sudah otomatis menangkap kasus "1.048" tunggal sbg pola ribuan kalau
+    TIDAK ADA satu pun nilai lain yang justru terlihat desimal biasa spt "42.5"), kolom itu
+    diperlakukan Indonesia utk SEMUA barisnya sekaligus - tidak pernah dicampur per baris.
+
+    Return None kalau kolom ini genuinely BUKAN angka (categorical asli) - dipertahankan sbg
+    kategori spt sebelumnya, tidak dipaksa jadi numerik.
+    Return {"is_indo": bool, "unit": None|"percent"|"currency"} kalau kolom ini angka-sbg-teks
+    yang valid - "unit" DISIMPAN (bukan dibuang) supaya lapisan render/narasi tahu harus
+    menampilkan "%"/"Rp" dan tahu persentase TIDAK BOLEH dijumlahkan spt nilai biasa (lihat
+    pemakainya di data_profiler.py::_compute_category_numeric_breakdown)."""
+    raw_values = [str(v).strip() for v in series if str(v).strip() and str(v).strip().lower() not in ("nan", "none")]
+    if not raw_values:
+        return None
+
+    has_percent = (sum(1 for v in raw_values if _PERCENT_SUFFIX_RE.search(v)) / len(raw_values)) >= 0.9
+    stage1 = [_PERCENT_SUFFIX_RE.sub("", v).strip() for v in raw_values] if has_percent else raw_values
+
+    has_currency_prefix = (sum(1 for v in stage1 if _CURRENCY_PREFIX_RE.match(v)) / len(stage1)) >= 0.9
+    stage2 = [_CURRENCY_PREFIX_RE.sub("", v).strip() for v in stage1] if has_currency_prefix else stage1
+
+    with_dot = [v for v in stage2 if "." in v]
+    is_indo = bool(with_dot) and (
+        any(v.count(".") >= 2 for v in with_dot) or all(_INDO_THOUSANDS_RE.match(v) for v in with_dot)
+    )
+
+    parsed_ok = 0
+    for v in stage2:
+        try:
+            _parse_number_token(v, is_indo)
+            parsed_ok += 1
+        except ValueError:
+            pass
+    # Ambang 90% SAMA PERSIS dgn _looks_numeric_series di atas - konsisten dgn bar yang sudah
+    # ditetapkan sebelumnya utk "hampir semua nilai kolom ini genuinely angka".
+    if not stage2 or (parsed_ok / len(stage2)) < 0.9:
+        return None
+
+    if has_percent:
+        unit = "percent"
+    elif has_currency_prefix or _CURRENCY_COLNAME_RE.search(col_name or ""):
+        unit = "currency"
+    else:
+        unit = None
+    return {"is_indo": is_indo, "unit": unit}
+
+
+def _coerce_indo_numeric_series(series: "pd.Series", info: Dict[str, Any]) -> "pd.Series":
+    """Terapkan keputusan `_classify_indo_numeric_column` (format & unit SUDAH tetap utk
+    SELURUH kolom) ke tiap nilai - dipanggil setelah classify, bukan menebak ulang per nilai."""
+    def _one(v):
+        s = str(v).strip()
+        if not s or s.lower() in ("nan", "none"):
+            return float("nan")
+        s = _PERCENT_SUFFIX_RE.sub("", s).strip()
+        s = _CURRENCY_PREFIX_RE.sub("", s).strip()
+        try:
+            return _parse_number_token(s, info["is_indo"])
+        except ValueError:
+            return float("nan")
+    return series.map(_one)
+
+
 def _rank_categorical_candidates(
     df: pd.DataFrame, exclude: List[str] = None, max_unique: int = 30, max_unique_ratio: float = 0.7
 ) -> List[str]:

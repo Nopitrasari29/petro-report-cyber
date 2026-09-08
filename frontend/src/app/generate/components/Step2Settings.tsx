@@ -534,7 +534,7 @@ export default function Step2Settings({
                 {[
                   {
                     id: "SOC Executive Summary",
-                    name: tx("SOC Technical Report", "Laporan Teknis SOC"),
+                    name: tx("Descriptive Report", "Laporan Deskriptif"),
                     desc: tx("Analisis mendalam, ringkasan eksekutif & temuan komprehensif", "Analisis mendalam, ringkasan eksekutif & temuan komprehensif"),
                     badge: "Standard",
                     icon: (
@@ -545,7 +545,7 @@ export default function Step2Settings({
                   },
                   {
                     id: "Management Report",
-                    name: tx("Management Report", "Laporan Manajemen"),
+                    name: tx("Visual Report", "Laporan Visual"),
                     desc: tx("Visual tinggi, KPI ringkas, peta risiko & action items eksekutif", "Visual tinggi, KPI ringkas, peta risiko & action items eksekutif"),
                     badge: "Visual / KPI",
                     icon: (

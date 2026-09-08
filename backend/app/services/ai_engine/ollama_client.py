@@ -57,8 +57,35 @@ _KEY_ALIASES: dict[str, list[str]] = {
 _OPTIONAL_KEYS = ["key_findings", "chart_captions", "sections"]
 
 _NUMBERED_OR_BULLET_RE = re.compile(r"\s*(?:\d+[\)\.]|[•\-\*])\s+")
+# BUG NYATA & PARAH (dilaporkan user, direproduksi byte-per-byte): _NUMBERED_OR_BULLET_RE di
+# atas TIDAK ber-anchor ke awal string - sengaja begitu krn dipakai MEMECAH daftar bernomor di
+# _split_multi_action_string ("1) ... 2) ..."). Tapi pola yang SAMA juga dipakai MENGHAPUS
+# penomoran di AWAL teks (_clean_recommendation_text) - di sana ketidakhadiran anchor bikin dia
+# memakan "(15 dari 42) untuk ..." di TENGAH kalimat yang sah: " 42) " dihapus, sisanya menempel
+# jadi "(15 dariuntuk mengidentifikasi ...". Jadi kalimat rusak yang terlihat di laporan BUKAN
+# tulisan AI yang korup - AI menulisnya UTUH, kode kita sendiri yang merusaknya. Pola ANCHOR
+# khusus di bawah dipakai utk kasus "buang penomoran di awal" supaya tidak pernah menyentuh
+# angka di tengah kalimat.
+_LEADING_NUMBER_OR_BULLET_RE = re.compile(r"^\s*(?:\d+[\)\.]|[•\-\*])\s+")
+# AKAR YANG SAMA, JALUR BERBEDA (dilaporkan user & direproduksi): pola tanpa anchor di atas
+# juga dipakai MEMECAH teks jadi beberapa tindakan - dan di sana pun ia menganggap angka di
+# TENGAH kalimat sbg penanda daftar, lalu MEMBUANG pemisahnya:
+#   "...jam 00:00 hingga 02:00. Ini akan..."      -> "...hingga 02:" + "Ini akan..."
+#   "...kontrak (15 dari 42) untuk mengurangi..." -> "...(15 dari" + "untuk mengurangi..."
+# Penanda daftar yang SAH cuma muncul di AWAL teks atau SESUDAH akhir kalimat/baris baru -
+# bukan di tengah kalimat. Pembatasan itu yang dipakai di bawah. Konsekuensi yang disengaja:
+# daftar bullet yang ditulis menyambung tanpa tanda baca ("• a • b") tidak lagi dipecah -
+# gagal memecah cuma menyisakan 1 item panjang, sementara memecah keliru MERUSAK kalimat
+# (pemisahnya ikut terhapus). Pilihan jatuh ke yang tidak merusak isi.
+_LIST_MARKER_SPLIT_RE = re.compile(r"(?:^|(?<=[.;!?\n]))\s*(?:\d+[\)\.]|[•\-\*])\s+")
 _TITLE_DETAIL_RE = re.compile(r"^([A-Z][^:]{2,50}):\s*(.+)$", re.DOTALL)
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-ZÀ-Ý])")
+# INSTANSI KETIGA dari keluarga bug yang sama (dilaporkan user & direproduksi): pemisah
+# kalimat ini memecah SETIAP titik yang diikuti huruf kapital - termasuk SINGKATAN.
+#   "Legal Requests are 835 vs. Illegal Requests of 107" -> "...835 vs." + "Illegal ..."
+# Satu kalimat utuh jadi terbelah dua & masing-masing dipakai sbg "tindakan" terpisah.
+# Titik sesudah singkatan umum (vs./dll./dsb./dst./mis./tsb.) TIDAK dianggap akhir kalimat.
+_ABBREV_NO_SPLIT = r"(?<!\bvs\.)(?<!\bdll\.)(?<!\bdsb\.)(?<!\bdst\.)(?<!\bmis\.)(?<!\btsb\.)"
+_SENTENCE_SPLIT_RE = re.compile(_ABBREV_NO_SPLIT + r"(?<=[.!?])\s+(?=[A-ZÀ-Ý])")
 _INTRO_LEADIN_RE = re.compile(r"^(berikut|adapun)\b.*:$", re.IGNORECASE)
 _LEADING_INTRO_RE = re.compile(r"^\s*(?:berikut(?:\s+ini)?(?:\s+adalah)?|adapun)\b[^:]{0,80}:\s*", re.IGNORECASE)
 
@@ -137,7 +164,7 @@ def _split_multi_action_string(text: str) -> list:
     if not text:
         return []
     for splitter in (
-        lambda t: _NUMBERED_OR_BULLET_RE.split(t),
+        lambda t: _LIST_MARKER_SPLIT_RE.split(t),
         lambda t: t.split(";"),
         lambda t: _SENTENCE_SPLIT_RE.split(t),
     ):
@@ -153,7 +180,9 @@ def _clean_recommendation_text(text: str) -> str:
     berpasangan (mis. sisa '(' menggantung tanpa ')' penutup, atau sebaliknya) — biasanya
     muncul karena kalimat lain "1) ... (2) ..." terpotong pas dipisah per poin."""
     text = str(text).strip()
-    text = _NUMBERED_OR_BULLET_RE.sub("", text, count=1).strip()
+    # Pakai pola ber-ANCHOR (lihat catatan bug di _LEADING_NUMBER_OR_BULLET_RE): yang dibuang
+    # HANYA penomoran di AWAL teks, tidak pernah angka berkurung di tengah kalimat yang sah.
+    text = _LEADING_NUMBER_OR_BULLET_RE.sub("", text, count=1).strip()
     if text.count("(") != text.count(")"):
         if text.endswith("(") or text.endswith(" ("):
             text = text.rsplit("(", 1)[0].strip()
@@ -163,6 +192,13 @@ def _clean_recommendation_text(text: str) -> str:
             text = text[1:].strip()
         elif text.endswith(")") and "(" not in text:
             text = text[:-1].strip()
+    # CATATAN (percobaan yang DIBATALKAN, sengaja dicatat supaya tidak diulang): sempat
+    # ditambahkan "buang kalimat yang kurungnya tidak berpasangan" di sini, dgn dugaan teks
+    # rusak "(15 dariuntuk ..." berasal dari model. Dugaan itu SALAH - direproduksi bahwa
+    # KODE INI SENDIRI yang merusaknya (pola penomoran tanpa anchor). Membuang kalimatnya
+    # cuma menghilangkan GEJALA sambil diam-diam menghapus rekomendasi yang sah dari laporan,
+    # sementara akarnya tetap. Setelah akarnya diperbaiki di atas, pembuangan kalimat itu
+    # DIHAPUS lagi - jangan ditambahkan kembali tanpa bukti baru.
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
@@ -179,8 +215,12 @@ def coerce_finding_text(item) -> str:
 
 def coerce_narrative_text(value) -> str:
     """Jaring pengaman KELAS BUG YANG SAMA dgn coerce_finding_text() di atas, tapi utk field
-    naratif top-level yang kontraknya STRING polos di prompts.py (trend_analysis/
-    severity_analysis/risk_assessment/executive_summary/conclusion/sections[].content) —
+    naratif top-level yang kontraknya STRING polos di prompts.py (severity_analysis/
+    risk_assessment/executive_summary/conclusion/sections[].content — "trend_analysis"
+    DIKECUALIKAN sejak Grup A: kontraknya objek {"template","numeric_col","category_col"},
+    ditangani _resolve_templated_narrative() di report_render_logic.py SEBELUM sampai ke
+    fungsi ini, jadi yang tiba di sini utk trend_analysis selalu sudah berupa string biasa
+    atau None) —
     BUG NYATA (dilaporkan user, disertai contoh laporan): model kecil (qwen3:8b) kadang
     "mengarang struktur" utk instruksi yang katanya SEGMENTASI/PENGELOMPOKAN (lihat
     prompts.py) berupa objek/array JSON bersarang alih-alih kalimat, mis.
@@ -727,8 +767,27 @@ class OllamaClient:
             content = str(item.get("content") or "").strip()
             if not content:
                 continue
-            chart = item.get("chart") if isinstance(item.get("chart"), dict) else None
-            matched.append({"id": sid, "title": s.get("title") or item.get("title") or "", "content": content, "chart": chart})
+            # BUG NYATA DIPERBAIKI (dibuktikan via generate ulang sungguhan, laporan
+            # "Authentication Failure Trend"): dulu model menuliskan SENDIRI angka "chart"
+            # (labels/values) - terbukti kadang menukar nilai MAX/rata-rata satu kolom ke slot
+            # per-bucket yang salah. Sekarang model HANYA menunjuk PASANGAN NAMA KOLOM
+            # ("chart_source": {"numeric_col","category_col"}, lihat SECTIONS_BATCH_SYSTEM_PROMPT)
+            # - angka & label chart-nya SENDIRI diambil report_render_logic.py langsung dari
+            # agregasi pandas (stats["category_numeric_breakdown"]), bukan dari respons model
+            # ini sama sekali. "chart" (format lama, kalau model lawas/laporan lama masih
+            # mengirimkannya) TIDAK diteruskan lagi - satu-satunya jalur chart yang didukung
+            # sekarang adalah "chart_source".
+            raw_chart_source = item.get("chart_source")
+            chart_source = None
+            if isinstance(raw_chart_source, dict):
+                num_col = raw_chart_source.get("numeric_col")
+                cat_col = raw_chart_source.get("category_col")
+                if isinstance(num_col, str) and num_col.strip() and isinstance(cat_col, str) and cat_col.strip():
+                    chart_source = {"numeric_col": num_col.strip(), "category_col": cat_col.strip()}
+            matched.append({
+                "id": sid, "title": s.get("title") or item.get("title") or "", "content": content,
+                "chart_source": chart_source,
+            })
         return matched
 
     def generate_sections_for_topics(

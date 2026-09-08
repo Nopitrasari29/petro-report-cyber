@@ -258,6 +258,14 @@ def upload_security_file(
                 p_end = datetime.strptime(period_end.strip()[:10], "%Y-%m-%d").date()
             except Exception:
                 p_end = None
+        # PERMINTAAN USER (F5): pastikan tanggal mulai <= tanggal selesai SEBELUM disimpan ke
+        # DB — form period_start/period_end diisi manual oleh pengguna (2 input date terpisah,
+        # tidak divalidasi urutannya di frontend), jadi keduanya bisa TERBALIK kalau salah pilih.
+        # Ditukar di sini, di SUMBER penyimpanan, supaya SEMUA pemakai downstream (period_text
+        # laporan, prompt AI, riwayat, dashboard) otomatis ikut benar tanpa perlu masing2
+        # menjaga urutan sendiri-sendiri.
+        if p_start and p_end and p_start > p_end:
+            p_start, p_end = p_end, p_start
 
         if not files:
             raise HTTPException(status_code=400, detail="Tidak ada berkas yang diunggah.")
