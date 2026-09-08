@@ -239,7 +239,18 @@ _DENSITY_CHECKED_KINDS = None  # None = semua kind DICEK kecuali _DENSITY_EXCLUD
 _CHART_EXEMPTION_MAX_CATEGORIES = 5
 
 
-def _pdf_page_density(pdf_bytes: bytes, block_kinds: list) -> list:
+def _di_dalam(bbox, daftar_bbox) -> bool:
+    """Apakah bbox berada di dalam salah satu bbox tabel (toleransi 2pt)."""
+    if not bbox or not daftar_bbox:
+        return False
+    x0, y0, x1, y1 = bbox
+    for tx0, ty0, tx1, ty1 in daftar_bbox:
+        if x0 >= tx0 - 2 and y0 >= ty0 - 2 and x1 <= tx1 + 2 and y1 <= ty1 + 2:
+            return True
+    return False
+
+
+def _pdf_page_density(pdf_bytes: bytes, block_kinds: list, table_pages: set | None = None) -> list:
     """[(page_index, kind, n_elements, n_chars)] — GANTI TOTAL dari metrik lama (posisi batas
     bawah elemen terjauh / tinggi halaman).
 
@@ -268,16 +279,46 @@ def _pdf_page_density(pdf_bytes: bytes, block_kinds: list) -> list:
             continue
         n_elements = 0
         n_chars = 0
+        # Penghitungan per-sel HANYA di halaman yang datanya MEMANG berisi tabel (dari blok,
+        # lewat `table_pages`) - BUKAN dari deteksi geometris.
+        #
+        # BUG ALAT UKUR HAMPIR LOLOS: page.find_tables() salah mengenali grid KARTU halaman
+        # dasbor sbg tabel (5-6 "tabel" per halaman). Karena blok teks & drawing di dalam
+        # bbox tabel dilewati agar tidak terhitung dua kali, elemen asli halaman ikut
+        # tertelan: laporan 183 hal. 2 terbaca 68 elemen padahal 136. Angka itu terlihat
+        # wajar & akan membuat halaman TERPADAT ditandai renggang lalu "diperbaiki".
+        if i in (table_pages or set()):
+            try:
+                tabel_terdeteksi = list(page.find_tables().tables)
+            except Exception:
+                tabel_terdeteksi = []
+        else:
+            tabel_terdeteksi = []
+        tabel_bbox = [tuple(t.bbox) for t in tabel_terdeteksi]
         for block in page.get_text("dict").get("blocks", []):
             text = "".join(span.get("text", "") for line in block.get("lines", []) for span in line.get("spans", [])).strip()
             if not text or _PAGE_NUM_RE.match(text):
                 continue
+            if _di_dalam(block.get("bbox"), tabel_bbox):
+                continue
             n_elements += 1
             n_chars += len(text)
+        # TABEL dihitung PER SEL, sama spt sisi PPT. Tanpa ini kedua sisi mengukur tabel dgn
+        # cara BERBEDA: PDF per baris teks (9 blok), PPT per sel (36) - terukur selisih 16
+        # elemen utk isi yang identik, murni dari cara mengukur. Blok teks & drawing yang
+        # jatuh DI DALAM bbox tabel dilewati supaya tidak terhitung dua kali (garis/isian sel
+        # muncul sbg drawing tersendiri).
+        for t in tabel_terdeteksi:
+            for row in t.extract():
+                for cell in row:
+                    n_elements += 1
+                    n_chars += len(str(cell or ""))
         for d in page.get_drawings():
             rect = d["rect"]
             w, h = rect[2] - rect[0], rect[3] - rect[1]
             if w >= 0.95 * page_w and h >= 0.95 * page_h:
+                continue
+            if _di_dalam(tuple(rect), tabel_bbox):
                 continue
             n_elements += 1
         for img in page.get_image_info():
@@ -440,7 +481,11 @@ def test_management_dashboard_pages_are_densely_filled():
                     f"report {rid} pembagian kolom {sorted(dash_sizes, reverse=True)} "
                     f"!= seharusnya {expected_sizes} utk {sum(dash_sizes)} topik"
                 )
-            for i, kind, n_el, n_ch in _pdf_page_density(pdf_bytes, block_kinds):
+            table_pages = {
+                idx for idx, b in enumerate(blocks)
+                if any((p or {}).get("panel_kind") == "critical_table" for p in (b.get("panels") or []))
+            }
+            for i, kind, n_el, n_ch in _pdf_page_density(pdf_bytes, block_kinds, table_pages):
                 if kind in _DASHBOARD_PAGE_KINDS:
                     n_cols = len(blocks[i].get("columns") or []) if i < len(blocks) else 3
                     ambang = _DENSITY_DASHBOARD_MIN_PER_COLUMN * max(1, n_cols)

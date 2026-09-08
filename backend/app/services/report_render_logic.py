@@ -4753,7 +4753,12 @@ def build_management_report_blocks(report) -> list[dict]:
             "title": L("Rekomendasi Prioritas" if not continuation else "Rekomendasi Prioritas (Lanjutan)", "Priority Recommendations" if not continuation else "Priority Recommendations (Continued)"),
             "items": chunk,
         }
-        if is_last_chunk and mgmt_conclusion_text and len(chunk) <= 4:
+        # Ambang dinaikkan 4 -> 5 (dibuka lagi atas izin user). Laporan 137 & 143 py TEPAT 5
+        # rekomendasi, jadi Kesimpulan-nya (378-427 karakter) terlempar jadi halaman sendiri
+        # berisi 9-10 elemen - halaman paling renggang di seluruh jalur Visual. Batas 6 item
+        # per halaman sudah dipakai utk paginasi, jadi 5 item + Kesimpulan masih di dalam
+        # anggaran; diverifikasi dgn memeriksa posisi elemen terbawah, bukan diasumsikan.
+        if is_last_chunk and mgmt_conclusion_text and len(chunk) <= 5:
             block["conclusion_title"] = L("Kesimpulan", "Conclusion")
             block["conclusion_text"] = _shorten_to_caption(mgmt_conclusion_text, max_sentences=2)
             block["conclusion_pills"] = mgmt_pills

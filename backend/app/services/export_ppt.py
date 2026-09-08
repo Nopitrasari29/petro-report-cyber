@@ -3966,7 +3966,23 @@ def _build_management_action_items_slide(block: dict, ctx: _PptBlockContext):
     start_y = max(title_bottom + 0.12, 1.05)
     gap = 0.15
     n = len(items) or 1
-    available_h = 7.5 - start_y - 0.4
+    # BUG NYATA DIPERBAIKI (terukur: 15 dari 28 slide "Tindak Lanjut" py elemen di bawah
+    # y=7.5in, sampai 8.76in - blok Kesimpulan tergambar DI LUAR slide, jadi di 15 laporan
+    # Kesimpulan tidak terlihat pembaca sama sekali di PPT). Sebabnya tinggi kartu dihitung
+    # dari SELURUH sisa slide tanpa memesan ruang utk Kesimpulan, padahal tingginya sudah
+    # bisa dihitung dari isinya. Ini pola bug yang sama utk keempat kalinya: elemen yang
+    # tingginya bergantung isi tidak dipesan lebih dulu. Sekarang ruangnya dipesan DULU.
+    _concl_text = block.get("conclusion_text")
+    _concl_pills = block.get("conclusion_pills") or []
+    _concl_w_in = Emu(CONTENT_W).inches - 0.5
+    _concl_reserve = 0.0
+    if _concl_text:
+        _concl_reserve = 0.1 + max(
+            1.1,
+            0.5 + _estimate_wrapped_height_in(_concl_text, 10.5, _concl_w_in)
+            + (0.55 if _concl_pills else 0.15),
+        )
+    available_h = 7.5 - start_y - 0.4 - _concl_reserve
     card_h = min(1.1, max((available_h - gap * (n - 1)) / n, 0.62))
 
     for i, it in enumerate(items):
@@ -4006,7 +4022,10 @@ def _build_management_action_items_slide(block: dict, ctx: _PptBlockContext):
         concl_text_w_in = Emu(CONTENT_W).inches - 0.5
         concl_text_h_in = _estimate_wrapped_height_in(block["conclusion_text"], 10.5, concl_text_w_in)
         min_strip_h_in = 0.5 + concl_text_h_in + (0.55 if concl_pills else 0.15)
+        # DIJEPIT ke batas bawah slide: apa pun hasil hitungannya, strip tidak boleh melewati
+        # 7.5in - lebih baik terlihat lebih pendek drpd separuhnya jatuh di luar slide.
         strip_h_in = max(1.1, 6.9 - strip_top_in, min_strip_h_in)
+        strip_h_in = max(0.6, min(strip_h_in, 7.5 - 0.25 - strip_top_in))
         strip = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, MARGIN_X, Inches(strip_top_in), CONTENT_W, Inches(strip_h_in))
         strip.fill.solid()
         strip.fill.fore_color.rgb = ctx.theme["bg"]
