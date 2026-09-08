@@ -3611,8 +3611,6 @@ _PDF_BLOCK_BUILDERS = {
     "page": _build_page_block,
     "closing_summary": _build_closing_summary_block,
     "closing": _build_closing_block,
-    "management_kpi_grid": _build_management_kpi_grid_block,
-    "management_visual_dashboard": _build_management_visual_dashboard_block,
     "management_insight_page": _build_management_insight_page_block,
     "management_dashboard_columns": _build_management_dashboard_columns_block,
     "management_action_items": _build_management_action_items_block,

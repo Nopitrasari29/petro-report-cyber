@@ -315,6 +315,18 @@ def _ppt_page_density(ppt_bytes: bytes, block_kinds: list) -> list:
                 w_in = h_in = 0.0
             if left_in <= 0.05 and top_in <= 0.05 and w_in >= 0.95 * slide_w and h_in >= 0.95 * slide_h:
                 continue
+            # BUG ALAT UKUR DIPERBAIKI (ditemukan waktu menyelidiki "5 elemen/131 karakter"
+            # di halaman tabel laporan 158 - dikira isi hilang, ternyata TABELNYA ada, 12.33
+            # x 4.90in berisi 8 baris): shape TABLE py has_text_frame False & teksnya ada di
+            # dalam SEL, jadi tabel seberapa pun besarnya dulu terhitung 1 elemen/0 karakter.
+            # Metrik yang buta thd tabel akan menandai halaman yang genuinely padat sbg
+            # renggang - persis kebalikan dari gunanya metrik ini.
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        n_elements += 1
+                        n_chars += len(cell.text)
+                continue
             n_elements += 1
             if shape.has_text_frame:
                 n_chars += len(shape.text_frame.text)
@@ -339,8 +351,35 @@ _DENSITY_ABSOLUTE_MIN_ELEMENTS = 5
 # PERMINTAAN USER (setelah perombakan pengemasan): halaman DASBOR multi-kolom membawa 2-3
 # topik sekaligus, jadi ambangnya tidak lagi sama dgn halaman biasa - minimal 90 elemen.
 # Angkanya realistis, bukan aspirasi: halaman hasil pengemasan pertama terukur 98 elemen.
-_DENSITY_DASHBOARD_MIN_ELEMENTS = 90
+# KEPUTUSAN USER (revisi dari ambang per HALAMAN): ambang halaman dasbor dihitung PER KOLOM,
+# bukan per halaman. Ambang 90 dulu dikalibrasi dari halaman 3 kolom, jadi halaman 2 kolom
+# secara matematis tidak mungkin mencapainya dgn topik yang sama - bukan karena renggang,
+# tapi karena kolomnya memang cuma dua. 30 per kolom: 2 kolom = 60, 3 kolom = 90.
+_DENSITY_DASHBOARD_MIN_PER_COLUMN = 30
 _DASHBOARD_PAGE_KINDS = {"management_dashboard_columns"}
+
+# KEPUTUSAN USER: halaman REKOMENDASI & SECTION NARATIF py ambang SENDIRI - "isinya memang
+# rekomendasi bernarasi, bukan visual", jadi memaksanya mencapai ambang dasbor salah sasaran.
+# Dinilai dari KARAKTER saja: jumlah elemennya melekat pada bentuknya (tiap rekomendasi =
+# 1-2 elemen), jadi 30 elemen bukan tanda renggang. Terukur dari 28 halaman rekomendasi &
+# 4 halaman naratif di SELURUH laporan Visual: 719-1.709 karakter, median 956. Ambang 600
+# kira-kira setara 4 rekomendasi; di bawah itu halamannya genuinely kosong, bukan bergaya teks.
+_NARRATIVE_PAGE_KINDS = {"management_action_items", "management_ai_narrative"}
+_DENSITY_NARRATIVE_MIN_CHARS = 600
+
+
+def _expected_column_sizes(n_topics: int, per_page: int = 3) -> list:
+    """Ukuran halaman yang SEHARUSNYA - pembagian serata mungkin, tanpa keranjang berisi satu.
+
+    SYARAT USER: halaman 2 kolom hanya SAH kalau jumlah topiknya memang tidak cukup utk 3
+    kolom. Tanpa ini, pembagi bisa "lolos" ambang cuma dgn memilih 2 kolom (ambangnya lebih
+    rendah) padahal topiknya cukup utk 3 - lubang yang persis sebaliknya dari yang mau
+    ditutup. Jadi ukuran halaman nyata dibandingkan dgn pembagian yang seharusnya."""
+    if n_topics <= 0:
+        return []
+    n_pages = max(1, -(-n_topics // per_page))
+    base, extra = divmod(n_topics, n_pages)
+    return sorted([base + (1 if i < extra else 0) for i in range(n_pages)], reverse=True)
 
 
 def _page_is_chart_exempt(block: dict) -> bool:
@@ -394,12 +433,28 @@ def test_management_dashboard_pages_are_densely_filled():
             block_kinds = [b.get("kind") for b in blocks]
             pdf_bytes = ep.PDFExporter.generate_pdf_report(report)
             ppt_bytes = eppt.PPTXExporter.generate_ppt_report(report)
+            dash_sizes = [len(b.get("columns") or []) for b in blocks if b.get("kind") in _DASHBOARD_PAGE_KINDS]
+            expected_sizes = _expected_column_sizes(sum(dash_sizes))
+            if dash_sizes and sorted(dash_sizes, reverse=True) != expected_sizes:
+                failures.append(
+                    f"report {rid} pembagian kolom {sorted(dash_sizes, reverse=True)} "
+                    f"!= seharusnya {expected_sizes} utk {sum(dash_sizes)} topik"
+                )
             for i, kind, n_el, n_ch in _pdf_page_density(pdf_bytes, block_kinds):
                 if kind in _DASHBOARD_PAGE_KINDS:
-                    if n_el < _DENSITY_DASHBOARD_MIN_ELEMENTS:
+                    n_cols = len(blocks[i].get("columns") or []) if i < len(blocks) else 3
+                    ambang = _DENSITY_DASHBOARD_MIN_PER_COLUMN * max(1, n_cols)
+                    if n_el < ambang:
                         failures.append(
-                            f"report {rid} PDF page {i} (dasbor): {n_el} elemen "
-                            f"(< {_DENSITY_DASHBOARD_MIN_ELEMENTS}), {n_ch} karakter"
+                            f"report {rid} PDF page {i} (dasbor {n_cols} kolom): {n_el} elemen "
+                            f"(< {ambang}), {n_ch} karakter"
+                        )
+                    continue
+                if kind in _NARRATIVE_PAGE_KINDS:
+                    if n_ch < _DENSITY_NARRATIVE_MIN_CHARS:
+                        failures.append(
+                            f"report {rid} PDF page {i} (naratif): {n_ch} karakter "
+                            f"(< {_DENSITY_NARRATIVE_MIN_CHARS}), {n_el} elemen"
                         )
                     continue
                 if kind in _DENSITY_EXCLUDE_KINDS or n_el >= _DENSITY_MIN_ELEMENTS or n_ch >= _DENSITY_MIN_CHARS:
@@ -409,6 +464,13 @@ def test_management_dashboard_pages_are_densely_filled():
                     continue
                 failures.append(f"report {rid} PDF page {i} ({kind}): {n_el} elemen, {n_ch} karakter")
             for i, kind, n_el, n_ch in _ppt_page_density(ppt_bytes, block_kinds):
+                if kind in _NARRATIVE_PAGE_KINDS:
+                    if n_ch < _DENSITY_NARRATIVE_MIN_CHARS:
+                        failures.append(
+                            f"report {rid} PPT slide {i} (naratif): {n_ch} karakter "
+                            f"(< {_DENSITY_NARRATIVE_MIN_CHARS}), {n_el} elemen"
+                        )
+                    continue
                 if kind in _DENSITY_EXCLUDE_KINDS or n_el >= _DENSITY_MIN_ELEMENTS or n_ch >= _DENSITY_MIN_CHARS:
                     continue
                 if n_el >= _DENSITY_ABSOLUTE_MIN_ELEMENTS and i < len(blocks) and _page_is_chart_exempt(blocks[i]):

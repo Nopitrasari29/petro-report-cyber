@@ -365,26 +365,9 @@ def _dedupe_chunk_tile_facts(chunk: list) -> None:
             seen.append(fingerprint)
 
 
-def _build_column_dashboard_blocks(tiles: list, fallback_title: str) -> list:
-    """Gabung topik "tipis" (lihat _is_rich_insight_page) jadi halaman kolom lama
-    (_layout_dashboard_column, maks 2 topik/halaman — lihat _chunk_visual_tiles) — dipakai
-    drpd dipaksakan jadi halaman insight mandiri yang detailnya genuinely tidak cukup utk
-    berdiri sendiri."""
-    result = []
-    for chunk in _chunk_visual_tiles(tiles, max_per_page=2):
-        _dedupe_chunk_tile_facts(chunk)
-        headline_tile = next((t for t in chunk if t.get("caption")), None)
-        headline_title = _shorten_to_caption(headline_tile["caption"], max_sentences=1) if headline_tile else None
-        if headline_tile is not None:
-            headline_tile["caption"] = None
-        result.append({
-            "kind": "management_visual_dashboard",
-            "title": headline_title or fallback_title,
-            "tiles": chunk,
-        })
-    return result
-
-
+# CATATAN: _build_column_dashboard_blocks DIHAPUS (audit jalur render) - tidak pernah
+# dipanggil dari mana pun sejak jalur management_visual_dashboard ditinggalkan, jadi
+# satu-satunya penghasil blok jenis itu sudah tidak ada.
 # PERMINTAAN USER (A3 + B): geometri 1 kolom dashboard Management (dipakai HANYA utk tile
 # "space-hungry" — kpi_radar/period_compare/time_heatmap, lihat _SPACE_HUNGRY_TILE_KINDS —
 # yang tetap solo 1 halaman penuh; tile lain sekarang lewat _build_insight_page di bawah).
@@ -4598,9 +4581,13 @@ def build_management_report_blocks(report) -> list[dict]:
     # itu (dan utk halaman ber-chart, sudah dipastikan dirender DI DALAM wrapper, lihat catatan
     # akar masalah di export_pdf.py::_insight_main_chart_html).
     _MGMT_FINDINGS_SOLO_THRESHOLD = 4
+    # KOREKSI (audit jalur render): syarat "critical_table_panel is None" DILEPAS. Temuan
+    # Utama yang cukup ringkas selalu bisa menumpang halaman insight - kehadiran tabel kritis
+    # di blok LAIN tidak ada hubungannya dgn muat/tidaknya temuan itu. Syarat itu satu-satunya
+    # alasan laporan 158 merender halaman lewat pembangun jalur Deskriptif, padahal isinya
+    # konten Management: dua cara merender hal yang sama = sumber divergensi.
     if (
         findings_panel is not None
-        and critical_table_panel is None
         and len(findings_panel["items"]) <= _MGMT_FINDINGS_SOLO_THRESHOLD
     ):
         _host = next((b for b in reversed(blocks) if b.get("kind") == "management_insight_page"), None)

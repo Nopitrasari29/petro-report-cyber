@@ -4216,8 +4216,6 @@ _PPT_BLOCK_BUILDERS = {
     "page": _build_page_slide,
     "closing_summary": _build_closing_summary_slide,
     "closing": _build_closing_slide,
-    "management_kpi_grid": _build_management_kpi_grid_slide,
-    "management_visual_dashboard": _build_management_visual_dashboard_slide,
     "management_insight_page": _build_management_insight_page_slide,
     "management_dashboard_columns": _build_management_dashboard_columns_slide,
     "management_action_items": _build_management_action_items_slide,
