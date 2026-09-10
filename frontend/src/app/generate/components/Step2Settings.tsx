@@ -22,9 +22,16 @@ function rgbToHex(r: number, g: number, b: number): string {
   );
 }
 
-function rgbToHsv(r: number, g: number, b: number): { h: number; s: number; v: number } {
-  const rn = r / 255, gn = g / 255, bn = b / 255;
-  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+function rgbToHsv(
+  r: number,
+  g: number,
+  b: number,
+): { h: number; s: number; v: number } {
+  const rn = r / 255,
+    gn = g / 255,
+    bn = b / 255;
+  const max = Math.max(rn, gn, bn),
+    min = Math.min(rn, gn, bn);
   const d = max - min;
   let h = 0;
   if (d !== 0) {
@@ -39,11 +46,14 @@ function rgbToHsv(r: number, g: number, b: number): { h: number; s: number; v: n
 }
 
 function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
-  const sn = s / 100, vn = v / 100;
+  const sn = s / 100,
+    vn = v / 100;
   const c = vn * sn;
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
   const m = vn - c;
-  let r = 0, g = 0, b = 0;
+  let r = 0,
+    g = 0,
+    b = 0;
   if (h < 60) [r, g, b] = [c, x, 0];
   else if (h < 120) [r, g, b] = [x, c, 0];
   else if (h < 180) [r, g, b] = [0, c, x];
@@ -140,7 +150,7 @@ export default function Step2Settings({
   const [customSectionInput, setCustomSectionInput] = React.useState("");
   const [showColorPicker, setShowColorPicker] = React.useState(false);
   const [customHex, setCustomHex] = React.useState(
-    themeColor && themeColor.startsWith("#") ? themeColor : "#004D25"
+    themeColor && themeColor.startsWith("#") ? themeColor : "#004D25",
   );
   const colorPickerRef = React.useRef<HTMLDivElement>(null);
   // BUG YANG DIPERBAIKI (dilaporkan user, screenshot: popup keluar dari kotaknya & tabrakan
@@ -175,8 +185,10 @@ export default function Step2Settings({
       // menutup KEDUA popup di tengah drag. Sekarang klik di dalam wheelPopupRef/
       // wheelTriggerRef juga dianggap "di dalam".
       if (
-        colorPickerRef.current && !colorPickerRef.current.contains(target) &&
-        colorPopupRef.current && !colorPopupRef.current.contains(target) &&
+        colorPickerRef.current &&
+        !colorPickerRef.current.contains(target) &&
+        colorPopupRef.current &&
+        !colorPopupRef.current.contains(target) &&
         !(wheelPopupRef.current && wheelPopupRef.current.contains(target)) &&
         !(wheelTriggerRef.current && wheelTriggerRef.current.contains(target))
       ) {
@@ -185,7 +197,12 @@ export default function Step2Settings({
     };
     const onScrollOrResize = () => {
       const rect = colorTriggerRef.current?.getBoundingClientRect();
-      if (rect) setPopupPos({ top: rect.bottom + 8, left: rect.left, width: rect.width });
+      if (rect)
+        setPopupPos({
+          top: rect.bottom + 8,
+          left: rect.left,
+          width: rect.width,
+        });
     };
     document.addEventListener("mousedown", handler);
     window.addEventListener("scroll", onScrollOrResize, true);
@@ -229,10 +246,13 @@ export default function Step2Settings({
     const popupRect = colorPopupRef.current?.getBoundingClientRect();
     if (popupRect) {
       const wheelWidth = 216;
-      const fitsRight = popupRect.right + 10 + wheelWidth <= window.innerWidth - 12;
+      const fitsRight =
+        popupRect.right + 10 + wheelWidth <= window.innerWidth - 12;
       setWheelPos({
         top: popupRect.top,
-        left: fitsRight ? popupRect.right + 10 : Math.max(12, popupRect.left - wheelWidth - 10),
+        left: fitsRight
+          ? popupRect.right + 10
+          : Math.max(12, popupRect.left - wheelWidth - 10),
       });
     }
     setShowColorWheel(true);
@@ -247,8 +267,10 @@ export default function Step2Settings({
     const handler = (e: MouseEvent) => {
       const target = e.target as Node;
       if (
-        wheelTriggerRef.current && !wheelTriggerRef.current.contains(target) &&
-        wheelPopupRef.current && !wheelPopupRef.current.contains(target)
+        wheelTriggerRef.current &&
+        !wheelTriggerRef.current.contains(target) &&
+        wheelPopupRef.current &&
+        !wheelPopupRef.current.contains(target)
       ) {
         setShowColorWheel(false);
       }
@@ -268,7 +290,8 @@ export default function Step2Settings({
   const dragHueSlider = (clientX: number) => {
     const rect = hueSliderRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const h = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * 360;
+    const h =
+      Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * 360;
     applyHsv({ h, s: hsv.s, v: hsv.v });
   };
 
@@ -276,7 +299,9 @@ export default function Step2Settings({
   // maunya handle bulat itu sendiri yang MEMBESAR saat diseret (jadi indikator visual
   // posisi warna, bukan kursornya) — lihat draggingHandle, dipakai utk scale-up handle +
   // sembunyikan kursor (cursor-none) selama drag berlangsung.
-  const [draggingHandle, setDraggingHandle] = React.useState<"sv" | "hue" | null>(null);
+  const [draggingHandle, setDraggingHandle] = React.useState<
+    "sv" | "hue" | null
+  >(null);
 
   const handleSvPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -535,22 +560,50 @@ export default function Step2Settings({
                   {
                     id: "SOC Executive Summary",
                     name: tx("Descriptive Report", "Laporan Deskriptif"),
-                    desc: tx("Analisis mendalam, ringkasan eksekutif & temuan komprehensif", "Analisis mendalam, ringkasan eksekutif & temuan komprehensif"),
+                    desc: tx(
+                      "Analisis mendalam, ringkasan eksekutif & temuan komprehensif",
+                      "Analisis mendalam, ringkasan eksekutif & temuan komprehensif",
+                    ),
                     badge: "Standard",
                     icon: (
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        strokeWidth={1.8}
+                        stroke="currentColor"
+                        className="w-4 h-4"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+                        />
                       </svg>
                     ),
                   },
                   {
                     id: "Management Report",
                     name: tx("Visual Report", "Laporan Visual"),
-                    desc: tx("Visual tinggi, KPI ringkas, peta risiko & action items eksekutif", "Visual tinggi, KPI ringkas, peta risiko & action items eksekutif"),
+                    desc: tx(
+                      "Visual tinggi, KPI ringkas, peta risiko & action items eksekutif",
+                      "Visual tinggi, KPI ringkas, peta risiko & action items eksekutif",
+                    ),
                     badge: "Visual / KPI",
                     icon: (
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        strokeWidth={1.8}
+                        stroke="currentColor"
+                        className="w-4 h-4"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"
+                        />
                       </svg>
                     ),
                   },
@@ -621,19 +674,47 @@ export default function Step2Settings({
 
               {/* Compute Active Color Info */}
               {(() => {
-                const colorMap: Record<string, { name: string; hex: string }> = {
-                  green: { name: tx("Petrokimia Green", "Hijau Petrokimia"), hex: "#004D25" },
-                  navy: { name: tx("Slate Navy", "Navy Gelap"), hex: "#0F172A" },
-                  dark: { name: tx("Cyber Dark", "Gelap Siber"), hex: "#111827" },
-                  gold: { name: tx("Amber Gold", "Emas Amber"), hex: "#78350F" },
-                  teal: { name: tx("Deep Teal", "Teal Gelap"), hex: "#0F766E" },
-                  ocean: { name: tx("Ocean Blue", "Biru Samudra"), hex: "#0284C7" },
-                  indigo: { name: tx("Royal Indigo", "Indigo Elegan"), hex: "#4338CA" },
-                  ruby: { name: tx("Ruby Red", "Merah Ruby"), hex: "#991B1B" },
-                };
+                const colorMap: Record<string, { name: string; hex: string }> =
+                  {
+                    green: {
+                      name: tx("Petrokimia Green", "Hijau Petrokimia"),
+                      hex: "#1B5E3C",
+                    },
+                    navy: {
+                      name: tx("Slate Navy", "Navy Gelap"),
+                      hex: "#1E3A5F",
+                    },
+                    dark: {
+                      name: tx("Cyber Dark", "Gelap Siber"),
+                      hex: "#1F2937",
+                    },
+                    gold: {
+                      name: tx("Amber Gold", "Emas Amber"),
+                      hex: "#8A6A16",
+                    },
+                    teal: {
+                      name: tx("Deep Teal", "Teal Gelap"),
+                      hex: "#0F6B64",
+                    },
+                    ocean: {
+                      name: tx("Ocean Blue", "Biru Samudra"),
+                      hex: "#0284C7",
+                    },
+                    indigo: {
+                      name: tx("Royal Indigo", "Indigo Elegan"),
+                      hex: "#4338CA",
+                    },
+                    ruby: {
+                      name: tx("Ruby Red", "Merah Ruby"),
+                      hex: "#991B1B",
+                    },
+                  };
                 const activeColor =
                   themeColor && themeColor.startsWith("#")
-                    ? { name: tx("Custom Color", "Warna Kustom"), hex: themeColor }
+                    ? {
+                        name: tx("Custom Color", "Warna Kustom"),
+                        hex: themeColor,
+                      }
                     : colorMap[themeColor || "green"] || colorMap.green;
 
                 return (
@@ -642,7 +723,11 @@ export default function Step2Settings({
                     <button
                       type="button"
                       ref={colorTriggerRef}
-                      onClick={() => (showColorPicker ? setShowColorPicker(false) : openColorPicker())}
+                      onClick={() =>
+                        showColorPicker
+                          ? setShowColorPicker(false)
+                          : openColorPicker()
+                      }
                       className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border transition-all duration-200 cursor-pointer group shadow-2xs ${
                         showColorPicker
                           ? "bg-white border-petro-green ring-2 ring-petro-green/20 shadow-xs"
@@ -668,7 +753,9 @@ export default function Step2Settings({
                           viewBox="0 0 20 20"
                           fill="currentColor"
                           className={`w-4 h-4 text-stone-400 transition-transform duration-300 ${
-                            showColorPicker ? "rotate-180 text-petro-green" : "group-hover:text-stone-600"
+                            showColorPicker
+                              ? "rotate-180 text-petro-green"
+                              : "group-hover:text-stone-600"
                           }`}
                         >
                           <path
@@ -686,253 +773,348 @@ export default function Step2Settings({
                         bisa terjebak di belakang/tabrakan dgn kartu lain (BUG YANG
                         DIPERBAIKI, dilaporkan user). Ditutup via klik-di-luar (cek
                         colorPickerRef + colorPopupRef, sudah ada di atas). */}
-                    {showColorPicker && createPortal(
-                      <div
-                        ref={colorPopupRef}
-                        className="fixed z-50 bg-white border border-stone-200/90 rounded-2xl p-3.5 space-y-3 shadow-xl animate-fadeIn"
-                        style={{ top: popupPos.top, left: popupPos.left, width: Math.max(popupPos.width, 280) }}
-                      >
-                        {/* Section 1: 8 Clean Brand Presets */}
-                        <div>
-                          <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
-                            {tx("Choose Palette Preset", "Pilih Palet Warna")}
-                          </span>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {[
-                              { id: "green", name: "Petro Green", hex: "#004D25" },
-                              { id: "navy", name: "Slate Navy", hex: "#0F172A" },
-                              { id: "dark", name: "Cyber Dark", hex: "#111827" },
-                              { id: "gold", name: "Amber Gold", hex: "#78350F" },
-                              { id: "#0F766E", name: "Deep Teal", hex: "#0F766E" },
-                              { id: "#0284C7", name: "Ocean Blue", hex: "#0284C7" },
-                              { id: "#4338CA", name: "Royal Indigo", hex: "#4338CA" },
-                              { id: "#991B1B", name: "Ruby Crimson", hex: "#991B1B" },
-                            ].map((p) => {
-                              const isSelected =
-                                themeColor === p.id ||
-                                (themeColor && themeColor.toLowerCase() === p.hex.toLowerCase());
-                              return (
-                                <button
-                                  key={p.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setCustomHex(p.hex);
-                                    setThemeColor && setThemeColor(p.id);
-                                  }}
-                                  className={`flex items-center gap-2 px-2.5 py-2 rounded-xl border text-left transition-all duration-150 cursor-pointer ${
-                                    isSelected
-                                      ? "bg-white border-petro-green ring-2 ring-petro-green/15 text-petro-green font-black shadow-xs"
-                                      : "bg-white/80 hover:bg-white border-stone-200 text-stone-700 font-bold hover:border-stone-300"
-                                  }`}
-                                >
-                                  <span
-                                    className="w-3.5 h-3.5 rounded-full shrink-0 shadow-2xs border border-white/80"
-                                    style={{ backgroundColor: p.hex }}
-                                  />
-                                  <span className="text-[11px] truncate leading-tight">
-                                    {p.name}
-                                  </span>
-                                </button>
-                              );
-                            })}
+                    {showColorPicker &&
+                      createPortal(
+                        <div
+                          ref={colorPopupRef}
+                          className="fixed z-50 bg-white border border-stone-200/90 rounded-2xl p-3.5 space-y-3 shadow-xl animate-fadeIn"
+                          style={{
+                            top: popupPos.top,
+                            left: popupPos.left,
+                            width: Math.max(popupPos.width, 280),
+                          }}
+                        >
+                          {/* Section 1: 8 Clean Brand Presets */}
+                          <div>
+                            <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
+                              {tx("Choose Palette Preset", "Pilih Palet Warna")}
+                            </span>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              {[
+                                {
+                                  id: "green",
+                                  name: "Petro Green",
+                                  hex: "#1B5E3C",
+                                },
+                                {
+                                  id: "navy",
+                                  name: "Slate Navy",
+                                  hex: "#1E3A5F",
+                                },
+                                {
+                                  id: "dark",
+                                  name: "Cyber Dark",
+                                  hex: "#1F2937",
+                                },
+                                {
+                                  id: "gold",
+                                  name: "Amber Gold",
+                                  hex: "#8A6A16",
+                                },
+                                {
+                                  id: "teal",
+                                  name: "Deep Teal",
+                                  hex: "#0F6B64",
+                                },
+                                {
+                                  id: "#0284C7",
+                                  name: "Ocean Blue",
+                                  hex: "#0284C7",
+                                },
+                                {
+                                  id: "#4338CA",
+                                  name: "Royal Indigo",
+                                  hex: "#4338CA",
+                                },
+                                {
+                                  id: "#991B1B",
+                                  name: "Ruby Crimson",
+                                  hex: "#991B1B",
+                                },
+                              ].map((p) => {
+                                const isSelected =
+                                  themeColor === p.id ||
+                                  (themeColor &&
+                                    themeColor.toLowerCase() ===
+                                      p.hex.toLowerCase());
+                                return (
+                                  <button
+                                    key={p.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setCustomHex(p.hex);
+                                      setThemeColor && setThemeColor(p.id);
+                                    }}
+                                    className={`flex items-center gap-2 px-2.5 py-2 rounded-xl border text-left transition-all duration-150 cursor-pointer ${
+                                      isSelected
+                                        ? "bg-white border-petro-green ring-2 ring-petro-green/15 text-petro-green font-black shadow-xs"
+                                        : "bg-white/80 hover:bg-white border-stone-200 text-stone-700 font-bold hover:border-stone-300"
+                                    }`}
+                                  >
+                                    <span
+                                      className="w-3.5 h-3.5 rounded-full shrink-0 shadow-2xs border border-white/80"
+                                      style={{ backgroundColor: p.hex }}
+                                    />
+                                    <span className="text-[11px] truncate leading-tight">
+                                      {p.name}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
-                        </div>
 
-                        <div className="h-px bg-stone-200/60" />
+                          <div className="h-px bg-stone-200/60" />
 
-                        {/* Section 2: Custom Color Wheel & Hex Input */}
-                        <div>
-                          <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
-                            {tx("Custom Hex / Color Wheel", "Warna Kustom")}
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            {/* Color Wheel Trigger — BUG DIPERBAIKI (dilaporkan user,
+                          {/* Section 2: Custom Color Wheel & Hex Input */}
+                          <div>
+                            <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
+                              {tx("Custom Hex / Color Wheel", "Warna Kustom")}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              {/* Color Wheel Trigger — BUG DIPERBAIKI (dilaporkan user,
                                 screenshot): sebelumnya <input type="color"> bawaan browser,
                                 posisinya di luar kendali CSS kita jadi bisa muncul tertumpuk
                                 aneh di belakang kartu popup kita sendiri. Sekarang buka
                                 panel color wheel BUATAN SENDIRI (lihat showColorWheel di
                                 atas), portal juga jadi tidak mungkin lagi tertumpuk. */}
-                            <div
-                              ref={wheelTriggerRef}
-                              onClick={() => (showColorWheel ? setShowColorWheel(false) : openColorWheel())}
-                              className="relative w-8.5 h-8.5 rounded-full shrink-0 cursor-pointer flex items-center justify-center shadow-xs ring-2 ring-petro-green/20"
-                              style={{
-                                background:
-                                  "conic-gradient(from 180deg, #ff0000, #ffcc00, #33ff00, #00ffee, #0066ff, #cc00ff, #ff0000)",
-                              }}
-                              title={tx("Click to open color wheel", "Klik untuk buka color wheel")}
-                            />
+                              <div
+                                ref={wheelTriggerRef}
+                                onClick={() =>
+                                  showColorWheel
+                                    ? setShowColorWheel(false)
+                                    : openColorWheel()
+                                }
+                                className="relative w-8.5 h-8.5 rounded-full shrink-0 cursor-pointer flex items-center justify-center shadow-xs ring-2 ring-petro-green/20"
+                                style={{
+                                  background:
+                                    "conic-gradient(from 180deg, #ff0000, #ffcc00, #33ff00, #00ffee, #0066ff, #cc00ff, #ff0000)",
+                                }}
+                                title={tx(
+                                  "Click to open color wheel",
+                                  "Klik untuk buka color wheel",
+                                )}
+                              />
 
-                            {/* Eyedropper — ambil warna langsung dari layar (EyeDropper API,
+                              {/* Eyedropper — ambil warna langsung dari layar (EyeDropper API,
                                 Chrome/Edge; disembunyikan kalau browser tidak dukung). */}
-                            {eyedropperSupported && (
-                              <button
-                                type="button"
-                                onClick={handleEyedropper}
-                                title={tx("Pick color from screen", "Ambil warna dari layar")}
-                                className="w-8.5 h-8.5 rounded-xl bg-violet-50 border border-violet-200/80 shrink-0 cursor-pointer flex items-center justify-center hover:bg-violet-100 transition-colors"
-                              >
-                                <svg viewBox="0 0 24 24" fill="none" stroke="#6d4fd6" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
-                                  <path d="M18.5 3.5a2.121 2.121 0 0 1 3 3L19 9l-3-3 2.5-2.5Z" />
-                                  <path d="M16 6 5 17v3h3L19 9" />
-                                </svg>
-                              </button>
-                            )}
-
+                              {eyedropperSupported && (
+                                <button
+                                  type="button"
+                                  onClick={handleEyedropper}
+                                  title={tx(
+                                    "Pick color from screen",
+                                    "Ambil warna dari layar",
+                                  )}
+                                  className="w-8.5 h-8.5 rounded-xl bg-violet-50 border border-violet-200/80 shrink-0 cursor-pointer flex items-center justify-center hover:bg-violet-100 transition-colors"
+                                >
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="#6d4fd6"
+                                    strokeWidth={1.8}
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    className="w-4 h-4"
+                                  >
+                                    <path d="M18.5 3.5a2.121 2.121 0 0 1 3 3L19 9l-3-3 2.5-2.5Z" />
+                                    <path d="M16 6 5 17v3h3L19 9" />
+                                  </svg>
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </div>,
-                      document.body
-                    )}
+                        </div>,
+                        document.body,
+                      )}
 
                     {/* Panel Color Wheel kustom — portal terpisah, terbuka di samping popup
                         utama (lihat openColorWheel), TIDAK pernah tertumpuk krn di
                         document.body, sama pola dgn popup utama di atas. */}
-                    {showColorWheel && createPortal(
-                      <div
-                        ref={wheelPopupRef}
-                        className="fixed z-60 bg-white border border-stone-200/90 rounded-2xl p-3.5 shadow-xl animate-fadeIn"
-                        style={{ top: wheelPos.top, left: wheelPos.left, width: 216 }}
-                      >
-                        <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
-                          {tx("Color Wheel", "Color Wheel")}
-                        </span>
+                    {showColorWheel &&
+                      createPortal(
+                        <div
+                          ref={wheelPopupRef}
+                          className="fixed z-60 bg-white border border-stone-200/90 rounded-2xl p-3.5 shadow-xl animate-fadeIn"
+                          style={{
+                            top: wheelPos.top,
+                            left: wheelPos.left,
+                            width: 216,
+                          }}
+                        >
+                          <span className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block mb-2">
+                            {tx("Color Wheel", "Color Wheel")}
+                          </span>
 
-                        {/* Kotak Saturation/Value — PERMINTAAN USER: kursor cuma disembunyikan
+                          {/* Kotak Saturation/Value — PERMINTAAN USER: kursor cuma disembunyikan
                             SELAMA ditekan/digeser (draggingHandle), bukan dari awal hover —
                             bulat indikator yang membesar itu sendiri jadi penanda posisi,
                             gantinya kursor. Posisi handle dihitung via calc() (bukan
                             left:X%+transform:-50%) supaya badannya selalu persis di dalam
                             kotak, tidak pernah "nongol" keluar tepi sedikit pun. */}
-                        <div
-                          ref={svSquareRef}
-                          onPointerDown={handleSvPointerDown}
-                          className={`relative w-full h-33 rounded-[10px] shadow-inner select-none touch-none ${
-                            draggingHandle === "sv" ? "cursor-none" : "cursor-pointer"
-                          }`}
-                          style={{
-                            background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent), ${hueBg}`,
-                          }}
-                        >
                           <div
-                            className={`absolute rounded-full border-[2.5px] border-white pointer-events-none transition-[width,height] duration-150 ${
-                              draggingHandle === "sv" ? "w-6 h-6" : "w-3.5 h-3.5"
+                            ref={svSquareRef}
+                            onPointerDown={handleSvPointerDown}
+                            className={`relative w-full h-33 rounded-[10px] shadow-inner select-none touch-none ${
+                              draggingHandle === "sv"
+                                ? "cursor-none"
+                                : "cursor-pointer"
                             }`}
                             style={{
-                              left: `calc((100% - ${svHandleSize}px) * ${hsv.s / 100})`,
-                              top: `calc((100% - ${svHandleSize}px) * ${(100 - hsv.v) / 100})`,
-                              backgroundColor: wheelHex,
-                              boxShadow: "0 0 0 1px rgba(0,0,0,0.35), 0 1px 3px rgba(0,0,0,0.3)",
+                              background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent), ${hueBg}`,
                             }}
-                          />
-                        </div>
+                          >
+                            <div
+                              className={`absolute rounded-full border-[2.5px] border-white pointer-events-none transition-[width,height] duration-150 ${
+                                draggingHandle === "sv"
+                                  ? "w-6 h-6"
+                                  : "w-3.5 h-3.5"
+                              }`}
+                              style={{
+                                left: `calc((100% - ${svHandleSize}px) * ${hsv.s / 100})`,
+                                top: `calc((100% - ${svHandleSize}px) * ${(100 - hsv.v) / 100})`,
+                                backgroundColor: wheelHex,
+                                boxShadow:
+                                  "0 0 0 1px rgba(0,0,0,0.35), 0 1px 3px rgba(0,0,0,0.3)",
+                              }}
+                            />
+                          </div>
 
-                        {/* Slider Hue — sama, handle dijaga tetap di dalam track secara
+                          {/* Slider Hue — sama, handle dijaga tetap di dalam track secara
                             horizontal (vertikal tetap ditengahkan, track-nya memang sengaja
                             lebih tipis dari handle). */}
-                        <div
-                          ref={hueSliderRef}
-                          onPointerDown={handleHuePointerDown}
-                          className={`relative mt-3 w-full h-3 rounded-full shadow-inner select-none touch-none ${
-                            draggingHandle === "hue" ? "cursor-none" : "cursor-pointer"
-                          }`}
-                          style={{
-                            background:
-                              "linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)",
-                          }}
-                        >
                           <div
-                            className={`absolute rounded-full bg-white border-2 border-white pointer-events-none transition-[width,height] duration-150 ${
-                              draggingHandle === "hue" ? "w-6.5 h-6.5" : "w-4.5 h-4.5"
+                            ref={hueSliderRef}
+                            onPointerDown={handleHuePointerDown}
+                            className={`relative mt-3 w-full h-3 rounded-full shadow-inner select-none touch-none ${
+                              draggingHandle === "hue"
+                                ? "cursor-none"
+                                : "cursor-pointer"
                             }`}
                             style={{
-                              left: `calc((100% - ${hueHandleSize}px) * ${hsv.h / 360})`,
-                              top: "50%",
-                              transform: "translateY(-50%)",
-                              boxShadow: "0 0 0 1.5px rgba(0,0,0,0.25), 0 1px 3px rgba(0,0,0,0.25)",
+                              background:
+                                "linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)",
                             }}
-                          />
-                        </div>
+                          >
+                            <div
+                              className={`absolute rounded-full bg-white border-2 border-white pointer-events-none transition-[width,height] duration-150 ${
+                                draggingHandle === "hue"
+                                  ? "w-6.5 h-6.5"
+                                  : "w-4.5 h-4.5"
+                              }`}
+                              style={{
+                                left: `calc((100% - ${hueHandleSize}px) * ${hsv.h / 360})`,
+                                top: "50%",
+                                transform: "translateY(-50%)",
+                                boxShadow:
+                                  "0 0 0 1.5px rgba(0,0,0,0.25), 0 1px 3px rgba(0,0,0,0.25)",
+                              }}
+                            />
+                          </div>
 
-                        {/* Preview + Hex — PERMINTAAN USER: kode hex cuma muncul di SATU
+                          {/* Preview + Hex — PERMINTAAN USER: kode hex cuma muncul di SATU
                             tempat (di sini, popup color wheel), bukan dobel dgn kotak di
                             panel utama. Input inilah satu-satunya tempat ketik manual;
                             customHex dipakai sbg buffer teks (sama seperti input lama)
                             supaya ketikan parsial tidak langsung ketiban ulang oleh wheelHex
                             sebelum genap 6 digit valid. */}
-                        <div className="flex items-center gap-2.5 mt-3.5">
-                          <span
-                            className="w-8.5 h-8.5 rounded-full border-2 border-white shrink-0"
-                            style={{ backgroundColor: wheelHex, boxShadow: "0 0 0 1px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.08)" }}
-                          />
-                          <div className="relative flex-1">
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 text-stone-400 font-mono text-[15px] font-bold pointer-events-none">
-                              #
-                            </span>
-                            <input
-                              type="text"
-                              value={customHex.replace(/^#/, "")}
-                              maxLength={6}
-                              onChange={(e) => {
-                                // PERMINTAAN USER: warna langsung berubah tiap ketik satu
-                                // karakter, tidak perlu tunggu genap 6 digit / Enter. Digit
-                                // yang belum diketik di-"isi sementara" dgn 0 di kanan cuma
-                                // utk keperluan preview warna — teks yang tampil di kotak
-                                // tetap persis apa yang diketik (raw), bukan versi di-pad.
-                                const raw = e.target.value.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
-                                const val = `#${raw}`;
-                                setCustomHex(val);
-                                if (raw.length > 0) {
-                                  const padded = raw.padEnd(6, "0");
-                                  setThemeColor && setThemeColor(`#${padded}`);
-                                  const [r, g, b] = hexToRgb(`#${padded}`);
-                                  setHsv(rgbToHsv(r, g, b));
-                                }
+                          <div className="flex items-center gap-2.5 mt-3.5">
+                            <span
+                              className="w-8.5 h-8.5 rounded-full border-2 border-white shrink-0"
+                              style={{
+                                backgroundColor: wheelHex,
+                                boxShadow:
+                                  "0 0 0 1px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.08)",
                               }}
-                              onKeyDown={(e) => {
-                                // PERMINTAAN USER: tekan Enter = warna itu yang dipakai,
-                                // selesai ngetik, DAN popup color wheel ini langsung
-                                // ketutup — bukan cuma blur input-nya doang.
-                                if (e.key !== "Enter") return;
-                                e.preventDefault();
-                                const raw = customHex.replace(/^#/, "");
-                                if (raw.length > 0) {
-                                  setCustomHex(`#${raw.padEnd(6, "0")}`);
-                                }
-                                e.currentTarget.blur();
-                                setShowColorWheel(false);
-                              }}
-                              className="w-full bg-transparent pl-3.5 font-mono text-[15px] font-extrabold text-stone-900 tracking-wide focus:outline-none"
                             />
-                          </div>
-                        </div>
-
-                        {/* RGB Fields */}
-                        <div className="flex gap-1.5 mt-3">
-                          {(["r", "g", "b"] as const).map((channel, idx) => (
-                            <div key={channel} className="flex-1">
-                              <span className="text-[8.5px] font-extrabold text-stone-400 uppercase tracking-wider text-center block mb-1">
-                                {channel}
+                            <div className="relative flex-1">
+                              <span className="absolute left-0 top-1/2 -translate-y-1/2 text-stone-400 font-mono text-[15px] font-bold pointer-events-none">
+                                #
                               </span>
                               <input
                                 type="text"
-                                inputMode="numeric"
-                                value={Math.round(wheelRgb[idx])}
+                                value={customHex.replace(/^#/, "")}
+                                maxLength={6}
                                 onChange={(e) => {
-                                  const raw = e.target.value.replace(/[^0-9]/g, "");
-                                  const n = Math.max(0, Math.min(255, raw === "" ? 0 : parseInt(raw, 10)));
-                                  const nextRgb: [number, number, number] = [...wheelRgb] as [number, number, number];
-                                  nextRgb[idx] = n;
-                                  applyHsv(rgbToHsv(nextRgb[0], nextRgb[1], nextRgb[2]));
+                                  // PERMINTAAN USER: warna langsung berubah tiap ketik satu
+                                  // karakter, tidak perlu tunggu genap 6 digit / Enter. Digit
+                                  // yang belum diketik di-"isi sementara" dgn 0 di kanan cuma
+                                  // utk keperluan preview warna — teks yang tampil di kotak
+                                  // tetap persis apa yang diketik (raw), bukan versi di-pad.
+                                  const raw = e.target.value
+                                    .replace(/[^0-9A-Fa-f]/g, "")
+                                    .toUpperCase();
+                                  const val = `#${raw}`;
+                                  setCustomHex(val);
+                                  if (raw.length > 0) {
+                                    const padded = raw.padEnd(6, "0");
+                                    setThemeColor &&
+                                      setThemeColor(`#${padded}`);
+                                    const [r, g, b] = hexToRgb(`#${padded}`);
+                                    setHsv(rgbToHsv(r, g, b));
+                                  }
                                 }}
-                                className="w-full text-center bg-stone-50 border border-stone-200 rounded-[9px] py-1.5 text-[11.5px] font-mono font-extrabold text-stone-900 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green"
+                                onKeyDown={(e) => {
+                                  // PERMINTAAN USER: tekan Enter = warna itu yang dipakai,
+                                  // selesai ngetik, DAN popup color wheel ini langsung
+                                  // ketutup — bukan cuma blur input-nya doang.
+                                  if (e.key !== "Enter") return;
+                                  e.preventDefault();
+                                  const raw = customHex.replace(/^#/, "");
+                                  if (raw.length > 0) {
+                                    setCustomHex(`#${raw.padEnd(6, "0")}`);
+                                  }
+                                  e.currentTarget.blur();
+                                  setShowColorWheel(false);
+                                }}
+                                className="w-full bg-transparent pl-3.5 font-mono text-[15px] font-extrabold text-stone-900 tracking-wide focus:outline-none"
                               />
                             </div>
-                          ))}
-                        </div>
-                      </div>,
-                      document.body
-                    )}
+                          </div>
+
+                          {/* RGB Fields */}
+                          <div className="flex gap-1.5 mt-3">
+                            {(["r", "g", "b"] as const).map((channel, idx) => (
+                              <div key={channel} className="flex-1">
+                                <span className="text-[8.5px] font-extrabold text-stone-400 uppercase tracking-wider text-center block mb-1">
+                                  {channel}
+                                </span>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={Math.round(wheelRgb[idx])}
+                                  onChange={(e) => {
+                                    const raw = e.target.value.replace(
+                                      /[^0-9]/g,
+                                      "",
+                                    );
+                                    const n = Math.max(
+                                      0,
+                                      Math.min(
+                                        255,
+                                        raw === "" ? 0 : parseInt(raw, 10),
+                                      ),
+                                    );
+                                    const nextRgb: [number, number, number] = [
+                                      ...wheelRgb,
+                                    ] as [number, number, number];
+                                    nextRgb[idx] = n;
+                                    applyHsv(
+                                      rgbToHsv(
+                                        nextRgb[0],
+                                        nextRgb[1],
+                                        nextRgb[2],
+                                      ),
+                                    );
+                                  }}
+                                  className="w-full text-center bg-stone-50 border border-stone-200 rounded-[9px] py-1.5 text-[11.5px] font-mono font-extrabold text-stone-900 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>,
+                        document.body,
+                      )}
                   </div>
                 );
               })()}
@@ -947,7 +1129,10 @@ export default function Step2Settings({
                   { id: "auto", name: tx("Automatic", "Otomatis") },
                   { id: "minimalist", name: tx("Simple", "Simpel") },
                   { id: "corporate", name: tx("Professional", "Profesional") },
-                  { id: "executive", name: tx("Bold Executive", "Eksekutif Tegas") },
+                  {
+                    id: "executive",
+                    name: tx("Bold Executive", "Eksekutif Tegas"),
+                  },
                 ].map((pItem) => (
                   <button
                     type="button"
@@ -981,7 +1166,9 @@ export default function Step2Settings({
             nempel di dasar kartu. */}
         <div
           className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-sm premium-card-hover transition-colors flex flex-col"
-          style={templateCardHeight ? { height: templateCardHeight } : undefined}
+          style={
+            templateCardHeight ? { height: templateCardHeight } : undefined
+          }
         >
           <h3 className="font-extrabold text-stone-850 text-sm border-b border-stone-100 pb-2 mb-4 flex items-center justify-between">
             <span>{tx("Include Sections", "Include Sections")}</span>
@@ -1069,7 +1256,10 @@ export default function Step2Settings({
               type="text"
               value={customSectionInput}
               onChange={(e) => setCustomSectionInput(e.target.value)}
-              placeholder={tx("Custom Section Title...", "Judul Bagian Kustom...")}
+              placeholder={tx(
+                "Custom Section Title...",
+                "Judul Bagian Kustom...",
+              )}
               className="flex-1 bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5 text-xs text-stone-800 focus:outline-none focus:border-petro-green"
             />
             <button

@@ -35,7 +35,7 @@ export const SEVERITY_COLOR: Record<string, string> = {
 // export_ppt.py. Dipakai HANYA di elemen BRAND/struktural (cover, kicker, badge, border panel,
 // header tabel, chart "bar" utama) — SEVERITY_COLOR & CATEGORY_COLOR_RAMP di atas TIDAK ikut
 // tema, itu warna semantik/default hijau yang tetap (severity TIDAK boleh berubah oleh tema).
-export type ThemeColorKey = "green" | "navy" | "dark" | "gold";
+export type ThemeColorKey = "green" | "navy" | "dark" | "gold" | "teal";
 
 export interface ThemeColors {
   main: string;
@@ -46,10 +46,41 @@ export interface ThemeColors {
 }
 
 export const THEME_PALETTES: Record<ThemeColorKey, ThemeColors> = {
-  green: { main: "#1B5E3C", bg: "#0E3B26", chart: "#2F7A52", light: "#C9A227", soft: "#E7C766" },
-  navy: { main: "#1E3A5F", bg: "#0F172A", chart: "#3B6EA5", light: "#C9A227", soft: "#E7C766" },
-  dark: { main: "#1F2937", bg: "#111827", chart: "#3F4B5C", light: "#C9A227", soft: "#E7C766" },
-  gold: { main: "#8A6A16", bg: "#4A3908", chart: "#C9A227", light: "#F3E3AE", soft: "#FBF3DC" },
+  green: {
+    main: "#1B5E3C",
+    bg: "#0E3B26",
+    chart: "#2F7A52",
+    light: "#C9A227",
+    soft: "#E7C766",
+  },
+  navy: {
+    main: "#1E3A5F",
+    bg: "#0F172A",
+    chart: "#3B6EA5",
+    light: "#C9A227",
+    soft: "#E7C766",
+  },
+  dark: {
+    main: "#1F2937",
+    bg: "#111827",
+    chart: "#3F4B5C",
+    light: "#C9A227",
+    soft: "#E7C766",
+  },
+  gold: {
+    main: "#8A6A16",
+    bg: "#4A3908",
+    chart: "#C9A227",
+    light: "#F3E3AE",
+    soft: "#FBF3DC",
+  },
+  teal: {
+    main: "#0F6B64",
+    bg: "#0A3D39",
+    chart: "#35A398",
+    light: "#C9A227",
+    soft: "#E7C766",
+  },
 };
 
 // Mirror _blend_with_white di export_pdf.py/export_ppt.py — campur `hex` dgn putih sebesar
@@ -195,9 +226,15 @@ export function getBlockNavTitle(block: ReportBlock, index: number): string {
       // Indonesia yang dikenal cukup sbg heuristik kasar drpd menambah parameter bahasa baru.
       if (block.title) return block.title;
       const KNOWN_ID_KICKERS = new Set([
-        "ANALISIS", "ANALISIS DATA", "SOROTAN INSIDEN", "SOROTAN DATA", "TINDAK LANJUT", "PENUTUP",
+        "ANALISIS",
+        "ANALISIS DATA",
+        "SOROTAN INSIDEN",
+        "SOROTAN DATA",
+        "TINDAK LANJUT",
+        "PENUTUP",
       ]);
-      const isIndonesian = typeof block.kicker === "string" && KNOWN_ID_KICKERS.has(block.kicker);
+      const isIndonesian =
+        typeof block.kicker === "string" && KNOWN_ID_KICKERS.has(block.kicker);
       return isIndonesian ? `Bagian ${index + 1}` : `Section ${index + 1}`;
     }
   }
