@@ -18,6 +18,7 @@ def _strip_decorative_symbols(text: str) -> str:
     memang bagian sah nama kolom (":", "(", ")", "-", dst — mis. "Blocked: Policy") tidak
     ikut kepotong. Cuma dipangkas di UJUNG (awal/akhir), bukan tengah teks — simbol semacam
     itu di TENGAH nama kolom kemungkinan besar genuinely bagian nama, bukan dekorasi."""
+    text = "".join(ch for ch in str(text) if unicodedata.category(ch) not in ("So", "Sk"))
     chars = list(text)
     start = 0
     while start < len(chars) and (chars[start].isspace() or unicodedata.category(chars[start]) in ("So", "Sk")):

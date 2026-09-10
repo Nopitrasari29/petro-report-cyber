@@ -14,6 +14,7 @@ di fitur chart, bukan implementasi terpisah yang bisa berbeda hasil.
 """
 import os
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 import pandas as pd
 
@@ -171,12 +172,16 @@ def _detect_main_category_columns(df: pd.DataFrame, exclude: List[str]) -> Dict[
 _PAREN_RE = re.compile(r"\s*\([^)]*\)\s*")
 
 
+def _strip_decorative_symbols(text: str) -> str:
+    return "".join(ch for ch in str(text) if unicodedata.category(ch) not in ("So", "Sk"))
+
+
 def _normalize_category_key(value: str) -> str:
     """Kunci penggabungan untuk nilai kategori yang penulisannya mirip (mis. "Kantor Pusat
     (KAPUS)" dan "Kantor Pusat" seharusnya dihitung sebagai entitas yang sama, bukan 2
     kategori terpisah yang understate konsentrasi sebenarnya) — menghapus keterangan dalam
     kurung dan menyeragamkan spasi/huruf besar-kecil sebelum dibandingkan."""
-    cleaned = _PAREN_RE.sub(" ", str(value))
+    cleaned = _PAREN_RE.sub(" ", _strip_decorative_symbols(str(value)))
     return re.sub(r"\s+", " ", cleaned).strip().lower()
 
 
@@ -221,7 +226,7 @@ def _top_values(df: pd.DataFrame, col: str, n: int = 10) -> List[Dict[str, Any]]
         # desimal) — kalau ternyata semua nilai terisinya bilangan bulat, bulatkan dulu
         # sebelum dijadikan label supaya tidak tampil "2.0"/"3.0" di laporan.
         series = series.astype("Int64")
-    raw_counts = series.astype(str).value_counts()
+    raw_counts = series.astype(str).map(_strip_decorative_symbols).value_counts()
     merged: Dict[str, Dict[str, Any]] = {}
     for val, cnt in raw_counts.items():
         key = _normalize_category_key(val)

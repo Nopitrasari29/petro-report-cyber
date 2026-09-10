@@ -2,6 +2,7 @@
 import json
 import logging
 import re
+import unicodedata
 import ollama
 import requests
 from app.core.config import settings
@@ -130,6 +131,7 @@ def sanitize_text(text) -> str:
         return ""
     
     raw = _DASH_RE.sub(". ", str(text).strip())
+    raw = "".join(ch for ch in raw if unicodedata.category(ch) not in {"So", "Sk"})
     
     # RCA-03: Pecah per kalimat agar filler di tengah paragraf juga terbuang
     sentences = re.split(r"(?<=[.!?])\s+", raw)
