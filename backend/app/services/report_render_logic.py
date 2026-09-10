@@ -225,6 +225,27 @@ def _dedupe_truncated_labels(labels: list, max_chars: int) -> list:
     return truncated
 
 
+def _choose_categorical_chart_style(labels: list, values: list, semantic: str = "category") -> str:
+    """Choose a chart form from the shape and meaning of one categorical series."""
+    labels = [str(label).strip() for label in labels if str(label).strip()]
+    values = [float(value or 0) for value in values[:len(labels)]]
+    if not values or len(values) != len(labels):
+        return "bar"
+    lowered = " ".join(labels).lower()
+    stage_words = ("open", "pending", "progress", "investigating", "resolved", "closed", "critical", "high", "medium", "low")
+    if semantic in {"status", "severity"} and len(values) >= 3 and any(word in lowered for word in stage_words):
+        return "funnel"
+    total = sum(max(value, 0) for value in values)
+    if total <= 0:
+        return "bar"
+    shares = sorted((max(value, 0) / total for value in values), reverse=True)
+    if len(values) <= 3 and shares[0] <= 0.7:
+        return "donut"
+    if len(values) >= 5 and shares[0] >= 0.45:
+        return "treemap"
+    return "bar"
+
+
 _RENDER_IS_EN: "contextvars.ContextVar[bool]" = contextvars.ContextVar("render_is_en", default=True)
 
 
@@ -303,6 +324,13 @@ def _tile_rank_items(tile: dict) -> list | None:
         return list(zip(chart.get("categories", []), chart.get("values", [])))
     if kind == "custom_topic":
         return list(zip(tile.get("labels", []), tile.get("values", [])))
+    # Tile data numerik murni (metric_share/metric_mix/metric_compare) - tanpa cabang di sini
+    # _build_insight_page mengembalikan None & tile-nya HILANG sebelum sampai ke exporter,
+    # persis kelas kegagalan yang sedang diperbaiki (tile terbentuk tapi tidak pernah tampil).
+    if kind in ("metric_share", "metric_mix"):
+        return list(zip(tile.get("labels", []), tile.get("values", [])))
+    if kind == "metric_compare":
+        return list(zip(tile.get("categories", []), tile.get("series_a", [])))
     return None
 
 
@@ -396,6 +424,11 @@ _DASH_TITLE_MAX_H_IN = 1.12
 _DASH_CONTENT_BOTTOM_IN = 7.4
 _DASH_GAP_RANGE_IN = (0.1, 0.5)
 _DASH_GAP_DEFAULT_IN = 0.2
+_DASH_COLUMN_CHART_MIN_H_IN = 1.25
+_DASH_COLUMN_NOTE_RESERVE_H_IN = 0.82
+_DASH_COLUMN_TITLE_H_IN = 0.52
+_DASH_COLUMN_KPI_H_IN = 0.95
+_DASH_COLUMN_GAP_IN = 0.28
 
 
 def _layout_dashboard_column(tile: dict, avail_h_in: float) -> dict:
@@ -455,6 +488,81 @@ def _layout_dashboard_column(tile: dict, avail_h_in: float) -> dict:
             # diperbesar; kotak catatan JANGAN diregangkan lewat isi teksnya sendiri).
             heights["main_visual"] += max(0.0, extra - gap_room)
     return {"gap": gap, **heights}
+
+
+def _layout_dashboard_column_content(
+    body_h_in: float,
+    col_w_in: float,
+    has_chart: bool,
+    cards: list | None = None,
+    has_notes: bool = False,
+) -> dict:
+    """Reserve chart, cards, and notes before either exporter draws them.
+
+    The old column renderer assigned a fixed chart fraction first, then let the card
+    grid and note box consume whatever happened to remain.  That made the two
+    renderers capable of drawing into the same vertical band.  This planner reserves
+    the card rows and notes first, then gives the chart only the remaining rectangle.
+    """
+    cards = list(cards or [])[:6]
+    chart_h = body_h_in if has_chart and not cards else 0.0
+    cards_h = 0.0
+    note_h = _DASH_COLUMN_NOTE_RESERVE_H_IN if has_notes else 0.0
+    if cards:
+        max_subs = max((len(card.get("sub_items") or []) for card in cards), default=0)
+        item_h = _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN + _NESTED_CARD_SUBITEM_GAP_IN
+        row_need = _NESTED_CARD_HEADER_H_IN + 0.20 + max_subs * item_h
+        available_for_cards = max(0.0, body_h_in - note_h - 0.08)
+        rows_fit = max(1, int((available_for_cards + _NESTED_CARD_ROW_GAP_IN) / (row_need + _NESTED_CARD_ROW_GAP_IN)))
+        grid = _layout_nested_card_grid(len(cards), col_w_in, max_rows=min(3, rows_fit))
+        rows = grid["rows"] or [len(cards)]
+        cards_h = min(available_for_cards, len(rows) * row_need + (len(rows) - 1) * _NESTED_CARD_ROW_GAP_IN)
+        cards = cards[:sum(rows)]
+    if has_chart and cards:
+        chart_h = max(_DASH_COLUMN_CHART_MIN_H_IN, body_h_in - cards_h - note_h - 0.18)
+        if chart_h + cards_h + note_h + 0.18 > body_h_in:
+            chart_h = max(0.0, body_h_in - cards_h - note_h - 0.18)
+    elif has_chart:
+        chart_h = max(_DASH_COLUMN_CHART_MIN_H_IN, body_h_in - note_h)
+    cards_y = chart_h + 0.10 if has_chart and cards else 0.0
+    note_y = cards_y + cards_h + 0.08 if cards else chart_h
+    note_h = max(0.0, body_h_in - note_y)
+    return {"chart_h": chart_h, "cards_h": cards_h, "cards_y": cards_y, "note_y": note_y, "note_h": note_h, "cards": cards}
+
+
+def dashboard_column_bboxes(block: dict, legacy_chart_fraction: float | None = None) -> list[dict]:
+    """Return chart/card/note rectangles for every dashboard column.
+
+    This is intentionally pure so the PDF/PPT parity tests can inspect the same
+    planned geometry without depending on either rendering engine.
+    """
+    cols = [col for col in (block.get("columns") or []) if col]
+    if not cols:
+        return []
+    total_w = 13.333 - 2 * _DASH_MARGIN_X_IN
+    title_h = _DASH_COLUMN_TITLE_H_IN
+    body_h = _DASH_CONTENT_BOTTOM_IN - title_h - _DASH_COLUMN_KPI_H_IN - 0.10
+    gap = _DASH_COLUMN_GAP_IN
+    col_w = (total_w - gap * (len(cols) - 1)) / len(cols)
+    boxes = []
+    for index, col in enumerate(cols):
+        x = index * (col_w + gap)
+        has_chart = bool(col.get("main_chart_tile"))
+        cards = (col.get("category_details") or [])[:6]
+        planned = _layout_dashboard_column_content(body_h, col_w, has_chart, cards, bool(col.get("notes")))
+        chart_h = planned["chart_h"]
+        if legacy_chart_fraction is not None and has_chart and cards:
+            chart_h = body_h * legacy_chart_fraction
+            cards_y = body_h * 0.36
+        else:
+            cards_y = planned["cards_y"]
+        if has_chart:
+            boxes.append({"kind": "chart", "column": index, "x": x, "y": title_h + _DASH_COLUMN_KPI_H_IN + 0.10, "w": col_w, "h": chart_h})
+        if cards:
+            boxes.append({"kind": "card_grid", "column": index, "x": x, "y": title_h + _DASH_COLUMN_KPI_H_IN + 0.10 + cards_y, "w": col_w, "h": planned["cards_h"]})
+        if col.get("notes"):
+            boxes.append({"kind": "notes", "column": index, "x": x, "y": title_h + _DASH_COLUMN_KPI_H_IN + 0.10 + planned["note_y"], "w": col_w, "h": planned["note_h"]})
+    return boxes
 
 
 # ============================================================================
@@ -1271,6 +1379,26 @@ def _compute_multi_metric_items(breakdown_list: list, cat_col_name: str | None, 
     return by_label
 
 
+def _drop_derived_metric_entries(entries: list, min_match_ratio: float = 0.7) -> list:
+    """Remove a metric that is mostly the row-wise sum of sibling metrics."""
+    if len(entries) < 3:
+        return entries
+    maps = [{str(item.get("label")): float(item.get("value") or 0) for item in (entry.get("items") or [])} for entry in entries]
+    derived = set()
+    for candidate, candidate_map in enumerate(maps):
+        matches = checked = 0
+        for label, value in candidate_map.items():
+            siblings = [other[label] for idx, other in enumerate(maps) if idx != candidate and label in other]
+            if not siblings:
+                continue
+            checked += 1
+            if abs(value - sum(siblings)) <= max(1.0, abs(value) * 0.01):
+                matches += 1
+        if checked and matches / checked >= min_match_ratio:
+            derived.add(candidate)
+    return [entry for idx, entry in enumerate(entries) if idx not in derived]
+
+
 def _layout_nested_card_grid(n_cards: int, total_w_in: float, max_rows: int | None = None) -> dict:
     """PERMINTAAN USER (diukur dari referensi): kartu bersarang lebar TETAP ~2.24in, jarak
     nyaris 0 - BUKAN "lebar dibagi rata dari jumlah kartu" spt sebelumnya. Sampai
@@ -1463,7 +1591,9 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
     items = _tile_rank_items(tile)
     _ien = is_english(report)
     unit = _L(report, "kejadian", "events") if sec_domain else _L(report, "data", "entries")
-    headline = _shorten_to_caption(tile["caption"], max_sentences=1) if tile.get("caption") else tile.get("title")
+    headline = tile.get("source_topic_title") or (
+        _shorten_to_caption(tile["caption"], max_sentences=1) if tile.get("caption") else tile.get("title")
+    )
     if not items:
         if tile.get("tile_kind") == "kpi_gauge":
             pct = tile.get("pct", 0)
@@ -1498,6 +1628,7 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
                     {"label": _L(report, "SISA", "REMAINING"), "value": f"{max(0, 100 - pct)}%"},
                 ],
                 "category_details": [],
+                "main_chart_tile": tile,  # gauge: lihat catatan di return utama fungsi ini
                 # PERMINTAAN USER (hal.05 mengulang hal.01): halaman gauge ini TIDAK punya
                 # category_details, jadi himpunan entitasnya kosong & pemeriksa irisan entitas
                 # (_insight_page_entity_set) tidak pernah bisa mencocokkannya dgn halaman lain -
@@ -1508,12 +1639,13 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
                 "gauge_pct": pct,
                 "notes": notes,
                 "chart_category_count": 1,
+                "source_topic_title": tile.get("source_topic_title"),
             }
         return None
     items = sorted(items, key=lambda kv: -kv[1])
     total = sum(v for _, v in items) or 1
     _dim_label = humanize_label(tile.get("cat_col_name") or "", None) if tile.get("cat_col_name") else None
-    if not _title_matches_displayed(headline, [n for n, _ in items], _dim_label):
+    if not tile.get("source_topic_title") and not _title_matches_displayed(headline, [n for n, _ in items], _dim_label):
         headline = _synth_insight_title(report, _dim_label, items, total)
     kpi_summary = [
         {"label": _L(report, "TOTAL", "TOTAL"), "value": _fmt_count(total, _ien)},
@@ -1572,6 +1704,14 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
     return {
         "kind": "management_insight_page", "title": headline,
         "kpi_summary": kpi_summary, "category_details": category_details, "notes": notes,
+        # TEMUAN USER (terverifikasi): halaman ini dulu mengembalikan dict TANPA field chart
+        # sama sekali, jadi 6 dari 9 tile_kind KEHILANGAN chart-nya sebelum sampai ke exporter
+        # (status_funnel, kpi_gauge, scatter_bubble, trend_chart, custom_topic, risk_heatmap)
+        # & jatuh jadi grid kartu. Renderer chart-nya sudah ada & teruji, cuma tidak pernah
+        # dipanggil dari jalur Visual. Tile-nya dibawa utuh; exporter yang memutuskan bentuk
+        # chart-nya - dan kartu TETAP ikut, chart & kartu tidak saling meniadakan.
+        "main_chart_tile": tile,
+        "source_topic_title": tile.get("source_topic_title"),
     }
 
 
@@ -1948,11 +2088,11 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
                      "value": _fmt_count(items[0].get("count") or 0, is_english(report))},
                 ],
                 "category_details": [{
-                    # KOREKSI USER: dulu dipotong keras di 28 karakter, jadi "PT Sarana
-                    # Instrumentasi Utama" tampil "...Utam" - huruf hilang tanpa penanda apa
-                    # pun. Sekarang dipotong di BATAS KATA & diberi elipsis, jadi pembaca
-                    # tahu namanya masih ada lanjutannya.
-                    "name": _potong_di_batas_kata(str(it.get("name") or ""), 28),
+                    # BATASAN USER: tidak boleh ada teks berakhir "…" di mana pun - jadi
+                    # pemotongan (bahkan yang di batas kata) DIBATALKAN. Nama dikirim UTUH;
+                    # perender kartu yang menyesuaikan ukuran font & jumlah barisnya supaya
+                    # muat (lihat _muat_nama_kartu di kedua exporter).
+                    "name": str(it.get("name") or "").strip(),
                     "raw_name": it.get("name"),
                     "score": _fmt_count(it.get("count") or 0, is_english(report)),
                     "badge": _L(report, "Tinggi", "High") if (it.get("count") or 0) >= top * 0.6 else _L(report, "Sedang", "Medium"),
@@ -2123,9 +2263,17 @@ def _merge_overlapping_insight_pages(blocks: list, report) -> list:
     # set entitas yang sama), tanpa kerumitan pairwise-lengkap yang tidak diperlukan di sini.
     groups: list = []  # list of list[index]
     for i in insight_indices:
+        # Checklist topics are distinct user requests even when they share the same
+        # entity set. Do not collapse them as duplicate pages merely because their
+        # charts use the same category dimension.
+        if blocks[i].get("source_topic_title"):
+            groups.append([i])
+            continue
         placed = False
         for group in groups:
             rep_set = entity_sets[group[0]]
+            if blocks[group[0]].get("source_topic_title"):
+                continue
             if _entity_set_overlap(entity_sets[i], rep_set) >= _INSIGHT_PAGE_OVERLAP_THRESHOLD:
                 group.append(i)
                 placed = True
@@ -4146,6 +4294,10 @@ def build_management_report_blocks(report) -> list[dict]:
             "kicker": L("DISTRIBUSI RISIKO", "RISK DISTRIBUTION") if risk_mode == "severity" else L("DISTRIBUSI DATA", "DATA DISTRIBUTION"),
             "title": risk_title,
             "mode": risk_mode,
+            "chart_style": _choose_categorical_chart_style(
+                [bar["label"] for bar in bars], [bar["count"] for bar in bars],
+                semantic="severity" if risk_mode == "severity" else "category",
+            ),
             "bars": bars,
             "cat_col_name": risk_cat_col,
             # BUG DIPERBAIKI: model AI kadang "mengarang struktur" (list/dict bersarang, mis.
@@ -4176,6 +4328,13 @@ def build_management_report_blocks(report) -> list[dict]:
     # ---- Perbandingan Multi-Indikator (radar) — HANYA kalau data punya >=3 kolom numerik
     # genuinely sebanding (skor/nilai KPI dst).
     radar_data = _compute_kpi_radar(numeric_summary, source_cols)
+    # KEPUTUSAN USER: radar DILEWATI, bukan sekadar diturunkan bobotnya. Menurunkan bobot cuma
+    # memindahkan radar mati ke halaman berbagi, tidak pernah membatalkannya. Bukti terukur:
+    # nilai 14/6/6 di skala 0-100 lolos mulus, poligon datanya cuma 0.10 x 0.15in di dalam grid
+    # 1.54 x 1.34in - sekitar 0.7% luas grid, praktis tak terlihat & tidak membandingkan apa pun.
+    _RADAR_MIN_PEAK = 25
+    if radar_data and max(radar_data.get("values") or [0]) < _RADAR_MIN_PEAK:
+        radar_data = None
     if radar_data and is_included("kpi_radar"):
         top_axis_idx = max(range(len(radar_data["values"])), key=lambda i: radar_data["values"][i])
         visual_tiles.append({
@@ -4295,19 +4454,108 @@ def build_management_report_blocks(report) -> list[dict]:
             "total_records": total_records, "second_item": _gauge_items[1] if len(_gauge_items) > 1 else None,
         })
 
+    # ---- Tile untuk DATA NUMERIK MURNI — PERMINTAAN USER: data tanpa kolom tanggal, tanpa
+    # status, tanpa severity (mis. log F5: Virtual Server + Illegal/Legal/Requests) selama ini
+    # cuma bisa memicu 1-2 jenis tile, krn hampir semua gerbang tile bergantung pada kolom
+    # tanggal/status. Tiga tile di bawah syaratnya CUKUP ">=2 kolom numerik sebanding pada
+    # kategori yang sama" - renderernya sudah ada semua.
+    _num_by_cat: dict = {}
+    for _e in (report_stats.get("category_numeric_breakdown") or []):
+        _num_by_cat.setdefault(_e.get("category_col"), []).append(_e)
+    _multi = next(((c, es) for c, es in _num_by_cat.items() if c and len(es) >= 2), None)
+    if _multi and is_included("category_distribution"):
+        _mcat, _mentries = _multi
+        _mcat_label = humanize_label(_mcat, source_cols)
+        _units = (report_stats.get("_numeric_units") or {})
+
+        def _top_items(entry, n=6):
+            return sorted(entry.get("items") or [], key=lambda i: -(i.get("value") or 0))[:n]
+
+        # (1) SHARE per entitas (treemap) — metrik dgn total terbesar, memperlihatkan siapa
+        # mendominasi. Satu metrik saja, jadi tidak ada masalah skala.
+        _big = max(_mentries, key=lambda e: sum((i.get("value") or 0) for i in (e.get("items") or [])))
+        _big_items = _top_items(_big)
+        if len(_big_items) >= 3:
+            _big_label = humanize_label(_big.get("numeric_col"), source_cols)
+            visual_tiles.append({
+                "tile_kind": "metric_share",
+                "kicker": L("PANGSA PER ENTITAS", "SHARE PER ENTITY"),
+                "title": L(f"Pangsa {_big_label} per {_mcat_label}", f"{_big_label} Share by {_mcat_label}"),
+                "labels": _strip_common_affix([str(i.get("label")) for i in _big_items]),
+                "values": [i.get("value") or 0 for i in _big_items],
+                "cat_col_name": _mcat,
+                "caption": L(
+                    f"{_big_items[0].get('label')} menyumbang {_big_label} terbesar di antara {_mcat_label}.",
+                    f"{_big_items[0].get('label')} contributes the largest {_big_label} among {_mcat_label}.",
+                ),
+            })
+
+        # (2) KOMPOSISI antar metrik (stacked proportion) — PROPORSI, jadi metrik yang
+        # skalanya beda jauh (Legal 71.034 vs Illegal 66) tetap terbaca jujur; membandingkan
+        # nilai MENTAH-nya di satu sumbu justru menyesatkan.
+        _mix = _drop_derived_metric_entries([
+            e for e in _mentries if sum((i.get("value") or 0) for i in (e.get("items") or []))
+        ])
+        if len(_mix) >= 2:
+            visual_tiles.append({
+                "tile_kind": "metric_mix",
+                "kicker": L("KOMPOSISI METRIK", "METRIC COMPOSITION"),
+                "title": L(f"Komposisi Metrik pada {_mcat_label}", f"Metric Composition across {_mcat_label}"),
+                "labels": [humanize_label(e.get("numeric_col"), source_cols) for e in _mix],
+                "values": [sum((i.get("value") or 0) for i in (e.get("items") or [])) for e in _mix],
+                "cat_col_name": _mcat,
+                "caption": None,
+            })
+
+        # (3) PERBANDINGAN antar metrik per entitas (grouped bar) — HANYA kalau skalanya
+        # sebanding (rasio puncak <= 20x). Di luar itu batang metrik kecil jadi tak terlihat
+        # sama sekali di sebelah metrik besar, & chart-nya berbohong tentang datanya.
+        if len(_mentries) >= 2:
+            _a, _b = _mentries[0], _mentries[1]
+            _ai = {str(i.get("label")): (i.get("value") or 0) for i in (_a.get("items") or [])}
+            _bi = {str(i.get("label")): (i.get("value") or 0) for i in (_b.get("items") or [])}
+            _common = [str(i.get("label")) for i in _top_items(_a, 5) if str(i.get("label")) in _bi]
+            _pa = [_ai[k] for k in _common]
+            _pb = [_bi[k] for k in _common]
+            _rasio = (max(_pa + _pb) / max(min(_pa + _pb), 1)) if _pa else 0
+            if len(_common) >= 3 and _rasio <= 20:
+                visual_tiles.append({
+                    "tile_kind": "metric_compare",
+                    "kicker": L("PERBANDINGAN METRIK", "METRIC COMPARISON"),
+                    "title": L(f"{humanize_label(_a.get('numeric_col'), source_cols)} vs {humanize_label(_b.get('numeric_col'), source_cols)}",
+                               f"{humanize_label(_a.get('numeric_col'), source_cols)} vs {humanize_label(_b.get('numeric_col'), source_cols)}"),
+                    "categories": _common,
+                    "series_a": _pa, "series_b": _pb,
+                    "label_a": humanize_label(_a.get("numeric_col"), source_cols),
+                    "label_b": humanize_label(_b.get("numeric_col"), source_cols),
+                    "cat_col_name": _mcat,
+                    "caption": None,
+                })
+
     # ---- Sebaran 2 Dimensi (scatter/bubble) — PERMINTAAN USER (tambah jenis visualisasi
     # baru): HANYA kalau ada pasangan kategori+angka numerik genuinely terkelompokkan (lihat
     # data_profiler._compute_category_numeric_pairs) — 2 angka BERBEDA per entitas, bukan
     # cuma 1 angka seperti tile lain di atas.
     pairs = report_stats.get("category_numeric_pairs")
-    if pairs and is_included("category_distribution"):
+    _scatter_points = (pairs or {}).get("points") or []
+    _scatter_x = [float(p.get("count") or 0) for p in _scatter_points]
+    _scatter_y = [float(p.get("avg") or 0) for p in _scatter_points]
+    _scatter_varied = (
+        len({p.get("count") for p in _scatter_points}) >= 3
+        and len({p.get("avg") for p in _scatter_points}) >= 3
+        and (
+            max(_scatter_x, default=0) - min(_scatter_x, default=0) >= 0.2 * max(map(abs, _scatter_x), default=0)
+            or max(_scatter_y, default=0) - min(_scatter_y, default=0) >= 0.2 * max(map(abs, _scatter_y), default=0)
+        )
+    )
+    if pairs and _scatter_varied and is_included("category_distribution"):
         pair_cat_label = humanize_label(pairs["category_label"], source_cols)
         pair_num_label = humanize_label(pairs["numeric_label"], source_cols)
         visual_tiles.append({
             "tile_kind": "scatter_bubble",
             "kicker": L("SEBARAN DATA", "DATA SPREAD"),
             "title": L(f"{pair_cat_label} vs {pair_num_label}", f"{pair_cat_label} vs {pair_num_label}"),
-            "points": pairs["points"],
+            "points": _scatter_points,
             "x_label": L("Jumlah kemunculan", "Occurrence count"),
             "caption": L(
                 f"Tiap titik mewakili satu {pair_cat_label.lower()}, diposisikan berdasarkan jumlah kemunculan dan rata-rata {pair_num_label.lower()}.",
@@ -4369,8 +4617,6 @@ def build_management_report_blocks(report) -> list[dict]:
     # "treemap" TETAP dipakai aman di category_style/status_style (risk_heatmap SELALU jadi
     # tile PERTAMA/baris pertama, & versi SOC-nya selalu 1 halaman penuh sendirian, keduanya
     # TIDAK pernah berisiko jatuh di baris ke-2+ grid padat spt custom_topic).
-    _custom_chart_styles = ["bar", "donut", "stacked"]
-    _custom_chart_idx = 0
     dynamic_sections_all = [s for s in (ai_summary.get("sections") or []) if isinstance(s, dict)]
     narrative_items = []
     # BUG DIPERBAIKI (dilaporkan user, disertai perbandingan checklist Include Sections vs
@@ -4448,20 +4694,24 @@ def build_management_report_blocks(report) -> list[dict]:
         else:
             tile_labels = tile_values = None
         if tile_labels:
-            style = _custom_chart_styles[_custom_chart_idx % len(_custom_chart_styles)]
-            _custom_chart_idx += 1
+            style = _choose_categorical_chart_style(tile_labels, tile_values)
             visual_tiles.append({
                 "tile_kind": "custom_topic",
                 "chart_style": style,
                 "kicker": L("INSIGHT AI", "AI INSIGHT"),
                 "title": sec_title,
+                "source_topic_title": sec_title,
                 "labels": tile_labels,
                 "values": tile_values,
                 "caption": _shorten_to_caption(sec_content, max_sentences=1),
                 "cat_col_name": tile_cat_col,
             })
         else:
-            narrative_items.append({"title": sec_title, "content": _shorten_to_caption(sec_content, max_sentences=3)})
+            narrative_items.append({
+                "title": sec_title,
+                "content": _shorten_to_caption(sec_content, max_sentences=3),
+                "preserve_topic": True,
+            })
 
     # Tumpuk SEMUA tile visual yang tersedia jadi 1 halaman dashboard (bisa 4/5/lebih
     # sekaligus, macam-macam jenis chart, keterangan tiap tile cuma 1 kalimat) — kalau
@@ -4646,7 +4896,7 @@ def build_management_report_blocks(report) -> list[dict]:
     # visual sama sekali - kasus langka), jatuh kembali ke halaman solo lama (jaring
     # pengaman, tidak pernah lebih buruk dari sebelumnya).
     _MGMT_NARRATIVE_SOLO_THRESHOLD = 2
-    if narrative_items and len(narrative_items) <= _MGMT_NARRATIVE_SOLO_THRESHOLD:
+    if narrative_items and len(narrative_items) <= _MGMT_NARRATIVE_SOLO_THRESHOLD and not any(item.get("preserve_topic") for item in narrative_items):
         target_insight_page = next((b for b in reversed(blocks) if b.get("kind") == "management_insight_page"), None)
         if target_insight_page is not None:
             extra_notes = [

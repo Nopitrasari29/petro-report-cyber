@@ -36,6 +36,8 @@ from app.services import export_ppt as eppt
 from app.services.report_render_logic import (
     build_management_report_blocks, build_report_blocks,
     _insight_page_entity_set, _entity_set_overlap, _INSIGHT_PAGE_OVERLAP_THRESHOLD,
+    dashboard_column_bboxes,
+    _choose_categorical_chart_style,
 )
 
 # Maks berapa laporan per gaya (Management/SOC) yang dites — dites lebih dari 1 laporan
@@ -103,6 +105,15 @@ def _titled_elements(report: Report) -> list:
                 elements.append(("insight_kpi", str(card.get("value", ""))))
             for cd in (b.get("category_details") or []):
                 elements.append(("insight_category", cd.get("name", "")))
+        if b.get("kind") == "management_dashboard_columns":
+            for col in (b.get("columns") or []):
+                topic_title = col.get("source_topic_title")
+                if topic_title:
+                    elements.append(("checked_topic", topic_title))
+        if b.get("kind") == "management_ai_narrative":
+            for item in (b.get("items") or []):
+                if item.get("preserve_topic") and item.get("title"):
+                    elements.append(("checked_topic", item["title"]))
     return elements
 
 
@@ -218,6 +229,43 @@ def test_panel_kind_and_tile_kind_dispatch_parity():
         f"dispatch tile_kind PDF vs PPT beda -- hanya di PDF: {pdf_tile_kinds - ppt_tile_kinds}, "
         f"hanya di PPT: {ppt_tile_kinds - pdf_tile_kinds}"
     )
+
+
+def _boxes_overlap(left: dict, right: dict) -> bool:
+    if left["column"] != right["column"]:
+        return False
+    return (
+        left["x"] < right["x"] + right["w"]
+        and right["x"] < left["x"] + left["w"]
+        and left["y"] < right["y"] + right["h"]
+        and right["y"] < left["y"] + left["h"]
+    )
+
+
+def test_dashboard_column_boxes_do_not_overlap_and_legacy_offset_fails():
+    """The layout invariant must catch the former fixed chart/card offset."""
+    block = {
+        "kind": "management_dashboard_columns",
+        "columns": [{
+            "title": "Traffic",
+            "main_chart_tile": {"tile_kind": "risk_heatmap"},
+            "category_details": [{"sub_items": []}] * 4,
+            "notes": ["Catatan"],
+        }],
+    }
+    planned = dashboard_column_bboxes(block)
+    assert not any(_boxes_overlap(a, b) for idx, a in enumerate(planned) for b in planned[idx + 1:])
+    legacy = dashboard_column_bboxes(block, legacy_chart_fraction=0.46)
+    assert any(_boxes_overlap(a, b) for idx, a in enumerate(legacy) for b in legacy[idx + 1:]), (
+        "mutation offset 46% tidak memicu kegagalan overlap"
+    )
+
+
+def test_chart_style_selection_follows_data_shape():
+    assert _choose_categorical_chart_style(["A", "B", "C"], [10, 8, 7]) == "donut"
+    assert _choose_categorical_chart_style(["A", "B", "C", "D", "E"], [90, 4, 3, 2, 1]) == "treemap"
+    assert _choose_categorical_chart_style(["Open", "Investigating", "Resolved"], [8, 5, 2], semantic="status") == "funnel"
+    assert _choose_categorical_chart_style(["A", "B", "C", "D"], [4, 3, 2, 1]) == "bar"
 
 
 _PAGE_NUM_RE = re.compile(r"^\d{1,2}\s*/\s*\d{1,2}$")
@@ -473,6 +521,13 @@ def test_management_dashboard_pages_are_densely_filled():
                 continue
             blocks = build_management_report_blocks(report) if style == "management" else build_report_blocks(report)
             block_kinds = [b.get("kind") for b in blocks]
+            for block_index, block in enumerate(blocks):
+                if block.get("kind") != "management_dashboard_columns":
+                    continue
+                boxes = dashboard_column_bboxes(block)
+                overlaps = [(a["kind"], b["kind"], a["column"]) for idx, a in enumerate(boxes) for b in boxes[idx + 1:] if _boxes_overlap(a, b)]
+                if overlaps:
+                    failures.append(f"report {rid} block {block_index}: overlap geometri kolom {overlaps}")
             pdf_bytes = ep.PDFExporter.generate_pdf_report(report)
             ppt_bytes = eppt.PPTXExporter.generate_ppt_report(report)
             dash_sizes = [len(b.get("columns") or []) for b in blocks if b.get("kind") in _DASHBOARD_PAGE_KINDS]
@@ -486,7 +541,17 @@ def test_management_dashboard_pages_are_densely_filled():
                 idx for idx, b in enumerate(blocks)
                 if any((p or {}).get("panel_kind") == "critical_table" for p in (b.get("panels") or []))
             }
-            for i, kind, n_el, n_ch in _pdf_page_density(pdf_bytes, block_kinds, table_pages):
+            pdf_density = _pdf_page_density(pdf_bytes, block_kinds, table_pages)
+            ppt_density = _ppt_page_density(ppt_bytes, block_kinds)
+            pdf_by_page = {i: (kind, n_el, n_ch) for i, kind, n_el, n_ch in pdf_density}
+            ppt_by_page = {i: (kind, n_el, n_ch) for i, kind, n_el, n_ch in ppt_density}
+            for page_index in sorted(set(pdf_by_page) | set(ppt_by_page)):
+                print(
+                    f"report {rid} page/slide {page_index}: "
+                    f"PDF {pdf_by_page.get(page_index, ('-', '-', '-'))[1:]} | "
+                    f"PPTX {ppt_by_page.get(page_index, ('-', '-', '-'))[1:]}"
+                )
+            for i, kind, n_el, n_ch in pdf_density:
                 if kind in _DASHBOARD_PAGE_KINDS:
                     n_cols = len(blocks[i].get("columns") or []) if i < len(blocks) else 3
                     ambang = _DENSITY_DASHBOARD_MIN_PER_COLUMN * max(1, n_cols)
@@ -509,7 +574,7 @@ def test_management_dashboard_pages_are_densely_filled():
                     exemptions.append(f"report {rid} PDF page {i} ({kind}): {n_el} elemen, {n_ch} karakter - pengecualian sah (<{_CHART_EXEMPTION_MAX_CATEGORIES} kategori + py catatan)")
                     continue
                 failures.append(f"report {rid} PDF page {i} ({kind}): {n_el} elemen, {n_ch} karakter")
-            for i, kind, n_el, n_ch in _ppt_page_density(ppt_bytes, block_kinds):
+            for i, kind, n_el, n_ch in ppt_density:
                 if kind in _NARRATIVE_PAGE_KINDS:
                     if n_ch < _DENSITY_NARRATIVE_MIN_CHARS:
                         failures.append(

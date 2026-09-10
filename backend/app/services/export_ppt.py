@@ -43,7 +43,7 @@ from app.services.report_render_logic import (
     build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style,
     resolve_theme_color, best_grid_cols, _hard_truncate, _dedupe_truncated_labels, _layout_dashboard_column,
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN, _DASH_TITLE_MAX_H_IN,
-    _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _kpi_card_widths, _NESTED_CARD_GAP_IN,
+    _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content, _kpi_card_widths, _NESTED_CARD_GAP_IN,
     _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -2258,8 +2258,12 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     # box tetap 0.9in penuh bisa meluber ke zona footer walau isi captionnya cuma
     # 1 baris pendek. Tinggi box sekarang mengikuti estimasi wrap sungguhan (dibatasi
     # minimum 0.4in), sama seperti perhitungan yang dipakai utk centering di atas.
+    slide_bottom_in = Emu(SLIDE_H).inches
     caption_box_h_in = max(0.4, _estimate_wrapped_height_in(block["caption"], 11.5, Emu(CONTENT_W).inches) + 0.1)
-    cap_box = exec_slide.shapes.add_textbox(MARGIN_X, grid_bottom + Inches(0.25), CONTENT_W, Inches(caption_box_h_in))
+    cap_top_in = min(Emu(grid_bottom).inches + 0.25, slide_bottom_in - 0.25)
+    cap_top = Inches(cap_top_in)
+    caption_box_h_in = min(caption_box_h_in, max(0.2, slide_bottom_in - cap_top_in - 0.05))
+    cap_box = exec_slide.shapes.add_textbox(MARGIN_X, cap_top, CONTENT_W, Inches(caption_box_h_in))
     ctf = cap_box.text_frame
     ctf.word_wrap = True
     cp = ctf.paragraphs[0]
@@ -2273,7 +2277,10 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     purpose_text = block.get("purpose_text")
     if purpose_text:
         purpose_h_in = max(0.3, _estimate_wrapped_height_in(purpose_text, 10.5, Emu(CONTENT_W).inches) + 0.08)
-        purpose_box = exec_slide.shapes.add_textbox(MARGIN_X, content_bottom + Inches(0.1), CONTENT_W, Inches(purpose_h_in))
+        purpose_top_in = min(Emu(content_bottom).inches + 0.1, slide_bottom_in - 0.25)
+        purpose_top = Inches(purpose_top_in)
+        purpose_h_in = min(purpose_h_in, max(0.2, slide_bottom_in - purpose_top_in - 0.05))
+        purpose_box = exec_slide.shapes.add_textbox(MARGIN_X, purpose_top, CONTENT_W, Inches(purpose_h_in))
         pptf = purpose_box.text_frame
         pptf.word_wrap = True
         ppp = pptf.paragraphs[0]
@@ -2287,7 +2294,10 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     extra_finding_text = block.get("extra_finding_text")
     if extra_finding_text:
         finding_h_in = max(0.3, _estimate_wrapped_height_in(extra_finding_text, 10.5, Emu(CONTENT_W).inches) + 0.08)
-        finding_box = exec_slide.shapes.add_textbox(MARGIN_X, content_bottom + Inches(0.1), CONTENT_W, Inches(finding_h_in))
+        finding_top_in = min(Emu(content_bottom).inches + 0.1, slide_bottom_in - 0.25)
+        finding_top = Inches(finding_top_in)
+        finding_h_in = min(finding_h_in, max(0.2, slide_bottom_in - finding_top_in - 0.05))
+        finding_box = exec_slide.shapes.add_textbox(MARGIN_X, finding_top, CONTENT_W, Inches(finding_h_in))
         ftf = finding_box.text_frame
         ftf.word_wrap = True
         fp = ftf.paragraphs[0]
@@ -2308,7 +2318,10 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
     for o in orphan_insights:
         text = f"{o['label']}: {o['text']}" if o.get("label") else o["text"]
         o_h_in = max(0.3, _estimate_wrapped_height_in(text, 10.5, Emu(CONTENT_W).inches) + 0.08)
-        o_box = exec_slide.shapes.add_textbox(MARGIN_X, content_bottom + Inches(0.1), CONTENT_W, Inches(o_h_in))
+        orphan_top_in = min(Emu(content_bottom).inches + 0.1, slide_bottom_in - 0.25)
+        orphan_top = Inches(orphan_top_in)
+        o_h_in = min(o_h_in, max(0.2, slide_bottom_in - orphan_top_in - 0.05))
+        o_box = exec_slide.shapes.add_textbox(MARGIN_X, orphan_top, CONTENT_W, Inches(o_h_in))
         otf = o_box.text_frame
         otf.word_wrap = True
         op = otf.paragraphs[0]
@@ -2326,8 +2339,10 @@ def _build_executive_summary_slide(block: dict, ctx: _PptBlockContext):
         chart = block["chart"]
         ramp = [ctx.accent_light, WHITE, ctx.accent_chart, ctx.accent_soft, GRAY_TEXT]
         colors = ramp[:len(chart["values"])]
-        chart_y = content_bottom + Inches(0.3)
         donut_side = Inches(1.75)
+        # Keep the optional overview chart inside the fixed slide canvas even when
+        # preceding narrative blocks consume more vertical space than estimated.
+        chart_y = min(content_bottom + Inches(0.3), SLIDE_H - donut_side - Inches(0.05))
         add_native_doughnut_chart(exec_slide, MARGIN_X, chart_y, donut_side, donut_side, chart["categories"], chart["values"], colors=colors, theme=ctx.theme)
         _add_mini_legend(exec_slide, MARGIN_X + donut_side + Inches(0.35), chart_y + Inches(0.15), CONTENT_W - donut_side - Inches(0.35), chart["categories"], ramp, text_color=WHITE)
     return exec_slide
@@ -2883,7 +2898,10 @@ def _build_recommendations_slide(block: dict, ctx: _PptBlockContext):
         # dinaikkan (maks 1.9x) supaya badge/font/kartu genuinely lebih besar & mengisi
         # ruang lapang itu sendiri — mirror _build_key_findings_block/_build_management_
         # action_items_block versi PDF yang sudah py mekanisme sama.
-        scale = min(1.9, available_in / est_total_in)
+        # Do not enlarge recommendation cards beyond their measured natural size:
+        # wrapped text is remeasured after scaling and could make the final card
+        # taller than the pre-pass estimate, pushing it below the slide canvas.
+        scale = min(1.0, available_in / est_total_in)
     title_pt, detail_pt = 13 * scale, 10.5 * scale
     cur_y_rec = start_y_rec
     for r in range(rec_rows):
@@ -3107,7 +3125,9 @@ def _build_closing_summary_slide(block: dict, ctx: _PptBlockContext):
         concl_text_w_in = Emu(CONTENT_W).inches - 0.5
         concl_text_h_in = _estimate_wrapped_height_in(block["conclusion_text"], 10.5, concl_text_w_in)
         min_strip_h_in = 0.5 + concl_text_h_in + (0.55 if concl_pills else 0.15)
-        strip_h_in = max(1.1, 6.9 - content_bottom_in, min_strip_h_in)
+        safe_bottom_in = Emu(SLIDE_H).inches - 0.25
+        available_strip_in = max(0.6, safe_bottom_in - content_bottom_in)
+        strip_h_in = min(max(1.1, 6.9 - content_bottom_in, min_strip_h_in), available_strip_in)
         strip = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, MARGIN_X, Inches(content_bottom_in), CONTENT_W, Inches(strip_h_in))
         strip.fill.solid()
         strip.fill.fore_color.rgb = ctx.theme["bg"]
@@ -3122,7 +3142,7 @@ def _build_closing_summary_slide(block: dict, ctx: _PptBlockContext):
         cp_title.text = block["conclusion_title"]
         _set_font(cp_title, TITLE_FONT, Pt(13), bold=True, color=WHITE)
 
-        ctxt = slide.shapes.add_textbox(MARGIN_X + Inches(0.25), Inches(content_bottom_in + 0.5), CONTENT_W - Inches(0.5), Inches(strip_h_in - 0.55))
+        ctxt = slide.shapes.add_textbox(MARGIN_X + Inches(0.25), Inches(content_bottom_in + 0.5), CONTENT_W - Inches(0.5), Inches(max(0.1, strip_h_in - 0.55)))
         ctxt.text_frame.word_wrap = True
         cp_text = ctxt.text_frame.paragraphs[0]
         cp_text.alignment = PP_ALIGN.LEFT
@@ -3435,7 +3455,7 @@ def _draw_dashboard_main_visual(slide, tile: dict, ctx: "_PptBlockContext", x_in
         # export_pdf.py::_mgmt_tile_chart_html) — BUG YANG DIPERBAIKI (dilaporkan user,
         # "itu-itu aja"): tile ini dulu SELALU batang polos apa pun kombinasi tampilan yang
         # terkunci utk laporan ini.
-        style = ctx.status_style if is_severity else ctx.category_style
+        style = tile.get("chart_style") or (ctx.status_style if is_severity else ctx.category_style)
         if style == "donut":
             # BUG DIPERBAIKI (dilaporkan user): ukuran donut sebelumnya dihitung dari
             # rasio TETAP (0.62x tinggi kotak chart) TANPA tahu legend di bawahnya bakal
@@ -3613,9 +3633,26 @@ def _insight_kpi_row(slide, cards: list, x_in: float, total_w_in: float, h_in: f
         # dulu tetap 20pt & membungkus keluar kartu. Ukuran mengikuti panjang teks thd lebar.
         _val = str(card["value"])
         _avail_pt = max(1.0, (w - 0.32) * 72.0)
-        _size_pt = min(20.0, max(9.5, _avail_pt / (len(_val) * 0.56))) if _val else 20.0
+        # faktor 0.56 -> 0.62: terukur dari render, 0.56 masih membiarkan nilai spt
+        # "Requests (50%)" membungkus ke baris kedua & TERPOTONG tepi bawah kartu
+        # (kasus yang persis dicontohkan user: "(85%)" jatuh di luar rect kartu).
+        _size_pt = min(20.0, max(9.5, _avail_pt / (len(_val) * 0.62))) if _val else 20.0
         _set_font(vp, TITLE_FONT, Pt(_size_pt), bold=True, color=TEXT_DARK)
         x += w + gap_in
+
+
+def _muat_nama_kartu(nama: str, w_in: float, maks_baris: int = 2):
+    """Kembaran fungsi bernama sama di export_pdf.py - lihat catatan di sana."""
+    if not nama:
+        return 9.0, 1
+    lebar_px = max(20.0, w_in * 96 - 27)
+    for pt in (9.0, 8.0, 7.0, 6.5):
+        per_baris = max(1, int(lebar_px / (pt * 0.55 * 96 / 72)))
+        baris = -(-len(nama) // per_baris)
+        if baris <= maks_baris:
+            return pt, baris
+    per_baris = max(1, int(lebar_px / (6.5 * 0.55 * 96 / 72)))
+    return 6.5, -(-len(nama) // per_baris)
 
 
 def _nested_category_card(slide, card: dict, x_in: float, y_in: float, w_in: float, h_in: float, theme: dict | None = None) -> None:
@@ -3623,8 +3660,12 @@ def _nested_category_card(slide, card: dict, x_in: float, y_in: float, w_in: flo
     besar + badge status) + body berisi sub-item pola 2-baris (poin 4: label kiri/nilai
     kanan lalu bar tipis, garis pembanding vertikal di posisi rata-rata — poin 5)."""
     t = theme or THEME_PALETTES["green"]
+    # Kembaran _muat_nama_kartu di export_pdf.py - nama SELALU utuh, tidak pernah dipotong.
+    _nm_pt, _nm_lines = _muat_nama_kartu(str(card.get("name") or ""), w_in)
+    _nm_h_in = _nm_lines * (_nm_pt * 1.15 / 72.0)
     header_h_in = max(min(_NESTED_CARD_HEADER_H_IN, h_in * 0.35),
-                      min(_NESTED_CARD_HEADER_MIN_H_IN, h_in))
+                      min(_NESTED_CARD_HEADER_MIN_H_IN, h_in),
+                      min(h_in, 0.22 + _nm_h_in + 0.30))
     body_h_in = max(0.3, h_in - header_h_in)
 
     card_shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x_in), Inches(y_in), Inches(w_in), Inches(h_in))
@@ -3633,11 +3674,13 @@ def _nested_category_card(slide, card: dict, x_in: float, y_in: float, w_in: flo
     card_shape.line.fill.background()
     _no_shadow(card_shape)
 
-    name_box = slide.shapes.add_textbox(Inches(x_in + 0.12), Inches(y_in + 0.08), Inches(w_in - 0.24), Inches(0.2))
+    name_box = slide.shapes.add_textbox(Inches(x_in + 0.12), Inches(y_in + 0.08),
+                                        Inches(w_in - 0.24), Inches(max(0.2, _nm_h_in)))
     np_ = name_box.text_frame.paragraphs[0]
     np_.alignment = PP_ALIGN.LEFT
+    name_box.text_frame.word_wrap = True
     np_.text = card["name"]
-    _set_font(np_, BODY_FONT, Pt(9), bold=True, color=WHITE)
+    _set_font(np_, BODY_FONT, Pt(_nm_pt), bold=True, color=WHITE)
 
     score_box = slide.shapes.add_textbox(Inches(x_in + 0.12), Inches(y_in + 0.27), Inches(w_in * 0.55), Inches(0.36))
     sp = score_box.text_frame.paragraphs[0]
@@ -3756,6 +3799,24 @@ def _insight_detail_row(slide, cards: list, x_in: float, total_w_in: float, h_in
 _CHART_SIDE_PANEL_MIN_W_IN = 2.5
 
 
+def _as_rgb(nilai, cadangan):
+    """Terima RGBColor / string heks ("#4A7C59" atau "4A7C59") -> RGBColor.
+
+    Data tile dibentuk utk sisi PDF (CSS, string heks). python-pptx menolak string mentah
+    (ValueError: assigned value must be type RGBColor), jadi tanpa konversi ini seluruh
+    laporan gagal digenerate begitu tile ber-warna dipakai di PPT."""
+    if isinstance(nilai, RGBColor):
+        return nilai
+    if isinstance(nilai, str):
+        s = nilai.strip().lstrip("#")
+        if len(s) == 6:
+            try:
+                return RGBColor.from_string(s.upper())
+            except ValueError:
+                pass
+    return cadangan
+
+
 def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float, h_in: float, theme: dict | None = None, notes: list | None = None, is_en: bool = False) -> bool:
     """PERMINTAAN USER ("hapus jalur management_visual_dashboard, semua lewat insight"): tile
     "space-hungry" (kpi_radar/period_compare/time_heatmap, lihat _build_chart_insight_page di
@@ -3815,6 +3876,80 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
             slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
             tile["day_labels"], tile["hour_labels"], tile["grid"], color=t["main"],
         )
+    # ---- KEMBARAN PERSIS dari _insight_main_chart_html di export_pdf.py (lihat catatan
+    # panjang di sana). Diubah BERSAMAAN dalam satu perubahan: divergensi dua engine sudah
+    # dua kali jadi sumber bug di berkas ini. ----
+    elif kind == "status_funnel":
+        add_funnel_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                         tile["categories"], tile["values"], color=t["main"])
+    elif kind == "kpi_gauge":
+        _g = min(cx_in, cy_in)
+        add_native_gauge(slide, Inches(x0_in), Inches(y0_in), Inches(_g), Inches(_g),
+                         tile.get("pct") or 0, max_value=100,
+                         label=tile.get("gauge_dim") or "", color=t["main"], theme=t)
+    elif kind == "scatter_bubble":
+        add_native_bubble_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                                tile["points"], color=t["main"])
+    elif kind == "trend_chart":
+        _c = tile.get("chart") or {}
+        if _c.get("type") == "bar_line" or _c.get("cumulative"):
+            add_bar_line_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                               _c.get("categories") or [], _c.get("values") or [],
+                               _c.get("cumulative"), color=t["main"])
+        else:
+            add_native_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                                 _c.get("categories") or [], _c.get("values") or [],
+                                 colors=[t["main"]] * len(_c.get("values") or []))
+    elif kind == "custom_topic":
+        _style = (tile.get("chart_style") or "bar").lower()
+        _labels, _values = tile.get("labels") or [], tile.get("values") or []
+        if _style == "donut":
+            _d = min(cx_in, cy_in)
+            add_native_doughnut_chart(slide, Inches(x0_in), Inches(y0_in), Inches(_d), Inches(_d),
+                                      _labels, _values)
+        elif _style == "stacked":
+            add_stacked_proportion_bar(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in),
+                                       _values, labels=_labels,
+                                       height=Inches(max(0.42, min(0.75, cy_in * 0.22))))
+        else:
+            add_native_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                                 _labels, _values, colors=[t["main"]] * len(_values))
+    elif kind == "risk_heatmap":
+        _bars = tile.get("bars") or []
+        # warna tile datang sbg string heks (dipakai apa adanya di sisi PDF); python-pptx
+        # menolak string & butuh RGBColor - dikonversi, bukan dibuang, supaya palet risikonya
+        # sama persis di kedua format.
+        # kembaran pemetaan warna di export_pdf.py - lihat catatan panjang di sana
+        if tile.get("mode") == "severity":
+            _cmap = {"red": RED_CRIT, "orange": RGBColor(0xEA, 0x58, 0x0C), "amber": GOLD_MAIN,
+                     "blue": RGBColor(0x25, 0x63, 0xEB), "gray": GRAY_TEXT}
+        else:
+            _cmap = {"blue": t["main"], "green": t["chart"], "amber": t["light"],
+                     "orange": t["soft"], "gray": GRAY_TEXT, "red": t["main"]}
+        add_native_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                             [b.get("label") for b in _bars], [b.get("count") for b in _bars],
+                             colors=[_as_rgb(_cmap.get(b.get("color", "gray")), t["main"]) for b in _bars])
+    elif kind == "metric_share":
+        # palet DIPUTAR, bukan dipotong - lihat catatan kembarannya di export_pdf.py
+        _tv = tile.get("values") or []
+        _tbase = [t["main"], t["chart"], t["light"], t["soft"], GRAY_TEXT]
+        add_treemap_shapes(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                           tile.get("labels") or [], _tv,
+                           colors=[_tbase[i % len(_tbase)] for i in range(max(1, len(_tv)))])
+    elif kind == "metric_mix":
+        add_stacked_proportion_bar(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in),
+                                   tile.get("values") or [], labels=tile.get("labels") or [],
+                                   height=Inches(max(0.44, min(0.8, cy_in * 0.24))))
+    elif kind == "metric_compare":
+        add_grouped_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                              tile["categories"], tile["series_a"], tile["series_b"],
+                              label_a=tile.get("label_a", ""), label_b=tile.get("label_b", ""),
+                              color_a=t["main"], color_b=t["chart"])
+    else:
+        # KEPUTUSAN EKSPLISIT, bukan fallback diam - lihat catatan kembarannya di export_pdf.py
+        logger.warning("tile_kind %r tidak punya cabang chart di _insight_main_chart - "
+                       "chart tidak digambar", kind)
+        return notes_consumed
     return notes_consumed
 
 
@@ -3907,13 +4042,25 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         body_h = max(1.2, (title_bottom_in + avail_h_in) - y - 0.10)
         notes = [str(v) for v in (col.get("notes") or []) if str(v).strip()]
         notes_consumed = False
-        if col.get("main_chart_tile"):
+        # Kembar dari _build_management_dashboard_columns_block di export_pdf.py: chart di ATAS
+        # + kartu ringkas di BAWAH dalam satu kolom, porsinya dipesan lebih dulu. Diubah
+        # BERSAMAAN dgn sisi PDF - jangan salah satu duluan.
+        _tile = col.get("main_chart_tile")
+        _has_cards = bool(col.get("category_details"))
+        _column_layout = _layout_dashboard_column_content(
+            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes)
+        )
+        _chart_h = _column_layout["chart_h"]
+        if _tile:
             notes_consumed = _insight_main_chart(
-                slide, col["main_chart_tile"], x, y, col_w, body_h,
-                theme=ctx.theme, notes=notes, is_en=is_en,
+                slide, col["main_chart_tile"], x, y, col_w, _chart_h,
+                theme=ctx.theme, notes=(None if _has_cards else notes), is_en=is_en,
             )
-        else:
-            cards = (col.get("category_details") or [])[:6]
+            if _has_cards:
+                y += _chart_h + 0.10
+                body_h = max(1.0, (title_bottom_in + avail_h_in) - y - 0.10)
+        if not _tile or _has_cards:
+            cards = _column_layout["cards"]
             if cards:
                 # Kembar dari _build_management_dashboard_columns_block di export_pdf.py:
                 # tinggi kartu dibatasi ke kebutuhan isinya, bukan diregangkan mengisi kolom.
@@ -3922,21 +4069,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 # (E-Katalog kehilangan 2 dari 4 statusnya). Tinggi baris dihitung dari
                 # sub-item TERBANYAK yang sungguhan ada; kalau tidak muat, yang dikurangi
                 # jumlah kartu per baris, bukan kedalaman kartunya.
-                _max_subs = max((len(c.get("sub_items") or []) for c in cards), default=0)
-                _sub_h = (_NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN
-                          + _NESTED_CARD_SUBITEM_GAP_IN)
-                _need_row = _NESTED_CARD_HEADER_H_IN + 0.20 + _max_subs * _sub_h
-                _avail_cards = body_h * (0.62 if notes else 1.0)
-                # berapa BARIS yang benar-benar muat pada tinggi yang dibutuhkan satu baris
-                # utuh (header + seluruh sub-itemnya) - bukan jumlah baris yang dipaksakan
-                # lalu isinya dipotong diam-diam.
-                _rows_fit = max(1, int((_avail_cards + _NESTED_CARD_ROW_GAP_IN)
-                                       / (_need_row + _NESTED_CARD_ROW_GAP_IN)))
-                _grid = _layout_nested_card_grid(len(cards), col_w, max_rows=min(3, _rows_fit))
-                _rows_n = _grid["rows"] or [len(cards)]
-                cards = cards[:sum(_rows_n)]
-                _need = len(_rows_n) * _need_row + (len(_rows_n) - 1) * _NESTED_CARD_ROW_GAP_IN
-                cards_h = min(_avail_cards, _need)
+                cards_h = _column_layout["cards_h"]
                 # BUG NYATA DIPERBAIKI (ditemukan tes luberan yang baru dipasang - 26 shape
                 # di luar slide, sampai y=8.63in): kotak Catatan digambar mengalir dari bawah
                 # kartu TANPA memeriksa apakah muat. Pola yang sama utk keenam kalinya, dan
@@ -3947,10 +4080,6 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 if notes:
                     _sisa = _bawah - (y + cards_h + 0.08)
                     while notes and _note_box_height_in(col_w, notes) > _sisa:
-                        if len(notes) == 1 and cards_h > _need_row:
-                            cards_h = max(_need_row, cards_h - 0.3)
-                            _sisa = _bawah - (y + cards_h + 0.08)
-                            continue
                         notes = notes[:-1]
                 notes_consumed = _insight_detail_row(
                     slide, cards, x, col_w, cards_h, y, theme=ctx.theme, notes=None, is_en=is_en,
@@ -4123,7 +4252,10 @@ def _build_management_ai_narrative_slide(block: dict, ctx: _PptBlockContext):
     start_y_in = max(title_bottom + 0.15, 1.05)
     margin_x_in = Emu(MARGIN_X).inches
     content_w_in = Emu(CONTENT_W).inches
-    content_h_in = max(3.0, 6.9 - start_y_in)
+    # Keep the card grid inside the slide canvas. The previous minimum-height rule
+    # could make a one-row narrative grid extend below the 7.5in slide boundary.
+    content_bottom_in = Emu(SLIDE_H).inches - 0.25
+    content_h_in = max(1.2, content_bottom_in - start_y_in)
     card_w_in = (content_w_in - gap_in * (cols - 1)) / cols
     card_h_in = (content_h_in - gap_in * (rows - 1)) / rows
 

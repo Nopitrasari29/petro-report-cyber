@@ -25,7 +25,7 @@ from app.services.report_render_logic import (
     build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style,
     resolve_theme_color, best_grid_cols, _hard_truncate, _dedupe_truncated_labels, _layout_dashboard_column,
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MAIN_VISUAL_RANGE_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN,
-    _DASH_TITLE_MAX_H_IN, _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _kpi_card_widths,
+    _DASH_TITLE_MAX_H_IN, _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content, _kpi_card_widths,
     _NESTED_CARD_GAP_IN, _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -957,7 +957,9 @@ def _scatter_bubble_svg(points, x_key="count", y_key="avg", size_key=None, color
         parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="{base}" fill-opacity="0.7" stroke="{base}" stroke-width="1" />')
         if i == top_idx:
             label = str(p.get("label", ""))
-            short_label = label if len(label) <= 16 else label[:15] + "…"
+            # BATASAN USER: label TIDAK dipotong - ukuran font-nya yang menyesuaikan panjang
+            # label terpanjang (dihitung di _funnel_chart_svg), jadi nama utuh selalu tampil.
+            short_label = label
             parts.append(
                 f'<text x="{cx:.1f}" y="{cy - r - 4:.1f}" text-anchor="middle" font-size="7" font-weight="700" '
                 f'fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(short_label)}</text>'
@@ -2690,7 +2692,7 @@ def _mgmt_tile_chart_html(tile: dict, ctx: "_PdfBlockContext", compact: bool = F
         # pun kombinasi tampilan yang terkunci utk laporan ini, beda dari laporan SOC yang
         # sudah bervariasi (donat/susun/corong bergantian tiap generate). Ukuran tetap
         # kompak (bukan versi 1-halaman-penuh) supaya tetap muat berdampingan di grid tile.
-        style = ctx.status_style if is_severity else ctx.category_style
+        style = tile.get("chart_style") or (ctx.status_style if is_severity else ctx.category_style)
         if style == "donut":
             d_labels, d_values, d_colors = (
                 _merge_tail_into_other(labels, values, colors) if compact else (labels, values, colors)
@@ -2832,9 +2834,27 @@ def _dashboard_title_html(text: str, w_in: float, size_pt: float = 22) -> tuple:
     # 0.55). Faktor 0.80 menghasilkan kapasitas ~56 itu. Sengaja dipilih di sisi KONSERVATIF:
     # salah menghitung KELEBIHAN baris cuma menyisakan sedikit ruang kosong, sedangkan salah
     # menghitung KEKURANGAN baris MEMOTONG teks di tengah huruf tanpa penanda apa pun.
-    chars_per_line = max(20, int(text_w_in * 96 / (size_pt * 0.80)))
+    # BATASAN USER ("tidak ada teks yang boleh berakhir '…' atau terpotong, di mana pun"):
+    # teks yang tidak muat dulu DIPOTONG KERAS (terukur 20 caption berakhir elipsis). Sekarang
+    # ukuran font-nya DIKECILKAN bertahap sampai teksnya muat utuh di jatah baris yang ada -
+    # kalau di ukuran terkecil pun tidak muat, jumlah barisnya yang ditambah (kotak ikut lebih
+    # tinggi), bukan teksnya yang dibuang. Faktor 0.80 dipertahankan (dikalibrasi dari render).
+    _base_pt = size_pt
     max_lines = max(1, int(max_h_in // line_h_in))
-    text = _hard_truncate(text, chars_per_line * max_lines)
+    for _try_pt in (_base_pt, _base_pt * 0.9, _base_pt * 0.8, _base_pt * 0.72):
+        _cpl = max(20, int(text_w_in * 96 / (_try_pt * 0.80)))
+        _lh = _try_pt * 1.25 / 72
+        _ml = max(1, int(max_h_in // _lh))
+        if len(text) <= _cpl * _ml:
+            size_pt, chars_per_line, line_h_in, max_lines = _try_pt, _cpl, _lh, _ml
+            break
+    else:
+        # bahkan di ukuran terkecil teksnya tetap lebih panjang: barisnya yang ditambah
+        # (kotak ikut lebih tinggi), teksnya TIDAK dibuang.
+        size_pt = _base_pt * 0.72
+        chars_per_line = max(20, int(text_w_in * 96 / (size_pt * 0.80)))
+        line_h_in = size_pt * 1.25 / 72
+        max_lines = -(-len(text) // chars_per_line)
     n_lines = max(1, min(max_lines, -(-len(text) // chars_per_line)))
     # BUG DIPERBAIKI: tinggi minimum SEKARANG juga menjamin cukup utk melewati tinggi logo
     # (top 0.22in + ~0.375in tinggi = ~0.6in) — 1 baris judul pendek pada font 22pt SAJA
@@ -3000,7 +3020,10 @@ def _insight_kpi_row_html(cards: list, total_w_in: float, h_in: float, y_in: flo
         # thd lebar kartu, & luapan sisa dipotong di dalam kartu, bukan dicetak di luarnya.
         _val = str(card["value"])
         _avail_pt = max(1.0, (w - 32.0 / 72.0) * 72.0)  # lebar dalam, dikurangi padding kiri+kanan
-        _size_pt = min(20.0, max(9.5, _avail_pt / (len(_val) * 0.56) if _val else 20.0))
+        # faktor 0.56 -> 0.62: terukur dari render, 0.56 masih membiarkan nilai spt
+        # "Requests (50%)" membungkus ke baris kedua & TERPOTONG tepi bawah kartu
+        # (kasus yang persis dicontohkan user: "(85%)" jatuh di luar rect kartu).
+        _size_pt = min(20.0, max(9.5, _avail_pt / (len(_val) * 0.62) if _val else 20.0))
         parts.append(
             f'<div style="position:absolute;left:{x}in;top:{y_in}in;width:{w}in;height:{h_in}in;'
             f'background:{IVORY};border:0.75pt solid {PANEL_BORDER};border-radius:3px;padding:14pt 16pt;'
@@ -3011,6 +3034,24 @@ def _insight_kpi_row_html(cards: list, total_w_in: float, h_in: float, y_in: flo
         )
         x += w + gap_in
     return "".join(parts)
+
+
+def _muat_nama_kartu(nama: str, w_in: float, maks_baris: int = 2):
+    """(ukuran font pt, jumlah baris) supaya `nama` muat UTUH - tidak pernah dipotong.
+
+    BATASAN USER: tidak ada teks yang boleh berakhir "…" di mana pun. Ukuran font diturunkan
+    bertahap sampai nama muat dalam <= maks_baris; kalau di ukuran terkecil pun masih lebih
+    panjang, baris dibiarkan bertambah (kartu ikut lebih tinggi) - TETAP tidak dipotong."""
+    if not nama:
+        return 9.0, 1
+    lebar_px = max(20.0, w_in * 96 - 27)          # dikurangi padding 10pt kiri+kanan
+    for pt in (9.0, 8.0, 7.0, 6.5):
+        per_baris = max(1, int(lebar_px / (pt * 0.55 * 96 / 72)))
+        baris = -(-len(nama) // per_baris)
+        if baris <= maks_baris:
+            return pt, baris
+    per_baris = max(1, int(lebar_px / (6.5 * 0.55 * 96 / 72)))
+    return 6.5, -(-len(nama) // per_baris)
 
 
 def _nested_category_card_html(card: dict, w_in: float, h_in: float, x_in: float, y_in: float, theme: dict | None = None) -> str:
@@ -3029,8 +3070,17 @@ def _nested_category_card_html(card: dict, w_in: float, h_in: float, x_in: float
     SEMUA entitas, bukan cuma yang tampil di kartu ini) & dipakai APA ADANYA di sini, bukan
     diturunkan ulang dari "value" spt sebelumnya (itu akan salah total kalau skalanya beda)."""
     t = theme or THEME_PALETTES["green"]
+    # BATASAN USER: "tidak ada teks yang boleh berakhir '…' atau terpotong, di mana pun".
+    # Nama kategori dulu dipotong CSS (white-space:nowrap + text-overflow:ellipsis) - terukur
+    # 57 teks berakhir elipsis di laporan Visual. Sekarang nama SELALU tampil utuh: ukuran
+    # font-nya diturunkan sampai muat, & boleh 2 baris. Tinggi header DIHITUNG dari jumlah
+    # baris yang dihasilkan, sebelum kartunya digambar - bukan tinggi tetap yang lalu
+    # memotong isinya.
+    _nm_pt, _nm_lines = _muat_nama_kartu(str(card.get("name") or ""), w_in)
+    _nm_h_in = _nm_lines * (_nm_pt * 1.15 / 72.0)
     header_h_in = max(min(_NESTED_CARD_HEADER_H_IN, h_in * 0.35),
-                      min(_NESTED_CARD_HEADER_MIN_H_IN, h_in))
+                      min(_NESTED_CARD_HEADER_MIN_H_IN, h_in),
+                      min(h_in, 0.22 + _nm_h_in + 0.30))
     body_h_in = max(0.3, h_in - header_h_in)
     sub_items = card.get("sub_items") or []
     item_h_in = _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN + _NESTED_CARD_SUBITEM_GAP_IN
@@ -3066,7 +3116,7 @@ def _nested_category_card_html(card: dict, w_in: float, h_in: float, x_in: float
         f'<div style="position:absolute;left:{x_in}in;top:{y_in}in;width:{w_in}in;height:{h_in}in;'
         f'background:{t["bg"]};border-radius:3px;overflow:hidden;box-sizing:border-box;">'
         f'<div style="height:{header_h_in}in;padding:8pt 10pt;box-sizing:border-box;">'
-        f'<div style="font-size:9pt;font-weight:700;color:{WHITE};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{_esc(card["name"])}</div>'
+        f'<div style="font-size:{_nm_pt:.1f}pt;line-height:1.15;font-weight:700;color:{WHITE};">{_esc(card["name"])}</div>'
         f'<div style="font-family:{TITLE_FONT};font-size:16pt;font-weight:700;color:{WHITE};margin-top:2pt;">{_esc(card["score"])}'
         f'<span style="font-size:7.5pt;font-weight:700;background:{t["light"]};color:{t["bg"]};border-radius:8pt;padding:2pt 7pt;margin-left:8pt;">{_esc(card["badge"])}</span></div>'
         f'</div>'
@@ -3149,37 +3199,167 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
     notes_h_in = 0.0
     if notes:
         notes_h_in = min(max(1.0, h_in * 0.3), h_in * 0.45)
-    avail_w_px, avail_h_px = w_in * 96, h_in * 96
-    chart_w_in = w_in
-    if kind == "kpi_radar":
-        size = int(min(avail_w_px, avail_h_px) * 0.92)
-        label_scale = min(size / 220, 1.3)
-        chart_html = _radar_chart_svg(tile["axes"], tile["values"], color=ctx.accent_main, size=size, label_margin=round(55 * label_scale))
-        chart_w_in = size / 96
-    elif kind == "period_compare":
-        size_w = int(avail_w_px * 0.9)
-        size_h = int(avail_h_px * 0.85)
-        chart_html = _grouped_bar_chart_svg(
-            tile["categories"], tile["series_a"], tile["series_b"],
-            label_a=tile["label_a"], label_b=tile["label_b"],
-            color_a=ctx.accent_main, color_b=ctx.accent_chart, size_w=size_w, size_h=size_h,
-        )
-        chart_w_in = size_w / 96
-    elif kind == "time_heatmap":
-        n_cols, n_rows = len(tile["hour_labels"]), len(tile["day_labels"])
-        # REGRESI DIPERBAIKI (dilaporkan user: kotak "Minggu" menyentuh tepi bawah halaman &
-        # nyaris terpotong): heatmap mengisi HAMPIR SELURUH jatah tingginya (cuma menyisakan
-        # 16px) sementara chart lain di fungsi ini menyisakan margin (~0.85 dari jatah). Baris
-        # terakhir grid karenanya jatuh persis di zona footer. Disamakan: pakai headroom yang
-        # sama supaya baris terakhir selalu berhenti di atas zona footer. Ini TIDAK menambah
-        # elemen/tinggi apa pun - cuma menggambar lebih kecil di dalam kotak yang sama.
-        cell_w = (avail_w_px - 46) / max(n_cols, 1)
-        cell_h = (avail_h_px * 0.85 - 16) / max(n_rows, 1)
-        cell = max(16, int(min(cell_w, cell_h)))
-        chart_html = _heatmap_grid_svg(tile["day_labels"], tile["hour_labels"], tile["grid"], color=ctx.accent_main, cell=cell)
-        chart_w_in = (46 + n_cols * cell) / 96
-    else:
+    # SATU SUMBER penggambaran chart. Sebelumnya rantai cabang ini DIDUPLIKASI di bawah utk
+    # kasus "catatan ditaruh di bawah chart", dan salinan itu cuma menangani 3 jenis lama dgn
+    # `else` telanjang yang mengasumsikan heatmap - begitu jenis tile bertambah, tile apa pun
+    # yang punya catatan & tidak muat panel sampingnya langsung KeyError 'hour_labels' &
+    # SELURUH laporan gagal digenerate (terukur: 11 dari 29 laporan Visual). Sekarang satu
+    # definisi dipakai kedua tempat, jadi jenis baru tidak bisa lagi lupa disalin.
+    def _gambar_chart(avail_w_px: float, avail_h_px: float):
+        chart_w_in = w_in
+        if kind == "kpi_radar":
+            size = int(min(avail_w_px, avail_h_px) * 0.92)
+            label_scale = min(size / 220, 1.3)
+            chart_html = _radar_chart_svg(tile["axes"], tile["values"], color=ctx.accent_main, size=size, label_margin=round(55 * label_scale))
+            chart_w_in = size / 96
+        elif kind == "period_compare":
+            size_w = int(avail_w_px * 0.9)
+            size_h = int(avail_h_px * 0.85)
+            chart_html = _grouped_bar_chart_svg(
+                tile["categories"], tile["series_a"], tile["series_b"],
+                label_a=tile["label_a"], label_b=tile["label_b"],
+                color_a=ctx.accent_main, color_b=ctx.accent_chart, size_w=size_w, size_h=size_h,
+            )
+            chart_w_in = size_w / 96
+        elif kind == "time_heatmap":
+            n_cols, n_rows = len(tile["hour_labels"]), len(tile["day_labels"])
+            # REGRESI DIPERBAIKI (dilaporkan user: kotak "Minggu" menyentuh tepi bawah halaman &
+            # nyaris terpotong): heatmap mengisi HAMPIR SELURUH jatah tingginya (cuma menyisakan
+            # 16px) sementara chart lain di fungsi ini menyisakan margin (~0.85 dari jatah). Baris
+            # terakhir grid karenanya jatuh persis di zona footer. Disamakan: pakai headroom yang
+            # sama supaya baris terakhir selalu berhenti di atas zona footer. Ini TIDAK menambah
+            # elemen/tinggi apa pun - cuma menggambar lebih kecil di dalam kotak yang sama.
+            cell_w = (avail_w_px - 46) / max(n_cols, 1)
+            cell_h = (avail_h_px * 0.85 - 16) / max(n_rows, 1)
+            cell = max(16, int(min(cell_w, cell_h)))
+            chart_html = _heatmap_grid_svg(tile["day_labels"], tile["hour_labels"], tile["grid"], color=ctx.accent_main, cell=cell)
+            chart_w_in = (46 + n_cols * cell) / 96
+        # ---- TEMUAN USER (terverifikasi): 6 dari 9 tile_kind di bawah ini SEBELUMNYA jatuh ke
+        # `else: return "", False` - chart-nya tidak pernah digambar & halamannya berubah jadi
+        # grid kartu. Renderer-nya sudah ada & teruji, cuma tidak pernah dipanggil dari jalur
+        # Visual. Bentuk chart mengikuti karakter datanya, bukan dipilih acak. ----
+        elif kind == "status_funnel":
+            # tahapan berurutan dgn nilai menyusut -> funnel
+            size_w = int(avail_w_px * 0.92)
+            size_h = int(avail_h_px * 0.88)
+            chart_html = _funnel_chart_svg(tile["categories"], tile["values"], color=ctx.accent_main,
+                                           size_w=size_w, size_h=size_h)
+            chart_w_in = size_w / 96
+        elif kind == "kpi_gauge":
+            # satu angka pencapaian thd 100% -> gauge
+            size = int(min(avail_w_px, avail_h_px) * 0.9)
+            chart_html = _gauge_chart_svg(tile.get("pct") or 0, max_value=100,
+                                          label=tile.get("gauge_dim") or "", color=ctx.accent_main,
+                                          size=size, stroke_w=max(14, int(size * 0.14)))
+            chart_w_in = size / 96
+        elif kind == "scatter_bubble":
+            # dua angka BERBEDA per entitas -> sebaran 2 dimensi
+            size_w = int(avail_w_px * 0.92)
+            size_h = int(avail_h_px * 0.88)
+            chart_html = _scatter_bubble_svg(tile["points"], color=ctx.accent_main,
+                                             size_w=size_w, size_h=size_h,
+                                             x_label=tile.get("x_label") or "")
+            chart_w_in = size_w / 96
+        elif kind == "trend_chart":
+            _c = tile.get("chart") or {}
+            if _c.get("type") == "bar_line" or _c.get("cumulative"):
+                # ada deret waktu -> batang per periode + garis kumulatif
+                size_w = int(avail_w_px * 0.92)
+                size_h = int(avail_h_px * 0.85)
+                chart_html = _bar_line_chart_svg(_c.get("categories") or [], _c.get("values") or [],
+                                                 _c.get("cumulative"), color=ctx.accent_main,
+                                                 size_w=size_w, size_h=size_h)
+                chart_w_in = size_w / 96
+            else:
+                # tidak ada dimensi waktu -> ranked bar, jangan dipaksa jadi garis
+                chart_html = _bar_chart_html(_c.get("categories") or [], _c.get("values") or [],
+                                             colors=[ctx.accent_main] * len(_c.get("values") or []))
+                chart_w_in = w_in
+        elif kind == "custom_topic":
+            _style = (tile.get("chart_style") or "bar").lower()
+            _labels, _values = tile.get("labels") or [], tile.get("values") or []
+            if _style == "donut":
+                _size = int(min(avail_w_px * 0.62, avail_h_px * 0.92))
+                # BUG NYATA DIPERBAIKI (laporan 162 GAGAL digenerate seluruhnya, IndexError):
+                # palet dipotong `_ramp[:len(_values)]` - kalau nilainya LEBIH BANYAK dari 5 warna
+                # yang tersedia, daftar warnanya jadi lebih pendek dari nilainya & renderer meng-
+                # index di luar batas. Paletnya DIPUTAR mengikuti jumlah nilai, bukan dipotong.
+                _base = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
+                _ramp = [_base[i % len(_base)] for i in range(max(1, len(_values)))]
+                chart_html = (
+                    f'<table cellpadding="0" cellspacing="0" style="margin:0 auto;"><tr>'
+                    f'<td style="vertical-align:middle;">'
+                    f'{_donut_chart_svg(_values, colors=_ramp, size=_size, stroke_w=max(18, int(_size * 0.17)))}</td>'
+                    f'<td style="vertical-align:middle;padding-left:14px;">'
+                    f'{_mini_legend_html(_labels, _ramp)}</td></tr></table>'
+                )
+                chart_w_in = w_in
+            elif _style == "stacked":
+                chart_html = _stacked_proportion_bar_html(_values, labels=_labels,
+                                                          height_px=max(40, int(avail_h_px * 0.22)))
+                chart_w_in = w_in
+            else:
+                chart_html = _bar_chart_html(_labels, _values, colors=[ctx.accent_main] * len(_values))
+                chart_w_in = w_in
+        elif kind == "risk_heatmap":
+            _bars = tile.get("bars") or []
+            # BUG NYATA (terlihat di render pertama: satu batang KOSONG, sisanya biru/hijau/oranye
+            # yang tabrakan dgn palet laporan): field `color` tile ini TOKEN SEMANTIK
+            # ("red"/"orange"/"amber"/"blue"/"gray"), bukan nilai warna - dan "amber" bukan nama
+            # warna CSS yang sah, jadi batangnya tidak terisi sama sekali. Pemetaannya diambil
+            # dari jalur lama (rujukan renderer, BUKAN jalurnya): mode severity memakai warna
+            # semantik TETAP supaya makna "kritis" konsisten di tema apa pun; mode kategori
+            # diturunkan dari palet tema krn warnanya di situ tidak membawa makna bahaya.
+            if tile.get("mode") == "severity":
+                _cmap = {"red": RED_CRIT, "orange": "#EA580C", "amber": GOLD_MAIN,
+                         "blue": "#2563EB", "gray": GRAY_TEXT}
+            else:
+                _cmap = {"blue": ctx.accent_main, "green": ctx.accent_chart,
+                         "amber": _light_safe(ctx.accent_light), "orange": _light_safe(ctx.accent_soft),
+                         "gray": GRAY_TEXT, "red": ctx.accent_main}
+            chart_html = _bar_chart_html(
+                [b.get("label") for b in _bars], [b.get("count") for b in _bars],
+                colors=[_cmap.get(b.get("color", "gray"), ctx.accent_main) for b in _bars])
+            chart_w_in = w_in
+        elif kind == "metric_share":
+            # pangsa satu metrik antar entitas -> treemap (luas = besaran, tanpa masalah skala)
+            size_w = int(avail_w_px * 0.94)
+            size_h = int(avail_h_px * 0.88)
+            _tv = tile.get("values") or []
+            _tbase = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
+            chart_html = _treemap_svg(tile.get("labels") or [], _tv,
+                                      colors=[_tbase[i % len(_tbase)] for i in range(max(1, len(_tv)))],
+                                      size_w=size_w, size_h=size_h)
+            chart_w_in = size_w / 96
+        elif kind == "metric_mix":
+            # komposisi antar metrik -> proporsi, jujur meski skalanya beda jauh
+            chart_html = _stacked_proportion_bar_html(tile.get("values") or [],
+                                                      labels=tile.get("labels") or [],
+                                                      height_px=max(44, int(avail_h_px * 0.24)))
+            chart_w_in = w_in
+        elif kind == "metric_compare":
+            size_w = int(avail_w_px * 0.9)
+            size_h = int(avail_h_px * 0.85)
+            chart_html = _grouped_bar_chart_svg(
+                tile["categories"], tile["series_a"], tile["series_b"],
+                label_a=tile.get("label_a", ""), label_b=tile.get("label_b", ""),
+                color_a=ctx.accent_main, color_b=ctx.accent_chart, size_w=size_w, size_h=size_h,
+            )
+            chart_w_in = size_w / 96
+        else:
+            # KEPUTUSAN EKSPLISIT, bukan fallback diam: tile_kind yang tidak dikenali TIDAK
+            # digambar - tapi dicatat, supaya jenis tile baru yang lupa diberi cabang ketahuan
+            # dari log & bukan menghilang tanpa jejak (persis yang terjadi selama ini pada 6
+            # tile_kind di atas). Semua tile_kind yang ada saat ini sudah punya cabang.
+            logger.warning("tile_kind %r tidak punya cabang chart di _insight_main_chart_html - "
+                           "chart tidak digambar", kind)
+            return "", False
+        return chart_html, chart_w_in
+
+    chart_html, chart_w_in = _gambar_chart(w_in * 96, h_in * 96)
+    if not chart_html:
         return "", False
+    avail_w_px, avail_h_px = w_in * 96, h_in * 96
     side_panel_w = w_in - chart_w_in - 0.3
     if side_panel_w >= _CHART_SIDE_PANEL_MIN_W_IN and notes:
         note_title = "Notes" if is_english(report) else "Catatan"
@@ -3199,21 +3379,8 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
         reserve_notes_below = True
         chart_h_in = max(1.0, h_in - notes_h_in)
         inner_h_px = chart_h_in * 96
-        if kind == "kpi_radar":
-            size = int(min(avail_w_px, inner_h_px) * 0.92)
-            label_scale = min(size / 220, 1.3)
-            chart_html = _radar_chart_svg(tile["axes"], tile["values"], color=ctx.accent_main, size=size, label_margin=round(55 * label_scale))
-        elif kind == "period_compare":
-            chart_html = _grouped_bar_chart_svg(
-                tile["categories"], tile["series_a"], tile["series_b"],
-                label_a=tile["label_a"], label_b=tile["label_b"],
-                color_a=ctx.accent_main, color_b=ctx.accent_chart,
-                size_w=int(avail_w_px * 0.9), size_h=int(inner_h_px * 0.85),
-            )
-        else:
-            n_cols, n_rows = len(tile["hour_labels"]), len(tile["day_labels"])
-            cell = max(16, int(min((avail_w_px - 46) / max(n_cols, 1), (inner_h_px - 16) / max(n_rows, 1))))
-            chart_html = _heatmap_grid_svg(tile["day_labels"], tile["hour_labels"], tile["grid"], color=ctx.accent_main, cell=cell)
+        # digambar ULANG lebih pendek lewat fungsi yang SAMA - bukan salinan rantai cabang
+        chart_html, _ = _gambar_chart(avail_w_px, inner_h_px)
         note_title = "Notes" if is_english(report) else "Catatan"
         note_html = _note_box_html(notes, theme=ctx.theme, title=note_title)
         html = (
@@ -3320,11 +3487,19 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         y = 0.0
         col_parts = []
 
-        col_title = _hard_truncate(str(col.get("title") or ""), max(40, int(col_w * 96 / 7.2)) * 2)
+        # BATASAN USER: judul kolom TIDAK dipotong. Ukurannya dikecilkan sampai muat 2 baris.
+        col_title = str(col.get("title") or "")
+        _ct_pt = 10.5
+        for _p in (10.5, 9.5, 8.5, 7.5):
+            if len(col_title) <= 2 * max(12, int(col_w * 96 / (_p * 0.62))):
+                _ct_pt = _p
+                break
+        else:
+            _ct_pt = 7.5
         col_parts.append(
             f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
             f'height:{_DASH_COLS_TITLE_H_IN}in;overflow:hidden;font-family:{TITLE_FONT};'
-            f'font-size:10.5pt;font-weight:700;color:{TEXT_DARK};line-height:1.2;">{_esc(col_title)}</div>'
+            f'font-size:{_ct_pt}pt;font-weight:700;color:{TEXT_DARK};line-height:1.2;">{_esc(col_title)}</div>'
         )
         y += _DASH_COLS_TITLE_H_IN
 
@@ -3346,16 +3521,36 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         body_h = max(1.2, avail_h_in - y - 0.10)
         notes = [str(x_) for x_ in (col.get("notes") or []) if str(x_).strip()]
         notes_consumed = False
-        if col.get("main_chart_tile"):
-            inner, notes_consumed = _insight_main_chart_html(
-                col["main_chart_tile"], ctx, col_w, body_h, notes=notes, report=ctx.report,
+        # PERMINTAAN USER (bagian 2): chart & kartu JANGAN saling meniadakan. Dulu pilihannya
+        # biner - chart penuh ATAU grid kartu - sehingga begitu tile mulai membawa chart
+        # (bagian 1), kartunya hilang & kepadatan halaman justru TURUN. Satu kolom sekarang
+        # memuat chart di ATAS + kartu ringkas di BAWAH. Porsinya dipesan lebih dulu, jadi
+        # tinggi kartu dihitung dari sisa yang benar-benar tersedia, bukan dari seluruh kolom.
+        _tile = col.get("main_chart_tile")
+        _has_cards = bool(col.get("category_details"))
+        _column_layout = _layout_dashboard_column_content(
+            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes)
+        )
+        _chart_h = _column_layout["chart_h"]
+        if _tile:
+            inner, _nc = _insight_main_chart_html(
+                col["main_chart_tile"], ctx, col_w, _chart_h,
+                notes=(None if _has_cards else notes), report=ctx.report,
             )
-            col_parts.append(
-                f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
-                f'height:{body_h}in;overflow:hidden;">{inner}</div>'
-            )
-        else:
-            cards = (col.get("category_details") or [])[:6]
+            notes_consumed = notes_consumed or _nc
+            if inner:
+                col_parts.append(
+                    f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
+                    f'height:{_chart_h}in;overflow:hidden;">{inner}</div>'
+                )
+                if _has_cards:
+                    y += _chart_h + 0.10
+                    body_h = max(1.0, avail_h_in - y - 0.10)
+            elif _has_cards:
+                # chart tidak jadi digambar -> kartu memakai kembali seluruh tinggi kolom
+                _chart_h = 0.0
+        if not _tile or (_has_cards and _chart_h >= 0.0):
+            cards = _column_layout["cards"]
             if cards:
                 # Tinggi kartu DIBATASI ke kebutuhan isinya, bukan diregangkan mengisi kolom:
                 # kartu peringkat/bulan cuma py header + 1 sub-item, kalau diregangkan jadi
@@ -3367,21 +3562,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                 # (E-Katalog kehilangan 2 dari 4 statusnya). Tinggi baris dihitung dari
                 # sub-item TERBANYAK yang sungguhan ada; kalau tidak muat, yang dikurangi
                 # jumlah kartu per baris, bukan kedalaman kartunya.
-                _max_subs = max((len(c.get("sub_items") or []) for c in cards), default=0)
-                _sub_h = (_NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN
-                          + _NESTED_CARD_SUBITEM_GAP_IN)
-                _need_row = _NESTED_CARD_HEADER_H_IN + 0.20 + _max_subs * _sub_h
-                _avail_cards = body_h * (0.62 if notes else 1.0)
-                # berapa BARIS yang benar-benar muat pada tinggi yang dibutuhkan satu baris
-                # utuh (header + seluruh sub-itemnya) - bukan jumlah baris yang dipaksakan
-                # lalu isinya dipotong diam-diam.
-                _rows_fit = max(1, int((_avail_cards + _NESTED_CARD_ROW_GAP_IN)
-                                       / (_need_row + _NESTED_CARD_ROW_GAP_IN)))
-                _grid = _layout_nested_card_grid(len(cards), col_w, max_rows=min(3, _rows_fit))
-                _rows_n = _grid["rows"] or [len(cards)]
-                cards = cards[:sum(_rows_n)]
-                _need = len(_rows_n) * _need_row + (len(_rows_n) - 1) * _NESTED_CARD_ROW_GAP_IN
-                cards_h = min(_avail_cards, _need)
+                cards_h = _column_layout["cards_h"]
                 inner, notes_consumed = _insight_detail_row_html(cards, col_w, cards_h, 0.0, ctx, notes=None)
                 col_parts.append(
                     f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
@@ -3389,7 +3570,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                 )
                 if notes:
                     note_y = y + cards_h + 0.08
-                    note_h = max(0.5, avail_h_in - note_y - 0.05)
+                    note_h = max(0.0, avail_h_in - note_y)
                     col_parts.append(
                         f'<div style="position:absolute;left:{x}in;top:{note_y}in;width:{col_w}in;'
                         f'height:{note_h}in;overflow:hidden;">{_note_box_html(notes, theme=ctx.theme)}</div>'
