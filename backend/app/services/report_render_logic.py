@@ -32,7 +32,8 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 from app.crud.report import get_parsed_data
-from app.services.ai_engine.data_profiler import compute_statistics, _classify_severity_value
+from app.services.ai_engine.data_profiler import (compute_statistics, _classify_severity_value,
+                                                  _coerce_indo_numeric_columns)
 from app.services.ai_engine.ollama_client import normalize_recommendations, sanitize_text, coerce_finding_text, coerce_narrative_text
 
 SEVERITY_ORDER = ["critical", "high", "medium", "low", "informational"]
@@ -1764,6 +1765,567 @@ _AFFIX_BOUNDARY_CHARS = set("/.-_ ")
 
 
 _PEMISAH_SEGMEN = "/."
+
+
+# =====================================================================================
+# PEMILIH CHART BERBASIS TANDA TANGAN KOLOM (Bagian 1)
+#
+# Menggantikan katalog sembilan tile tetap yang bentuknya terikat pada NAMA TILE & dikunci
+# lagi oleh is_included(...) - nama seksi yang diputuskan AI. Akibat susunan lama, data yang
+# tidak punya kolom tanggal/status kehilangan hampir semua bentuk, dan lima topik AI berbeda
+# semuanya berujung ke peringkat entitas yang SAMA (laporan 187: 10 tile -> 5 daftar unik).
+#
+# Di sini keputusan diambil dari PROFIL KOLOM saja. is_included(...) TIDAK boleh jadi syarat
+# bagi bentuk mana pun: kalau sebuah topik dicentang pengguna tapi datanya tidak menyediakan
+# bentuk yang bisa dibaca, itu keputusan pemilih - DICATAT ke log, bukan dipaksa lahir.
+#
+# ANGKA AMBANG - semuanya diturunkan dari pengukuran 130 laporan, bukan dipilih:
+#   20x   rasio metrik utk grouped bar/stacked. Sebarannya BIMODAL: 64% laporan <= 20x,
+#         lalu mentok - menaikkan ke 100x cuma menambah 9 poin & tidak ada apa pun antara
+#         100x dan 1000x. Yang di atasnya kelompok yang berbeda secara kualitatif.
+#   8%    ambang label segmen - ANGKA YANG SAMA dgn ambang label stacked yang sudah berlaku.
+#   50%   pangsa teratas utk treemap.
+#   2%    panjang batang terkecil relatif terbesar; di bawah itu batangnya praktis garis.
+#   60    maks sel matriks (2 kategorikal disilangkan).
+#   15    minimum baris utk scatter.
+#   25    sebaran minimum radar (nilai 0-100).
+# =====================================================================================
+_SIG_RASIO_SEBANDING = 20.0
+_SIG_SEGMEN_MIN_FRAC = 0.08
+_SIG_TERATAS_TIMPANG = 0.50
+_SIG_BATANG_MIN_FRAC = 0.02
+_SIG_MATRIKS_MAKS_SEL = 60
+_SIG_SCATTER_MIN_BARIS = 15
+_SIG_RADAR_MIN_SEBARAN = 25.0
+_SIG_LABEL_COL_W_PX = 150.0
+_SIG_LABEL_PT = 9.5
+
+
+def _nama_muat(labels: list) -> bool:
+    """Semua nama muat di kolom label ranked bar (maks 2 baris) - diukur, bukan ditebak."""
+    return all(wrap_line_count(str(x), _SIG_LABEL_COL_W_PX, _SIG_LABEL_PT, 0.80) <= 2
+               for x in labels)
+
+
+_SIG_TGL_RE = re.compile(r"tanggal|date|waktu|time|periode|bulan", re.I)
+_SIG_ID_RE = re.compile(r"^(no|nomor|id|kode|code|index|urut)([_\s.-]|$)", re.I)
+
+
+def _kolom_identifier(s) -> bool:
+    """Kolom INDEKS/IDENTIFIER numerik - bukan metrik walaupun isinya angka.
+
+    KOREKSI USER: syarat "nilai hampir seluruhnya unik" DIBUANG. "Total Received" nilainya
+    hampir semua unik & tetap metrik yang sah - sama persis dgn "Virtual Server" 33 dari 33
+    yang sudah diperbaiki sebelumnya. Kardinalitas tinggi BUKAN tanda identifier, baik utk
+    kategori maupun metrik. Yang menandai identifier numerik: beda antar baris KONSTAN
+    (nomor urut 1,2,3,...) atau nama kolom yang eksplisit (dicek terpisah lewat _SIG_ID_RE)."""
+    v = pd.to_numeric(s, errors="coerce").dropna()
+    if len(v) < 3:
+        return False
+    beda = v.sort_values().diff().dropna().unique()
+    return len(beda) == 1 and float(beda[0]) != 0.0
+
+
+def profil_kolom(parsed_data: list) -> dict:
+    """Profil kolom mentah, dipilah jadi KATEGORI / METRIK / TANGGAL / IDENTIFIER / TURUNAN.
+
+    Tiga perbaikan (permintaan user) atas versi pertama:
+      - kolom INDEKS/IDENTIFIER dikeluarkan dari metrik (lihat _kolom_identifier);
+      - kolom TANGGAL dikenali sbg tanggal, bukan kategori - supaya tanda tangan
+        "tanggal + 2 satuan -> bar+garis" bisa hidup sama sekali;
+      - kolom TURUNAN (jumlah kolom lain) tetap dikecualikan dari metrik.
+    """
+    if not parsed_data:
+        return {"df": None, "kategori": [], "metrik": [], "turunan": [], "tanggal": [],
+                "identifier": [], "n_baris": 0}
+    df = pd.DataFrame(parsed_data)
+    # PAKAI PENGENALAN ANGKA YANG SUDAH ADA, jangan menulis sendiri. _coerce_indo_numeric_columns
+    # mengenali angka format Indonesia ("40.000.000" -> 40000000) & satuannya (Rp / %). Versi
+    # pertama profil_kolom menulis deteksi numerik sendiri dari nol lalu MELEWATI perbaikan
+    # itu: laporan pengadaan (183/165) berakhir NOL metrik - Nilai_Kontrak_Rp diklasifikasi
+    # sbg kategori krn isinya string "40.000.000" - sehingga satu-satunya pasangan yang
+    # tersisa kategori x kategori & seluruh laporan jadi 9 matriks.
+    # Fungsinya SUDAH terjangkau dari modul ini (lihat impor data_profiler di atas); tidak
+    # ada penghalang struktur - jalur baru ini yang melewatinya. Kalau butuh pengenalan angka
+    # di tempat lain, PANGGIL fungsi itu, jangan salin isinya.
+    try:
+        df, _satuan = _coerce_indo_numeric_columns(df)
+    except Exception:
+        pass
+    tanggal = [c for c in df.columns if _SIG_TGL_RE.search(str(c))]
+    kategori, metrik, identifier = [], [], []
+    for c in df.columns:
+        if c in tanggal:
+            continue
+        s = pd.to_numeric(df[c], errors="coerce")
+        # KEPUTUSAN USER: KETERISIAN TIDAK MENENTUKAN TIPE KOLOM. Ambang lama (>=90% terisi)
+        # memakai keterisian utk pertanyaan yang bukan urusannya - kolom 50% terisi bukan
+        # "bukan metrik", melainkan metrik dgn separuh data kosong (terukur di laporan 186:
+        # 8 kolom yang jelas metrik jatuh jadi kategori krn datanya dua bagian). Tipe
+        # ditentukan ISI NILAINYA: kalau yang TERISI semuanya angka, itu metrik, berapa pun
+        # proporsinya. Keterisian jadi komponen KEKUATAN kandidat (lihat "keterisian" di
+        # tanda tangan), bukan syarat kelayakan.
+        _terisi = s.notna().sum()
+        _dari_yang_terisi_angka = (s.notna().sum() / max(1, df[c].notna().sum())) if df[c].notna().sum() else 0
+        if _terisi >= 3 and _dari_yang_terisi_angka >= 0.9 and s.nunique() > 2:
+            (identifier if (_SIG_ID_RE.search(str(c)) or _kolom_identifier(df[c])) else metrik).append(c)
+        elif 2 <= df[c].astype(str).nunique() <= 60:
+            # HANYA dari NAMANYA utk kolom kategorikal. Kardinalitas tinggi BUKAN tanda
+            # identifier: "Virtual Server" punya 33 nilai unik dari 33 baris & tetap kategori
+            # yang sah (ranked bar top-N menanganinya). Versi pertama membuangnya, lalu
+            # keluarga F5 berakhir NOL pasangan.
+            (identifier if _SIG_ID_RE.search(str(c)) else kategori).append(c)
+    turunan = []
+    for c in metrik:
+        sc = pd.to_numeric(df[c], errors="coerce")
+        lain = [x for x in metrik if x != c]
+        for n in (2, 3):
+            if len(lain) < n:
+                continue
+            if any(((sc - sum(pd.to_numeric(df[k], errors="coerce") for k in komb)).abs()
+                    <= sc.abs() * 0.01 + 1e-9).mean() >= 0.7
+                   for komb in itertools.combinations(lain, n)):
+                turunan.append(c)
+                break
+    return {"df": df, "kategori": kategori, "tanggal": tanggal, "identifier": identifier,
+            "turunan": turunan, "metrik": [c for c in metrik if c not in turunan],
+            "n_baris": len(df)}
+
+
+def _kuat(nilai: float) -> float:
+    """Jepit ke 0..1 - seberapa KUAT syaratnya terpenuhi, bukan sekadar terpenuhi."""
+    return max(0.0, min(1.0, float(nilai)))
+
+
+# --- ATURAN BENTUK: masing-masing BERDIRI SENDIRI, dinilai SEMUANYA ---------------------
+# KOREKSI USER (sisa arsitektur lama): versi sebelumnya satu rantai if/elif yang BERHENTI di
+# kecocokan pertama. Akibatnya satu pasangan hanya pernah melahirkan SATU kandidat - cabang
+# pertama yang cocok - bukan semua bentuk yang syaratnya terpenuhi. Itu yang membuat "bentuk
+# berbeda" selalu sedikit di semua pengukuran, dan membuat scatter tidak pernah muncul
+# walaupun syaratnya terpenuhi: grouped_bar menangkapnya lebih dulu.
+#
+# Seluruh guna penilaian-lalu-pilih adalah TIDAK ADA URUTAN. Jadi tiap aturan sekarang fungsi
+# terpisah yang mengembalikan (bentuk, alasan, kekuatan) atau None, dan SEMUANYA dijalankan.
+# Pasangan yang cocok utk grouped_bar DAN scatter menghasilkan DUA kandidat; skor - termasuk
+# bonus variasi - yang memilih.
+
+def _r_radar(sig):
+    ind = [float(x) for x in (sig.get("indikator") or [])]
+    if len(ind) >= 3 and (max(ind) - min(ind)) >= _SIG_RADAR_MIN_SEBARAN:
+        return ("radar", "%d indikator, sebaran %.0f" % (len(ind), max(ind) - min(ind)),
+                _kuat((max(ind) - min(ind) - _SIG_RADAR_MIN_SEBARAN) / 75.0))
+
+
+def _r_bar_garis(sig):
+    # (tanggal x metrik): batang utk nilai absolut per periode, garis utk satuan KEDUA
+    # (mis. persentase/laju). TIDAK butuh dua metrik berpasangan - koreksi user: syaratnya
+    # dulu digantungkan pada jenis pasangan yang salah sejak awal.
+    if sig.get("sumbu_waktu") and (sig.get("n_satuan_berbeda") or 0) >= 2:
+        return ("bar_garis", "sumbu waktu + %d satuan berbeda" % sig["n_satuan_berbeda"], 0.90)
+
+
+def _r_matriks(sig):
+    sel = sig.get("sel_silang")
+    if sel and sel <= _SIG_MATRIKS_MAKS_SEL:
+        return ("matriks", "2 kategori, %d sel" % sel, _kuat(1.0 - sel / float(_SIG_MATRIKS_MAKS_SEL)))
+
+
+def _r_grouped_bar(sig):
+    ras = sig.get("rasio_metrik")
+    if len(sig.get("metrik") or []) >= 2 and ras is not None and ras < _SIG_RASIO_SEBANDING:
+        return ("grouped_bar", "2 metrik sebanding, rasio %.1fx" % ras,
+                _kuat(1.0 - ras / _SIG_RASIO_SEBANDING))
+
+
+def _r_grouped_bar_ternorm(sig):
+    # KEPUTUSAN USER: ambang 20x TIDAK dilonggarkan (rasio 100x = batang terkecil 1%,
+    # sementara 2% sudah ditetapkan sbg ambang keterbacaan ranked bar - melonggarkannya
+    # berarti dua standar berbeda utk masalah visual yang sama). Jalan keluarnya bentuk
+    # sendiri: tiap metrik dinormalkan ke maksimumnya, sumbu berlabel, nilai asli di batang.
+    ras = sig.get("rasio_metrik")
+    if len(sig.get("metrik") or []) >= 2 and ras is not None and ras >= _SIG_RASIO_SEBANDING:
+        return ("grouped_bar_ternormalisasi", "2 metrik, rasio %.0fx" % ras, 0.45)
+
+
+def _r_stacked(sig):
+    # bagian-dari-total DAN rasio antar komponen masih sebanding. Kedua field kini dibawa
+    # oleh jenis pasangan yang sama (lihat _semua_kandidat) - sebelumnya tidak pernah
+    # keduanya sekaligus, jadi aturan ini MUSTAHIL menyala.
+    v = [float(x or 0) for x in (sig.get("values") or [])]
+    if not (sig.get("bagian_dari_total") and 2 <= len(v) <= 5 and min(v) > 0):
+        return None
+    ras = max(v) / min(v)
+    if ras < _SIG_RASIO_SEBANDING:
+        return ("stacked", "bagian-dari-total, %d komponen, rasio %.1fx" % (len(v), ras),
+                _kuat(1.0 - ras / _SIG_RASIO_SEBANDING))
+
+
+def _r_treemap(sig):
+    v = [float(x or 0) for x in (sig.get("values") or [])]
+    if not v or not sum(v):
+        return None
+    frac = sorted((x / sum(v) for x in v), reverse=True)
+    sisa = sum(1 for f in frac[1:] if f >= _SIG_SEGMEN_MIN_FRAC)
+    # SYARAT KEDUA yang menentukan, dan sengaja ketat: dari 487 kolom kategori yang diprofil,
+    # 20 punya teratas > 50% tapi HANYA 5 yang sisanya masih bisa dinamai. Jadi treemap
+    # memang lahir ~5 dari 487 - ITU HASIL YANG DIINGINKAN, bukan tanda ada yang salah.
+    # JANGAN longgarkan, dan JANGAN hapus renderer treemap-nya: langka bukan tidak perlu.
+    if frac[0] > _SIG_TERATAS_TIMPANG and sisa >= 2:
+        return ("treemap", "teratas %.0f%% & %d sisanya >= 8%%" % (frac[0] * 100, sisa),
+                _kuat(sisa / 4.0))
+
+
+def _r_donut(sig):
+    v = sig.get("values") or []
+    if sig.get("bagian_dari_total") and 3 <= len(v) <= 6:
+        return ("donut", "%d nilai, bagian dari satu total" % len(v),
+                _kuat(1.0 - abs(len(v) - 4) / 4.0))
+
+
+def _r_ranked_bar(sig):
+    v = [float(x or 0) for x in (sig.get("values") or [])]
+    if not v or not max(v):
+        return None
+    kecil = min(v) / max(v)
+    if kecil >= _SIG_BATANG_MIN_FRAC and _nama_muat(sig.get("labels") or []):
+        return ("ranked_bar", "batang terkecil %.1f%%" % (kecil * 100), _kuat(kecil / 0.40))
+
+
+def _r_ranked_bar_ternorm(sig):
+    v = [float(x or 0) for x in (sig.get("values") or [])]
+    if not v or not max(v):
+        return None
+    kecil = min(v) / max(v)
+    if kecil < _SIG_BATANG_MIN_FRAC and _nama_muat(sig.get("labels") or []):
+        return ("ranked_bar_ternormalisasi", "batang terkecil %.2f%% < 2%%" % (kecil * 100), 0.45)
+
+
+def _r_scatter(sig):
+    if len(sig.get("metrik") or []) >= 2 and (sig.get("n_baris") or 0) >= _SIG_SCATTER_MIN_BARIS:
+        return ("scatter", "%d metrik, %d baris" % (len(sig["metrik"]), sig["n_baris"]),
+                _kuat((sig["n_baris"]) / 60.0))
+
+
+_ATURAN_BENTUK = (_r_radar, _r_bar_garis, _r_matriks, _r_grouped_bar, _r_grouped_bar_ternorm,
+                  _r_stacked, _r_treemap, _r_donut, _r_ranked_bar, _r_ranked_bar_ternorm,
+                  _r_scatter)
+
+
+def bentuk_yang_cocok(sig: dict) -> list:
+    """SEMUA bentuk yang syaratnya terpenuhi - bukan yang pertama cocok."""
+    out = []
+    for aturan in _ATURAN_BENTUK:
+        hasil = aturan(sig)
+        if hasil:
+            out.append(hasil)
+    return out
+
+
+_SIG_TGL_RE = re.compile(r"tanggal|date|waktu|time|periode|bulan", re.I)
+_SIG_ID_RE = re.compile(r"^(no|nomor|id|kode|code|index|urut)([_\s.-]|$)", re.I)
+
+
+def _kolom_identifier(s) -> bool:
+    """Kolom INDEKS/IDENTIFIER numerik - bukan metrik walaupun isinya angka.
+
+    KOREKSI USER: syarat "nilai hampir seluruhnya unik" DIBUANG. "Total Received" nilainya
+    hampir semua unik & tetap metrik yang sah - sama persis dgn "Virtual Server" 33 dari 33
+    yang sudah diperbaiki sebelumnya. Kardinalitas tinggi BUKAN tanda identifier, baik utk
+    kategori maupun metrik. Yang menandai identifier numerik: beda antar baris KONSTAN
+    (nomor urut 1,2,3,...) atau nama kolom yang eksplisit (dicek terpisah lewat _SIG_ID_RE)."""
+    v = pd.to_numeric(s, errors="coerce").dropna()
+    if len(v) < 3:
+        return False
+    beda = v.sort_values().diff().dropna().unique()
+    return len(beda) == 1 and float(beda[0]) != 0.0
+
+
+def profil_kolom(parsed_data: list) -> dict:
+    """Profil kolom mentah, dipilah jadi KATEGORI / METRIK / TANGGAL / IDENTIFIER / TURUNAN.
+
+    Tiga perbaikan (permintaan user) atas versi pertama:
+      - kolom INDEKS/IDENTIFIER dikeluarkan dari metrik (lihat _kolom_identifier);
+      - kolom TANGGAL dikenali sbg tanggal, bukan kategori - supaya tanda tangan
+        "tanggal + 2 satuan -> bar+garis" bisa hidup sama sekali;
+      - kolom TURUNAN (jumlah kolom lain) tetap dikecualikan dari metrik.
+    """
+    if not parsed_data:
+        return {"df": None, "kategori": [], "metrik": [], "turunan": [], "tanggal": [],
+                "identifier": [], "n_baris": 0}
+    df = pd.DataFrame(parsed_data)
+    # PAKAI PENGENALAN ANGKA YANG SUDAH ADA, jangan menulis sendiri. _coerce_indo_numeric_columns
+    # mengenali angka format Indonesia ("40.000.000" -> 40000000) & satuannya (Rp / %). Versi
+    # pertama profil_kolom menulis deteksi numerik sendiri dari nol lalu MELEWATI perbaikan
+    # itu: laporan pengadaan (183/165) berakhir NOL metrik - Nilai_Kontrak_Rp diklasifikasi
+    # sbg kategori krn isinya string "40.000.000" - sehingga satu-satunya pasangan yang
+    # tersisa kategori x kategori & seluruh laporan jadi 9 matriks.
+    # Fungsinya SUDAH terjangkau dari modul ini (lihat impor data_profiler di atas); tidak
+    # ada penghalang struktur - jalur baru ini yang melewatinya. Kalau butuh pengenalan angka
+    # di tempat lain, PANGGIL fungsi itu, jangan salin isinya.
+    try:
+        df, _satuan = _coerce_indo_numeric_columns(df)
+    except Exception:
+        pass
+    tanggal = [c for c in df.columns if _SIG_TGL_RE.search(str(c))]
+    kategori, metrik, identifier = [], [], []
+    for c in df.columns:
+        if c in tanggal:
+            continue
+        s = pd.to_numeric(df[c], errors="coerce")
+        # KEPUTUSAN USER: KETERISIAN TIDAK MENENTUKAN TIPE KOLOM. Ambang lama (>=90% terisi)
+        # memakai keterisian utk pertanyaan yang bukan urusannya - kolom 50% terisi bukan
+        # "bukan metrik", melainkan metrik dgn separuh data kosong (terukur di laporan 186:
+        # 8 kolom yang jelas metrik jatuh jadi kategori krn datanya dua bagian). Tipe
+        # ditentukan ISI NILAINYA: kalau yang TERISI semuanya angka, itu metrik, berapa pun
+        # proporsinya. Keterisian jadi komponen KEKUATAN kandidat (lihat "keterisian" di
+        # tanda tangan), bukan syarat kelayakan.
+        _terisi = s.notna().sum()
+        _dari_yang_terisi_angka = (s.notna().sum() / max(1, df[c].notna().sum())) if df[c].notna().sum() else 0
+        if _terisi >= 3 and _dari_yang_terisi_angka >= 0.9 and s.nunique() > 2:
+            (identifier if (_SIG_ID_RE.search(str(c)) or _kolom_identifier(df[c])) else metrik).append(c)
+        elif 2 <= df[c].astype(str).nunique() <= 60:
+            # HANYA dari NAMANYA utk kolom kategorikal. Kardinalitas tinggi BUKAN tanda
+            # identifier: "Virtual Server" punya 33 nilai unik dari 33 baris & tetap kategori
+            # yang sah (ranked bar top-N menanganinya). Versi pertama membuangnya, lalu
+            # keluarga F5 berakhir NOL pasangan.
+            (identifier if _SIG_ID_RE.search(str(c)) else kategori).append(c)
+    turunan = []
+    for c in metrik:
+        sc = pd.to_numeric(df[c], errors="coerce")
+        lain = [x for x in metrik if x != c]
+        for n in (2, 3):
+            if len(lain) < n:
+                continue
+            if any(((sc - sum(pd.to_numeric(df[k], errors="coerce") for k in komb)).abs()
+                    <= sc.abs() * 0.01 + 1e-9).mean() >= 0.7
+                   for komb in itertools.combinations(lain, n)):
+                turunan.append(c)
+                break
+    return {"df": df, "kategori": kategori, "tanggal": tanggal, "identifier": identifier,
+            "turunan": turunan, "metrik": [c for c in metrik if c not in turunan],
+            "n_baris": len(df)}
+
+
+_KOLOM_SECTION = "Section"
+
+
+def _bagian_data(df):
+    """[(nama_bagian, sub-df)] - tabel bersusun diprofilkan PER BAGIAN.
+
+    KOREKSI USER: parser SENGAJA menggabungkan >1 struktur tabel jadi satu dataset dgn kolom
+    penanda "Section" (lihat pdf_parser.py) supaya kolom antar tabel tidak nyasar. Yang salah
+    konsumennya: profil memperlakukannya sbg SATU tabel datar, lalu melahirkan pasangan
+    LINTAS BAGIAN - membandingkan Inbound dgn Outbound, yang bukan sudut pandang melainkan
+    artefak. Terukur di laporan 186: 5 kategori x 8 metrik, mayoritas lintas bagian.
+    14,6% dari 130 laporan punya kolom ini, jadi ini bentuk data biasa - bukan kasus khusus."""
+    if _KOLOM_SECTION not in df.columns:
+        return [(None, df)]
+    nilai = [v for v in df[_KOLOM_SECTION].astype(str).unique()]
+    if len(nilai) < 2:
+        return [(None, df)]
+    return [(v, df[df[_KOLOM_SECTION].astype(str) == v]) for v in nilai]
+
+
+def _semua_kandidat(parsed_data: list) -> list:
+    """Nilai SEMUA pasangan terhadap SELURUH tabel tanda tangan - tanpa berhenti di tengah.
+
+    KOREKSI USER: versi sebelumnya menilai pasangan berurutan sampai KUOTA habis, jadi
+    URUTAN PENILAIAN yang menentukan hasil - dan urutan itu tidak punya hubungan apa pun dgn
+    kualitas. Memindahkan kuota per jenis cuma memindahkan tempat urutan itu menggigit
+    (terukur: 183 turun dari 8 keputusan jadi 2 padahal pasangannya masih banyak).
+    Sekarang tidak ada kuota sama sekali di tahap ini."""
+    prof = profil_kolom(parsed_data)
+    df = prof.get("df")
+    if df is None or df.empty:
+        return []
+    kand = []
+    kats, mets = prof["kategori"], prof["metrik"]
+
+    # ---- PASANGAN HANYA DIBENTUK DALAM SATU BAGIAN ----------------------------------
+    # Kalau datanya bersusun (kolom Section dgn >1 nilai), tiap bagian diprofilkan sendiri &
+    # pasangan tidak pernah melintasi batas bagian. SATU pengecualian yang disengaja: metrik
+    # yang ADA DI KEDUA bagian boleh dipasangkan dgn Section itu sendiri - itu justru tujuan
+    # kolom Section dibuat, dan mungkin chart paling berguna di laporan 186.
+    _bagian = _bagian_data(df)
+    if len(_bagian) > 1:
+        _hasil = []
+        _metrik_bersama = [m for m in mets if all(g[m].notna().any() for _, g in _bagian)]
+        for _nama, _g in _bagian:
+            for k in _semua_kandidat(_g.to_dict("records")):
+                k["pasangan"] = tuple(list(k["pasangan"]) + ["@" + str(_nama)[:18]])
+                _hasil.append(k)
+        for m in _metrik_bersama:
+            g = df.groupby(df[_KOLOM_SECTION].astype(str))[m].sum().sort_values(ascending=False)
+            g = g[g > 0]
+            if len(g) < 2:
+                continue
+            sig = {"n_baris": len(df), "kategori": _KOLOM_SECTION, "metrik": [m],
+                   "labels": [str(x) for x in g.index], "values": [float(v) for v in g.tolist()],
+                   "keterisian": float(df[m].notna().mean()),
+                   "bagian_dari_total": True, "rasio_metrik": None, "sel_silang": None}
+            for bentuk, alasan, kekuatan in (bentuk_yang_cocok(sig) or []):
+                _hasil.append({"pasangan": (_KOLOM_SECTION, m), "bentuk": bentuk,
+                               "alasan": alasan,
+                               "kekuatan": round(kekuatan * (0.5 + 0.5 * sig["keterisian"]), 3),
+                               "keterisian": round(sig["keterisian"], 2),
+                               "labels": sig["labels"], "values": sig["values"]})
+        return _hasil
+
+    for a, b in itertools.combinations(kats, 2):
+        sel = df[a].astype(str).nunique() * df[b].astype(str).nunique()
+        kand.append(((a, b), {"n_baris": prof["n_baris"], "kategori": a, "sel_silang": sel,
+                              "metrik": [], "labels": [], "values": []}))
+    for kat in kats:
+        for ma, mb in itertools.combinations(mets, 2):
+            ta = float(pd.to_numeric(df[ma], errors="coerce").sum() or 0)
+            tb = float(pd.to_numeric(df[mb], errors="coerce").sum() or 0)
+            if ta <= 0 or tb <= 0:
+                continue
+            kand.append(((kat, ma, mb), {
+                "n_baris": prof["n_baris"], "kategori": kat, "metrik": [ma, mb],
+                "rasio_metrik": max(ta, tb) / min(ta, tb), "labels": [ma, mb],
+                "values": [ta, tb], "bagian_dari_total": False,
+                "punya_tanggal": bool(prof["tanggal"]),
+                "n_satuan_berbeda": 2 if prof["tanggal"] else 0}))
+    # HIMPUNAN metrik -> radar. KOREKSI USER: field "indikator" tidak pernah diisi jenis
+    # pasangan mana pun, jadi aturan radar mustahil menyala. Radar bukan pasangan
+    # (kategori, metrik) maupun (metrik, metrik) - dia HIMPUNAN >=3 metrik yang skalanya
+    # bisa dinormalkan. Dinormalkan ke 0-100 thd maksimum masing-masing, lalu sebarannya
+    # diperiksa: kalau semua sumbu praktis setara, radar tidak membandingkan apa pun.
+    if len(mets) >= 3:
+        _tot = [float(pd.to_numeric(df[m], errors="coerce").sum() or 0) for m in mets]
+        _maks = max(_tot) or 1
+        _norm = [100.0 * t / _maks for t in _tot]
+        kand.append((tuple(mets[:6]), {
+            "n_baris": prof["n_baris"], "kategori": None, "metrik": list(mets),
+            "indikator": _norm, "labels": list(mets), "values": _tot,
+            "keterisian": float(min(df[m].notna().mean() for m in mets)),
+            "bagian_dari_total": False, "rasio_metrik": None, "sel_silang": None}))
+
+    # (tanggal x metrik) -> bar_garis. KOREKSI USER: syarat bar_garis dulu digantungkan pada
+    # pasangan metrik-berpasangan, padahal bentuk ini menampilkan SATU deret terhadap WAKTU
+    # dgn dua satuan (batang = nilai absolut, garis = persentase/laju). Tidak butuh dua metrik.
+    for tgl in prof["tanggal"]:
+        for met in mets:
+            g = df.groupby(df[tgl].astype(str))[met].sum().sort_values()
+            g = g[g > 0]
+            if len(g) < 3:
+                continue
+            kand.append(((tgl, met), {
+                "n_baris": prof["n_baris"], "kategori": tgl, "metrik": [met],
+                "sumbu_waktu": True, "n_satuan_berbeda": 2,
+                "labels": [str(x) for x in g.index][:8],
+                "values": [float(v) for v in g.tolist()][:8],
+                "keterisian": float(df[met].notna().mean()),
+                "bagian_dari_total": False, "rasio_metrik": None, "sel_silang": None}))
+
+    for kat in kats:
+        for met in mets:
+            g = df.groupby(df[kat].astype(str))[met].sum().sort_values(ascending=False)
+            g = g[g > 0][:8]
+            if len(g) < 2:
+                continue
+            _terisi_frac = float(df[met].notna().mean())
+            kand.append(((kat, met), {
+                "keterisian": _terisi_frac,
+                "n_baris": prof["n_baris"], "kategori": kat, "metrik": [met],
+                "labels": pendekkan_label([str(x) for x in g.index]),
+                "values": [float(v) for v in g.tolist()],
+                "bagian_dari_total": True, "rasio_metrik": None, "sel_silang": None}))
+
+    hasil = []
+    for pasangan, sig in kand:
+        # SATU PASANGAN -> SATU KANDIDAT PER BENTUK YANG COCOK, bukan cabang pertama saja.
+        cocok = bentuk_yang_cocok(sig)
+        if not cocok:
+            cocok = [(None, "tidak ada tanda tangan yang cocok (kategori=%s, metrik=%d, baris=%d)"
+                      % (sig.get("kategori"), len(sig.get("metrik") or []), sig.get("n_baris") or 0), 0.0)]
+        # KETERISIAN sbg komponen KEKUATAN (keputusan user): pasangan berdata 50% terisi
+        # berskor lebih rendah dari yang 100%, jadi ia kalah kalau ada pesaing yang lebih
+        # lengkap - tapi TETAP TERPAKAI kalau tidak ada. Bukan syarat kelayakan.
+        _isi = float(sig.get("keterisian", 1.0) or 1.0)
+        for bentuk, alasan, kekuatan in cocok:
+            hasil.append({"pasangan": pasangan, "bentuk": bentuk, "alasan": alasan,
+                          "kekuatan": round(kekuatan * (0.5 + 0.5 * _isi), 3),
+                          "keterisian": round(_isi, 2),
+                          "labels": sig.get("labels") or [], "values": sig.get("values") or []})
+    return hasil
+
+
+_BOBOT_VARIASI = 0.6
+
+# AMBANG KEKUATAN MINIMUM - kandidat di bawah ini tidak digambar.
+#
+# DIPILIH DARI KURVA TERUKUR (7 laporan uji), bukan ditebak. Berapa chart tersisa:
+#
+#   laporan     kandidat   >=0.1  >=0.2  >=0.3  >=0.4  >=0.5
+#   183 / 165        16       8      8      4      4      4
+#   186              68      29     23     22     22     14
+#   F5 (182/184/     7        3      3      3      3      3
+#       187/169)
+#
+# Kenapa 0.3:
+#   - antara 0.2 dan 0.3, laporan 183 turun 8 -> 4: empat kandidat berskor di rentang itu
+#     memang lemah & layak hilang, sementara 186 hampir tidak bergerak (23 -> 22). Memilih
+#     0.2 berarti mempertahankan empat kandidat lemah demi keuntungan yang tidak ada.
+#   - 0.4 hasilnya IDENTIK dgn 0.3 di ketiga kelompok, jadi 0.3 adalah titik TERENDAH yang
+#     hasilnya sama dgn 0.4 - tidak ada yang dibuang sia-sia.
+#   - 0.5 menurunkan 186 ke 14 TAPI dgn membuang kandidat 183 & F5 yang sah. Pertukaran buruk.
+#
+# KAPAN DIUKUR ULANG: kalau profil kolom, daftar bentuk, atau bobot variasi berubah, kurva
+# di atas basi - ukur ulang sebelum menggeser angka ini. JANGAN menggesernya karena keluaran
+# terlihat kurang enak; alasannya harus datang dari kurva baru.
+_AMBANG_KEKUATAN = 0.3
+
+
+def rencana_chart(parsed_data: list, maks: int | None = None) -> list:
+    """SKOR DULU, PILIH KEMUDIAN.
+
+    skor = kekuatan syarat + bonus variasi (bentuk yang BELUM muncul di halaman ini).
+
+    Komponen variasi itu yang menyelesaikan laporan 186 tanpa aturan terpisah: grouped_bar
+    ketujuh kalah dari donut pertama walaupun syaratnya lebih kuat. Bukan tambalan "kalau
+    bentuk sama berulang cari alternatif" - variasi jadi bagian skor sejak awal.
+
+    Pasangan yang SUDAH terpakai dibuang, bukan diturunkan skornya: satu pasangan satu chart.
+
+    `maks` BUKAN kuota kualitas - batas fisik berapa chart muat di halaman ditangani
+    perencana tata letak lewat chart_min_height. Default None = tanpa batas; sisa kandidat
+    berskor tinggi jatuh ke halaman berikutnya."""
+    kand = [k for k in _semua_kandidat(parsed_data)
+            if k["bentuk"] and k["kekuatan"] >= _AMBANG_KEKUATAN]
+    terpakai_pasangan, dipakai_bentuk = set(), set()
+    terpilih = []
+    while kand:
+        for k in kand:
+            k["_skor"] = k["kekuatan"] + (_BOBOT_VARIASI if k["bentuk"] not in dipakai_bentuk else 0.0)
+        kand.sort(key=lambda k: (-k["_skor"], str(k["pasangan"])))
+        pilih = kand.pop(0)
+        # PASANGAN ditandai sebagai KESATUAN, bukan anggota-anggotanya. Versi pertama
+        # menandai tiap KOLOM lalu menguji dgn irisan - begitu Metode_Pengadaan & Status
+        # terpakai sekali, SETIAP pasangan yang menyentuh salah satunya ikut mati, padahal
+        # Vendor x Metode_Pengadaan pasangan yang BERBEDA & sah (terukur: 183 dari 15
+        # pasangan cuma 1 terpilih). Satu kolom BOLEH muncul di beberapa chart - itu sudut
+        # pandang berbeda, bukan pengulangan; yang tidak boleh diulang adalah PASANGANNYA.
+        _kunci = frozenset(pilih["pasangan"])
+        if _kunci in terpakai_pasangan:
+            pilih["alasan_kalah"] = "pasangan sudah terpakai"
+            continue
+        terpilih.append(pilih)
+        terpakai_pasangan.add(_kunci)
+        dipakai_bentuk.add(pilih["bentuk"])
+        logger.info("pemilih chart: %s -> %s [%s] skor %.2f",
+                    pilih["pasangan"], pilih["bentuk"], pilih["alasan"], pilih["_skor"])
+        if maks and len(terpilih) >= maks:
+            break
+    return terpilih
+
+
+
+
+def _kuat(nilai: float) -> float:
+    """Jepit ke 0..1 - seberapa KUAT syaratnya terpenuhi, bukan sekadar terpenuhi."""
+    return max(0.0, min(1.0, float(nilai)))
 
 
 def pendekkan_label(labels: list) -> list:
