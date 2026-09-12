@@ -1634,7 +1634,12 @@ def add_stacked_proportion_bar(slide, x, y, w, values, colors=None, height=Inche
         seg.line.color.rgb = WHITE
         seg.line.width = Pt(1)
         _no_shadow(seg)
-        if labels and frac >= 0.08:
+        # AMBANG 8% DIGANTI PENGUKURAN - kembaran perbaikan di export_pdf.py. "8% lebar"
+        # tidak melihat geometri: 8% dari kolom 4.09in cuma 0.33in, sementara "Mendekati
+        # Target" butuh ~1in, jadi kotak teks tetangga saling menimpa. Label dipasang hanya
+        # kalau teksnya MUAT di lebar segmennya sendiri.
+        _teks_in = len(str(dd_labels[i] if dd_labels else "")) * (7.5 / 72.0) * 0.62
+        if labels and _teks_in <= seg_w_in:
             lbl_box = slide.shapes.add_textbox(Inches(cur_x_in), Inches(top_in), Inches(seg_w_in), Inches(label_h_in))
             ltf = lbl_box.text_frame
             ltf.word_wrap = False
@@ -1802,12 +1807,16 @@ def add_bar_line_chart(slide, x, y, cx, cy, categories, values, cumulative=None,
         if max_cum:
             cy_in = y_in + value_h_in + plot_h_in - ((cumulative[i] / max_cum) * (plot_h_in - 0.05))
             points.append((x_in + i * col_w_in + col_w_in / 2, cy_in))
-        if val:
+        # Angka hanya digambar kalau MUAT di lebar kolomnya - kembaran perbaikan di
+        # export_pdf.py. Dgn 12 periode di kolom 4in tiap kolom cuma ~0.34in; angka berpemisah
+        # ribuan meluber dari kotaknya & menimpa tetangganya (PowerPoint tidak memotong).
+        _tval = _fmt_num(val) if val else ""
+        if val and len(_tval) * 7 * 0.62 / 72.0 <= col_w_in:
             val_box = slide.shapes.add_textbox(
                 Inches(x_in + i * col_w_in), Inches(max(by_in - value_h_in, y_in)),
                 Inches(col_w_in), Inches(value_h_in))
             vp = val_box.text_frame.paragraphs[0]
-            vp.text = _fmt_num(val)
+            vp.text = _tval
             vp.alignment = PP_ALIGN.CENTER
             _set_font(vp, BODY_FONT, Pt(7), color=TEXT_DARK)
         label_box = slide.shapes.add_textbox(Inches(x_in + i * col_w_in), Inches(y_in + value_h_in + plot_h_in + 0.02), Inches(col_w_in), Inches(label_h_in))

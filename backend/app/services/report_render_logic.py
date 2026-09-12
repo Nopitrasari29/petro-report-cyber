@@ -665,7 +665,17 @@ def _tinggi_baris_bar(tile: dict) -> float:
     if not labels:
         return _CHART_ROW_H_IN
     baris = max(wrap_line_count(l, _BAR_LABEL_COL_W_PX, _BAR_LABEL_PT, 0.80) for l in labels)
-    return max(_CHART_ROW_H_IN, baris * (_BAR_LABEL_PT * 1.18 / 72.0) + 14.0 / 72.0)
+    # DIKALIBRASI DARI RENDER NYATA, bukan diturunkan dari font-size. Jarak antar baris batang
+    # diukur pada hasil PDF laporan 158 (label satu baris): 32.0pt = 0.444in, konsisten di
+    # beberapa chart & halaman. Rumus lama menghasilkan 0.38in - meleset 0.064in per baris,
+    # dan pada 8 baris itu cukup membuat label terakhir chart menyentuh kotak kartu di
+    # bawahnya (terukur: label terakhir berakhir 418pt, kotak kartu mulai 418pt).
+    # Angka 0.444in berlaku utk label SATU baris; label yang membungkus n baris menambah
+    # tinggi teksnya sendiri.
+    _satu_baris_in = 0.444
+    if baris <= 1:
+        return max(_CHART_ROW_H_IN, _satu_baris_in)
+    return max(_CHART_ROW_H_IN, _satu_baris_in + (baris - 1) * (_BAR_LABEL_PT * 1.18 / 72.0))
 
 
 # Teks kaki legenda kedua bentuk ternormalisasi - SATU sumber, dipakai perhitungan tinggi
@@ -1030,6 +1040,24 @@ def _layout_dashboard_column_content(
         _ih = _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN + _NESTED_CARD_SUBITEM_GAP_IN
         _kartu_baris_min = _NESTED_CARD_HEADER_H_IN + 0.20 + _ms * _ih
     if has_chart and chart_h > 0:
+        # ---- CHART DULU, KARTU DAPAT SISANYA -----------------------------------------
+        # Komentar di atas menyebut "arah dibalik: chart melapor duluan", TAPI kartu tetap
+        # memesan satu baris penuh SEBELUM chart. Kalau baris itu dalam (13 sub-item ->
+        # 5.45in di laporan 186), chart dapat 0.00in & DILEWATI - lalu kartunya pun tidak
+        # muat, jadi kolomnya kosong dan dibuang seluruhnya. Dua-duanya kalah.
+        # Sekarang: kalau satu baris kartu tidak bisa hidup berdampingan dgn chart, KARTU
+        # yang dilepas selama chart-nya sendiri muat. Kedalaman kartu tidak disentuh.
+        _min_mutlak_awal = (chart_min_mutlak_in(tile, col_w_in, is_en) if tile
+                            else _DASH_COLUMN_CHART_MIN_H_IN)
+        _ruang_total = body_h_in - note_h - gap
+        if cards and (_ruang_total - _kartu_baris_min - 0.08) < _min_mutlak_awal <= _ruang_total:
+            logger.info("tata letak kolom: baris kartu butuh %.2fin, tidak muat bersama chart "
+                        "%r (minimal %.2fin dari %.2fin) - KARTU dilepas, chart dipertahankan",
+                        _kartu_baris_min, (tile or {}).get("tile_kind"),
+                        _min_mutlak_awal, _ruang_total)
+            cards = []
+            _kartu_baris_min = 0.0
+            gap = 0.0
         _ruang_chart = body_h_in - note_h - gap - (_kartu_baris_min + 0.08 if cards else 0.0)
         if chart_h > _ruang_chart:
             _min_mutlak = (chart_min_mutlak_in(tile, col_w_in, is_en) if tile
@@ -1077,15 +1105,35 @@ def _layout_dashboard_column_content(
                 logger.info("tata letak kolom: chart %r dipendekkan %.2fin supaya 1 baris kartu muat",
                             (tile or {}).get("tile_kind"), kurang)
             sisa_kartu = max(0.0, body_h_in - chart_h - note_h - gap - 0.08)
-            rows_fit = max(1, int((sisa_kartu + _NESTED_CARD_ROW_GAP_IN) / (row_need + _NESTED_CARD_ROW_GAP_IN)))
-        grid = _layout_nested_card_grid(len(cards), col_w_in, max_rows=min(3, rows_fit))
-        rows = grid["rows"] or [len(cards)]
-        muat = sum(rows)
-        if muat < len(cards):
-            logger.info("tata letak kolom: %d dari %d kartu tidak digambar (ruang tersisa %.2fin)",
-                        len(cards) - muat, len(cards), sisa_kartu)
-        cards = cards[:muat]
-        cards_h = min(sisa_kartu, len(rows) * row_need + (len(rows) - 1) * _NESTED_CARD_ROW_GAP_IN)
+            rows_fit = int((sisa_kartu + _NESTED_CARD_ROW_GAP_IN) / (row_need + _NESTED_CARD_ROW_GAP_IN))
+        if rows_fit < 1:
+            # BUG NYATA DIPERBAIKI (terukur di 186, kolom berkartu 13 sub-item): dulu di sini
+            # ada `max(1, ...)` yang MEMAKSA satu baris kartu digambar walau tidak muat, lalu
+            # tingginya dijepit `min(sisa_kartu, ...)` - baris yang butuh 5.45in digambar ke
+            # dalam 4.18in. Kartunya tetap digambar seukuran ISINYA, jadi ia menembus kotaknya
+            # & menabrak apa pun di bawahnya. Itu pemotongan diam dalam bentuk lain.
+            #
+            # Kedalaman kartu TIDAK dikurangi (aturan tetap: kurangi jumlah kartu, jangan
+            # kedalamannya). Kalau satu baris pun tidak muat, kartunya TIDAK digambar sama
+            # sekali - kolomnya berisi chart + catatan, dan itu jujur.
+            logger.info("tata letak kolom: %d kartu TIDAK digambar - satu baris butuh %.2fin, "
+                        "ruang tersisa %.2fin (kedalaman kartu tidak dikurangi)",
+                        len(cards), row_need, sisa_kartu)
+            cards = []
+            rows = []
+            cards_h = 0.0
+        else:
+            grid = _layout_nested_card_grid(len(cards), col_w_in, max_rows=min(3, rows_fit))
+            rows = grid["rows"] or [len(cards)]
+            muat = sum(rows)
+            if muat < len(cards):
+                logger.info("tata letak kolom: %d dari %d kartu tidak digambar (ruang tersisa %.2fin)",
+                            len(cards) - muat, len(cards), sisa_kartu)
+            cards = cards[:muat]
+            # TIDAK dijepit ke sisa_kartu: tinggi yang dilaporkan harus tinggi yang BENAR2
+            # dibutuhkan baris-baris ini, supaya pemanggil tahu kalau ada yang meluber -
+            # bukan angka yang terlihat muat padahal tidak.
+            cards_h = len(rows) * row_need + (len(rows) - 1) * _NESTED_CARD_ROW_GAP_IN
 
     cards_y = chart_h + gap if (has_chart and cards) else 0.0
     note_y = cards_y + cards_h + 0.08 if cards else chart_h
@@ -1921,6 +1969,19 @@ def _r_radar(sig):
                 _kuat((max(ind) - min(ind) - _SIG_RADAR_MIN_SEBARAN) / 75.0))
 
 
+def _r_bar_deret_waktu(sig):
+    # BARIS TABEL YANG HILANG (kelalaian di tabel tanda tangan, ditemukan lewat 183): sumbu
+    # waktu + SATU metrik. Bentuk data paling umum, dan sebelum ini tidak punya jawaban sama
+    # sekali - jatuh ke ranked_bar yang mengurutkan ulang tanggal menurut nilai.
+    # Batang kronologis TANPA deret garis: renderer bar_garis yang sudah ada menggambar
+    # batang saja kalau deret kumulatifnya None (lihat _bar_line_chart_svg), jadi tidak ada
+    # renderer baru yang perlu dibangun.
+    if sig.get("sumbu_waktu") and (sig.get("n_satuan_berbeda") or 0) == 1:
+        n = len(sig.get("values") or [])
+        return ("bar_deret_waktu", "sumbu waktu, %d periode, 1 satuan" % n,
+                _kuat(min(n, 12) / 12.0))
+
+
 def _r_bar_garis(sig):
     # (tanggal x metrik): batang utk nilai absolut per periode, garis utk satuan KEDUA
     # (mis. persentase/laju). TIDAK butuh dua metrik berpasangan - koreksi user: syaratnya
@@ -1931,6 +1992,28 @@ def _r_bar_garis(sig):
 
 def _r_matriks(sig):
     sel = sig.get("sel_silang")
+    # LEBAR KOLOM MASUK TANDA TANGAN (bug nyata, uji tumpang-tindih laporan 152/153/157/164):
+    # kepala kolom heatmap digambar di tengah tiap sel. Sel selebar ~0.2in tidak bisa memuat
+    # "Mendekati Target", jadi kepala kolom tetangga saling menimpa (44% tertutup) - dan
+    # memendekkan labelnya tidak boleh. Jadi matriks BUKAN kandidat kalau kepala kolomnya
+    # tidak muat di selnya sendiri; pasangannya bebas dipakai bentuk lain.
+    _lk = sig.get("label_kolom") or []
+    _lb = sig.get("label_baris") or []
+    if sel and _lk:
+        # Ukuran sel dihitung dgn RUMUS YANG SAMA PERSIS dgn renderer (lihat cabang
+        # time_heatmap di _gambar_chart): cell = max(16, min(cell_w, cell_h)). Memakai lebar
+        # saja MELESET - dgn banyak baris yang menentukan justru tingginya, dan itu yang
+        # membuat gerbang versi pertama saya lolos padahal selnya cuma ~0.24in.
+        _w = float(sig.get("kolom_w_in") or _KOLOM_ACUAN_W_IN)
+        _h_in = max(_CHART_ROW_H_IN * 0.62 * max(1, len(_lb)) + 0.30, 1.2)
+        _cw = ((_w - 2 * _CHART_MARGIN_IN) * 96 - 46) / max(1, len(_lk))
+        _ch = (_h_in * 96 * 0.85 - 16) / max(1, len(_lb))
+        _sel_in = max(16.0, min(_cw, _ch)) / 96.0
+        _terpanjang = max((len(x) for x in _lk), default=0)
+        # 5.2pt = ukuran font terkecil yang dipakai renderer heatmap; 0.62 faktor lebar
+        # rata-rata karakter, sama dgn pengukur lebar lain di berkas ini.
+        if _terpanjang * (5.2 / 72.0) * 0.62 > _sel_in:
+            return None
     if sel and sel <= _SIG_MATRIKS_MAKS_SEL:
         return ("matriks", "2 kategori, %d sel" % sel, _kuat(1.0 - sel / float(_SIG_MATRIKS_MAKS_SEL)))
 
@@ -1953,6 +2036,10 @@ def _r_grouped_bar_ternorm(sig):
 
 
 def _r_stacked(sig):
+    # Gerbang segmen-bisa-dinamai, sama persis dgn yang dipakai perencana.
+    if _segmen_lolos(sig, "metric_mix", None) < 2:
+        return None
+
     # bagian-dari-total DAN rasio antar komponen masih sebanding. Kedua field kini dibawa
     # oleh jenis pasangan yang sama (lihat _semua_kandidat) - sebelumnya tidak pernah
     # keduanya sekaligus, jadi aturan ini MUSTAHIL menyala.
@@ -1965,7 +2052,48 @@ def _r_stacked(sig):
                 _kuat(1.0 - ras / _SIG_RASIO_SEBANDING))
 
 
+# JARAK KOLOM ADA DUA KONSTANTA untuk hal yang SAMA: _DASH_COL_GAP_IN = 0.42 di berkas ini
+# dan _DASH_COLS_GAP_IN = 0.28 di KEDUA exporter - dan yang benar-benar menentukan lebar
+# kolom tergambar adalah yang di exporter. Memakai yang salah membuat lebar acuan meleset
+# 0.09in. Nilai exporter dipakai di sini & diberi nama sendiri sampai duplikasinya
+# dibereskan; JANGAN pakai _DASH_COL_GAP_IN untuk perhitungan lebar kolom.
+_DASH_COLS_GAP_IN = 0.28
+
+# Kolom TERSEMPIT yang benar-benar terjadi: 3 topik/halaman.
+_KOLOM_ACUAN_W_IN = (13.333 - 2 * _DASH_MARGIN_X_IN - _DASH_COLS_GAP_IN * 2) / 3.0
+
+
+def _segmen_lolos(sig, tile_kind: str, chart_style: str | None = None) -> int:
+    """Berapa segmen yang bisa DINAMAI, dihitung dgn fungsi & kotak yang PERSIS sama dgn
+    yang dipakai perencana tata letak (_layout_dashboard_column_content).
+
+    KOREKSI USER: syarat "minimal 2 segmen lolos ambang label" dulu hidup HANYA sebagai
+    pemeriksaan saat render. Akibatnya bentuk bersegmen terpilih lebih dulu, lalu dilewati,
+    lalu KOLOMNYA ikut dibuang - dan pasangannya hangus padahal bentuk lain mungkin cocok
+    (terukur: 183 & 165 memburuk dari 0 ke 2 kolom dibuang). Sekarang syarat yang SAMA
+    dinilai di tanda tangan: satu angka, dua pemakai - disiplin yang sama seperti treemap."""
+    v = [float(x or 0) for x in (sig.get("values") or [])]
+    if not v:
+        return 0
+    w = float(sig.get("kolom_w_in") or _KOLOM_ACUAN_W_IN)
+    semu = {"tile_kind": tile_kind, "labels": sig.get("labels") or [], "values": v}
+    if chart_style:
+        semu["chart_style"] = chart_style
+    h = chart_min_height_in(semu, w)
+    gw = max(0.5, w - 2 * _CHART_MARGIN_IN)
+    gh = max(0.4, h - 2 * _CHART_MARGIN_IN)
+    return sum(1 for ok in segmen_bisa_dinamai(v, gw, gh) if ok)
+
+
 def _r_treemap(sig):
+    # Gerbang segmen-bisa-dinamai, sama persis dgn yang dipakai perencana.
+    if _segmen_lolos(sig, "metric_share", None) < 2:
+        return None
+    # Bentuk ini MENGURUTKAN ULANG menurut besaran. Di kolom yang urutannya bermakna
+    # (tanggal, skala ordinal) itu menghancurkan makna sumbunya - ditolak sejak kandidat,
+    # supaya pasangannya bebas dipakai bentuk yang menghormati urutan.
+    if sig.get("urut_bermakna"):
+        return None
     v = [float(x or 0) for x in (sig.get("values") or [])]
     if not v or not sum(v):
         return None
@@ -1981,6 +2109,14 @@ def _r_treemap(sig):
 
 
 def _r_donut(sig):
+    # Gerbang segmen-bisa-dinamai, sama persis dgn yang dipakai perencana.
+    if _segmen_lolos(sig, "custom_topic", "donut") < 2:
+        return None
+    # Bentuk ini MENGURUTKAN ULANG menurut besaran. Di kolom yang urutannya bermakna
+    # (tanggal, skala ordinal) itu menghancurkan makna sumbunya - ditolak sejak kandidat,
+    # supaya pasangannya bebas dipakai bentuk yang menghormati urutan.
+    if sig.get("urut_bermakna"):
+        return None
     v = sig.get("values") or []
     if sig.get("bagian_dari_total") and 3 <= len(v) <= 6:
         return ("donut", "%d nilai, bagian dari satu total" % len(v),
@@ -1988,6 +2124,11 @@ def _r_donut(sig):
 
 
 def _r_ranked_bar(sig):
+    # Bentuk ini MENGURUTKAN ULANG menurut besaran. Di kolom yang urutannya bermakna
+    # (tanggal, skala ordinal) itu menghancurkan makna sumbunya - ditolak sejak kandidat,
+    # supaya pasangannya bebas dipakai bentuk yang menghormati urutan.
+    if sig.get("urut_bermakna"):
+        return None
     v = [float(x or 0) for x in (sig.get("values") or [])]
     if not v or not max(v):
         return None
@@ -1997,6 +2138,11 @@ def _r_ranked_bar(sig):
 
 
 def _r_ranked_bar_ternorm(sig):
+    # Bentuk ini MENGURUTKAN ULANG menurut besaran. Di kolom yang urutannya bermakna
+    # (tanggal, skala ordinal) itu menghancurkan makna sumbunya - ditolak sejak kandidat,
+    # supaya pasangannya bebas dipakai bentuk yang menghormati urutan.
+    if sig.get("urut_bermakna"):
+        return None
     v = [float(x or 0) for x in (sig.get("values") or [])]
     if not v or not max(v):
         return None
@@ -2011,7 +2157,7 @@ def _r_scatter(sig):
                 _kuat((sig["n_baris"]) / 60.0))
 
 
-_ATURAN_BENTUK = (_r_radar, _r_bar_garis, _r_matriks, _r_grouped_bar, _r_grouped_bar_ternorm,
+_ATURAN_BENTUK = (_r_radar, _r_bar_deret_waktu, _r_bar_garis, _r_matriks, _r_grouped_bar, _r_grouped_bar_ternorm,
                   _r_stacked, _r_treemap, _r_donut, _r_ranked_bar, _r_ranked_bar_ternorm,
                   _r_scatter)
 
@@ -2045,6 +2191,51 @@ def _kolom_identifier(s) -> bool:
     return len(beda) == 1 and float(beda[0]) != 0.0
 
 
+# Kosakata ordinal yang URUTANNYA BERMAKNA. Disusun dari pengukuran, bukan dikarang: dari 85
+# kolom berjenis status di 133 laporan, 35 memakai skala ordinal (20x Di Bawah/Mendekati/
+# Tercapai, 15x Normal/Warning/Critical). Sisanya kategori sejajar & TIDAK ditandai - menandai
+# terlalu banyak sama merugikannya: ia membuang bentuk yang sah (donut untuk kategori sejajar).
+_URUTAN_ORDINAL = (
+    ("rendah", "sedang", "menengah", "tinggi", "kritis"),
+    ("low", "medium", "moderate", "high", "critical"),
+    ("normal", "warning", "critical"),
+    ("info", "low", "medium", "high", "critical"),
+    ("di bawah target", "mendekati target", "tercapai"),
+    ("below target", "approaching target", "achieved"),
+    ("q1", "q2", "q3", "q4"),
+    ("tw1", "tw2", "tw3", "tw4"),
+    ("jan", "feb", "mar", "apr", "mei", "jun", "jul", "agu", "sep", "okt", "nov", "des"),
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"),
+    ("senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu"),
+    ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"),
+)
+
+
+def urutan_ordinal(nilai: list) -> list | None:
+    """Urutan BENAR dari nilai-nilai kolom kalau kolom ini ordinal; None kalau tidak.
+
+    Ordinal = urutannya membawa makna (Rendah < Sedang < Tinggi). Mengurutkannya ulang
+    menurut besaran angka MENGHANCURKAN makna itu - sama seperti mengurutkan tanggal menurut
+    nilai. Syaratnya ketat: SELURUH nilai kolom harus ada di SATU kosakata. Kalau satu saja
+    di luar, kolomnya bukan ordinal (mis. 'Dalam Proses/Dibatalkan/Menunggu/Selesai' - itu
+    tahapan alur, bukan skala, dan donut di atasnya tetap sah)."""
+    bersih = [str(x).strip().lower() for x in nilai if str(x).strip()]
+    if len(bersih) < 2:
+        return None
+    for kosakata in _URUTAN_ORDINAL:
+        posisi = {}
+        for v in bersih:
+            cocok = [i for i, k in enumerate(kosakata) if v == k or v.startswith(k)]
+            if not cocok:
+                posisi = None
+                break
+            posisi[v] = cocok[0]
+        if posisi and len(set(posisi.values())) == len(posisi):
+            asli = {str(x).strip().lower(): x for x in nilai}
+            return [asli[v] for v in sorted(posisi, key=posisi.get)]
+    return None
+
+
 def profil_kolom(parsed_data: list) -> dict:
     """Profil kolom mentah, dipilah jadi KATEGORI / METRIK / TANGGAL / IDENTIFIER / TURUNAN.
 
@@ -2056,7 +2247,7 @@ def profil_kolom(parsed_data: list) -> dict:
     """
     if not parsed_data:
         return {"df": None, "kategori": [], "metrik": [], "turunan": [], "tanggal": [],
-                "identifier": [], "n_baris": 0}
+                "identifier": [], "satuan": {}, "urutan_bermakna": {}, "n_baris": 0}
     df = pd.DataFrame(parsed_data)
     # PAKAI PENGENALAN ANGKA YANG SUDAH ADA, jangan menulis sendiri. _coerce_indo_numeric_columns
     # mengenali angka format Indonesia ("40.000.000" -> 40000000) & satuannya (Rp / %). Versi
@@ -2067,6 +2258,7 @@ def profil_kolom(parsed_data: list) -> dict:
     # Fungsinya SUDAH terjangkau dari modul ini (lihat impor data_profiler di atas); tidak
     # ada penghalang struktur - jalur baru ini yang melewatinya. Kalau butuh pengenalan angka
     # di tempat lain, PANGGIL fungsi itu, jangan salin isinya.
+    _satuan = {}
     try:
         df, _satuan = _coerce_indo_numeric_columns(df)
     except Exception:
@@ -2106,8 +2298,22 @@ def profil_kolom(parsed_data: list) -> dict:
                    for komb in itertools.combinations(lain, n)):
                 turunan.append(c)
                 break
+    # ---- KOLOM YANG URUTANNYA BERMAKNA ----------------------------------------------
+    # Tanggal SELALU masuk; kategori masuk kalau nilainya skala ordinal (lihat urutan_ordinal).
+    # Bentuk yang MENGURUTKAN ULANG menurut besaran (ranked_bar, treemap, donut) menolak kolom
+    # bertanda ini: sumbu berisi tanggal/tingkat yang diacak menurut nilai bukan chart yang
+    # kurang tepat, itu chart yang BERBOHONG - pembaca menyimpulkan urutan yang digambar
+    # adalah urutan sebenarnya.
+    urutan = {}
+    for c in tanggal:
+        urutan[c] = None  # kronologis; urutannya dari nilai kolomnya sendiri
+    for c in kategori:
+        u = urutan_ordinal(list(df[c].dropna().astype(str).unique()))
+        if u:
+            urutan[c] = u
     return {"df": df, "kategori": kategori, "tanggal": tanggal, "identifier": identifier,
             "turunan": turunan, "metrik": [c for c in metrik if c not in turunan],
+            "satuan": _satuan or {}, "urutan_bermakna": urutan,
             "n_baris": len(df)}
 
 
@@ -2131,7 +2337,7 @@ def _bagian_data(df):
     return [(v, df[df[_KOLOM_SECTION].astype(str) == v]) for v in nilai]
 
 
-def _semua_kandidat(parsed_data: list) -> list:
+def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
     """Nilai SEMUA pasangan terhadap SELURUH tabel tanda tangan - tanpa berhenti di tengah.
 
     KOREKSI USER: versi sebelumnya menilai pasangan berurutan sampai KUOTA habis, jadi
@@ -2139,6 +2345,7 @@ def _semua_kandidat(parsed_data: list) -> list:
     kualitas. Memindahkan kuota per jenis cuma memindahkan tempat urutan itu menggigit
     (terukur: 183 turun dari 8 keputusan jadi 2 padahal pasangannya masih banyak).
     Sekarang tidak ada kuota sama sekali di tahap ini."""
+    kolom_w_in = float(kolom_w_in or _KOLOM_ACUAN_W_IN)
     prof = profil_kolom(parsed_data)
     df = prof.get("df")
     if df is None or df.empty:
@@ -2156,7 +2363,7 @@ def _semua_kandidat(parsed_data: list) -> list:
         _hasil = []
         _metrik_bersama = [m for m in mets if all(g[m].notna().any() for _, g in _bagian)]
         for _nama, _g in _bagian:
-            for k in _semua_kandidat(_g.to_dict("records")):
+            for k in _semua_kandidat(_g.to_dict("records"), kolom_w_in):
                 k["pasangan"] = tuple(list(k["pasangan"]) + ["@" + str(_nama)[:18]])
                 _hasil.append(k)
         for m in _metrik_bersama:
@@ -2165,6 +2372,7 @@ def _semua_kandidat(parsed_data: list) -> list:
             if len(g) < 2:
                 continue
             sig = {"n_baris": len(df), "kategori": _KOLOM_SECTION, "metrik": [m],
+                   "kolom_w_in": kolom_w_in,
                    "labels": [str(x) for x in g.index], "values": [float(v) for v in g.tolist()],
                    "keterisian": float(df[m].notna().mean()),
                    "bagian_dari_total": True, "rasio_metrik": None, "sel_silang": None}
@@ -2177,9 +2385,12 @@ def _semua_kandidat(parsed_data: list) -> list:
         return _hasil
 
     for a, b in itertools.combinations(kats, 2):
-        sel = df[a].astype(str).nunique() * df[b].astype(str).nunique()
+        _la = [str(x) for x in df[a].astype(str).unique()]
+        _lb = [str(x) for x in df[b].astype(str).unique()]
+        sel = len(_la) * len(_lb)
         kand.append(((a, b), {"n_baris": prof["n_baris"], "kategori": a, "sel_silang": sel,
-                              "metrik": [], "labels": [], "values": []}))
+                              "metrik": [], "labels": [], "values": [],
+                              "label_baris": _la, "label_kolom": _lb}))
     for kat in kats:
         for ma, mb in itertools.combinations(mets, 2):
             ta = float(pd.to_numeric(df[ma], errors="coerce").sum() or 0)
@@ -2210,24 +2421,107 @@ def _semua_kandidat(parsed_data: list) -> list:
     # (tanggal x metrik) -> bar_garis. KOREKSI USER: syarat bar_garis dulu digantungkan pada
     # pasangan metrik-berpasangan, padahal bentuk ini menampilkan SATU deret terhadap WAKTU
     # dgn dua satuan (batang = nilai absolut, garis = persentase/laju). Tidak butuh dua metrik.
+    # ---- SUMBU WAKTU ----------------------------------------------------------------
+    # DUA BARIS, bukan satu. Versi sebelumnya cuma punya baris "tanggal + 2 satuan -> bar+garis"
+    # dan MEMAKSA n_satuan_berbeda=2 pada tiap pasangan tanggal, padahal satu metrik = satu
+    # satuan. Akibatnya "tanggal + SATU metrik" - bentuk data paling umum - tidak punya jawaban
+    # dan jatuh ke ranked_bar, yang MENGURUTKAN ULANG TANGGAL MENURUT NILAI. Itu bukan chart
+    # yang kurang tepat, itu chart yang berbohong soal kronologi.
+    # Urutan di sini KRONOLOGIS (diurutkan tanggal hasil parse, bukan string & bukan nilai).
+    _satuan = prof.get("satuan") or {}
+
+    def _unit(m):
+        return _satuan.get(m) or "jumlah"
+
+    def _ringkas_waktu(_t, kolom_agg: dict, lebar_in: float):
+        """Kelompokkan deret waktu ke butiran TERHALUS yang labelnya masih muat di `lebar_in`.
+
+        SATU implementasi untuk KEDUA jalur deret waktu (1 metrik & 2 satuan). Sempat cuma
+        dipasang di jalur 1 metrik, dan jalur bar_garis tetap memakai label harian mentah
+        ("03/01/2025 12:00") - 11 tumpang-tindih di laporan 152/153. Kembalikan (g, butiran)
+        atau (None, None) kalau per tahun pun tidak muat: bentuknya lalu BUKAN kandidat,
+        bukan labelnya yang dibuang.
+        """
+        def _muat(idx):
+            _w = max((len(str(x)) for x in idx), default=8) * (7.5 / 72.0) * 0.62
+            return len(idx) <= max(3, int(lebar_in / max(_w, 0.01)))
+
+        g0 = _t.groupby("k").agg(**kolom_agg).sort_values("d", na_position="last")
+        if _muat(g0.index):
+            return g0, "hari"
+        _gb = _t.dropna(subset=["d"]).copy()
+        for fmt, nama in (("%m/%Y", "bulan"), ("%Y", "tahun")):
+            if _gb.empty:
+                break
+            _gb["k"] = _gb["d"].dt.strftime(fmt)
+            gk = _gb.groupby("k").agg(**kolom_agg).sort_values("d", na_position="last")
+            if len(gk) >= 2 and _muat(gk.index):
+                return gk, nama
+        return None, None
+
     for tgl in prof["tanggal"]:
+        _dt = pd.to_datetime(df[tgl], errors="coerce", dayfirst=True)
         for met in mets:
-            g = df.groupby(df[tgl].astype(str))[met].sum().sort_values()
-            g = g[g > 0]
+            _t = pd.DataFrame({"k": df[tgl].astype(str), "d": _dt,
+                               "v": pd.to_numeric(df[met], errors="coerce")}).dropna(subset=["v"])
+            if len(_t) < 3:
+                continue
+            g, _granul = _ringkas_waktu(_t, dict(d=("d", "min"), v=("v", "sum")), kolom_w_in)
+            if g is None or len(g) < 3:
+                continue
+            g = g[g["v"] > 0]
             if len(g) < 3:
                 continue
             kand.append(((tgl, met), {
                 "n_baris": prof["n_baris"], "kategori": tgl, "metrik": [met],
-                "sumbu_waktu": True, "n_satuan_berbeda": 2,
-                "labels": [str(x) for x in g.index][:8],
-                "values": [float(v) for v in g.tolist()][:8],
+                "sumbu_waktu": True, "n_satuan_berbeda": 1, "urut_bermakna": True,
+                "granularitas": _granul,
+                "labels": [str(x) for x in g.index],
+                "values": [float(v) for v in g["v"].tolist()],
                 "keterisian": float(df[met].notna().mean()),
                 "bagian_dari_total": False, "rasio_metrik": None, "sel_silang": None}))
+        # tanggal + DUA metrik bersatuan BERBEDA -> batang (nilai) + garis (laju/persentase).
+        # "Berbeda" dibaca dari peta satuan hasil _coerce_indo_numeric_columns; metrik tanpa
+        # satuan dikenali dianggap "jumlah". Dua metrik bersatuan SAMA bukan kasus bar+garis -
+        # itu grouped_bar.
+        for ma, mb in itertools.combinations(mets, 2):
+            if _unit(ma) == _unit(mb):
+                continue
+            _t = pd.DataFrame({"k": df[tgl].astype(str), "d": _dt,
+                               "a": pd.to_numeric(df[ma], errors="coerce"),
+                               "b": pd.to_numeric(df[mb], errors="coerce")}).dropna(subset=["a", "b"])
+            if len(_t) < 3:
+                continue
+            g, _granul_g = _ringkas_waktu(
+                _t, dict(d=("d", "min"), a=("a", "sum"), b=("b", "sum")), kolom_w_in)
+            if g is None:
+                continue
+            g = g[g["a"] > 0]
+            if len(g) < 3:
+                continue
+            kand.append(((tgl, ma, mb), {
+                "n_baris": prof["n_baris"], "kategori": tgl, "metrik": [ma, mb],
+                "sumbu_waktu": True, "n_satuan_berbeda": 2, "urut_bermakna": True,
+                "granularitas": _granul_g,
+                "labels": [str(x) for x in g.index][:12],
+                "values": [float(v) for v in g["a"].tolist()][:12],
+                "deret_garis": [float(v) for v in g["b"].tolist()][:12],
+                "keterisian": float(min(df[ma].notna().mean(), df[mb].notna().mean())),
+                "bagian_dari_total": False, "rasio_metrik": None, "sel_silang": None}))
 
+    _urutan = prof.get("urutan_bermakna") or {}
     for kat in kats:
+        _urut_kat = _urutan.get(kat)
         for met in mets:
-            g = df.groupby(df[kat].astype(str))[met].sum().sort_values(ascending=False)
-            g = g[g > 0][:8]
+            g = df.groupby(df[kat].astype(str))[met].sum()
+            g = g[g > 0]
+            if _urut_kat:
+                # Kolom ordinal: urutkan menurut SKALANYA (Rendah->Tinggi), bukan menurut
+                # besaran. Nilai di luar kosakata diletakkan di belakang, bukan dibuang.
+                _pos = {str(v): i for i, v in enumerate(_urut_kat)}
+                g = g.reindex(sorted(g.index, key=lambda x: (_pos.get(str(x), 10**6), str(x))))[:12]
+            else:
+                g = g.sort_values(ascending=False)[:8]
             if len(g) < 2:
                 continue
             _terisi_frac = float(df[met].notna().mean())
@@ -2236,10 +2530,14 @@ def _semua_kandidat(parsed_data: list) -> list:
                 "n_baris": prof["n_baris"], "kategori": kat, "metrik": [met],
                 "labels": pendekkan_label([str(x) for x in g.index]),
                 "values": [float(v) for v in g.tolist()],
+                "urut_bermakna": bool(_urut_kat),
                 "bagian_dari_total": True, "rasio_metrik": None, "sel_silang": None}))
 
     hasil = []
     for pasangan, sig in kand:
+        # LEBAR KOLOM masuk tanda tangan. Bentuk yang butuh kotak lebih besar dari yang
+        # tersedia bukan kandidat - jadi pasangannya bisa dipakai bentuk lain, bukan hangus.
+        sig.setdefault("kolom_w_in", kolom_w_in)
         # SATU PASANGAN -> SATU KANDIDAT PER BENTUK YANG COCOK, bukan cabang pertama saja.
         cocok = bentuk_yang_cocok(sig)
         if not cocok:
@@ -2252,7 +2550,8 @@ def _semua_kandidat(parsed_data: list) -> list:
         for bentuk, alasan, kekuatan in cocok:
             hasil.append({"pasangan": pasangan, "bentuk": bentuk, "alasan": alasan,
                           "kekuatan": round(kekuatan * (0.5 + 0.5 * _isi), 3),
-                          "keterisian": round(_isi, 2),
+                          "keterisian": round(_isi, 2), "deret_garis": sig.get("deret_garis"),
+                          "granularitas": sig.get("granularitas") or "",
                           "labels": sig.get("labels") or [], "values": sig.get("values") or []})
     return hasil
 
@@ -2386,6 +2685,43 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                     f"sampai {_num(max(t_['count'] for t_ in titik))}.",
                     f"{len(titik)} {kat} plotted; {ma} ranges {_num(min(t_['count'] for t_ in titik))} "
                     f"to {_num(max(t_['count'] for t_ in titik))}.")}
+    if bentuk == "bar_deret_waktu":
+        # Jendela waktu DISEBUT: kalau periode lama dipangkas supaya labelnya muat, pembaca
+        # harus tahu ini bukan seluruh rentang data. Pemangkasan yang tidak disebut = isi
+        # hilang tanpa penanda, kelas yang sama dgn segmen tanpa "Lainnya".
+        _gr = str(keputusan.get("granularitas") or "hari")
+        _sat = {"hari": ("hari", "days"), "bulan": ("bulan", "months"),
+                "tahun": ("tahun", "years")}.get(_gr, ("periode", "periods"))
+        _jendela_id = f"{len(labels)} {_sat[0]} ({labels[0]}-{labels[-1]})" if labels else ""
+        _jendela_en = f"{len(labels)} {_sat[1]} ({labels[0]}-{labels[-1]})" if labels else ""
+        # Batang kronologis TANPA garis kumulatif. Urutannya sudah kronologis sejak kandidat
+        # (lihat _semua_kandidat) - JANGAN diurutkan ulang di sini. cumulative=None membuat
+        # renderer bar_garis yang sudah ada menggambar batang saja.
+        if len(labels) < 2:
+            return None
+        return {"tile_kind": "trend_chart",
+                "kicker": _judul("TREN & POLA", "TRENDS & PATTERNS"),
+                "title": _judul(f"{pasangan[-1]} per periode", f"{pasangan[-1]} over time"),
+                "chart": {"type": "bar_line", "categories": [str(x) for x in labels],
+                          "values": values, "cumulative": None},
+                "caption": _ket(
+                    f"{_jendela_id} total {_num(sum(values))}; puncak "
+                    f"{labels[values.index(max(values))]} dengan {_num(max(values))}.",
+                    f"{_jendela_en} totals {_num(sum(values))}; peak "
+                    f"{labels[values.index(max(values))]} at {_num(max(values))}.")}
+    if bentuk == "bar_garis" and len(pasangan) >= 2:
+        # Deret garis dibawa keputusan (satuan KEDUA), bukan dihitung ulang kumulatif di sini.
+        _garis = keputusan.get("deret_garis")
+        if _garis and len(labels) >= 2:
+            return {"tile_kind": "trend_chart",
+                    "kicker": _judul("TREN & POLA", "TRENDS & PATTERNS"),
+                    "title": _judul(f"{pasangan[1]} & {pasangan[-1]} per periode",
+                                    f"{pasangan[1]} & {pasangan[-1]} over time"),
+                    "chart": {"type": "bar_line", "categories": [str(x) for x in labels],
+                              "values": values, "cumulative": [float(x or 0) for x in _garis]},
+                    "caption": _ket(
+                        f"{pasangan[1]} total {_num(sum(values))} sepanjang {len(values)} periode.",
+                        f"{pasangan[1]} totals {_num(sum(values))} across {len(values)} periods.")}
     if bentuk == "bar_garis" and len(pasangan) == 2:
         tgl, met = pasangan
         g = df.groupby(df[tgl].astype(str))[met].sum().sort_index()[:12]
@@ -2448,7 +2784,8 @@ _BOBOT_VARIASI = 0.6
 _AMBANG_KEKUATAN = 0.3
 
 
-def rencana_chart(parsed_data: list, maks: int | None = None) -> list:
+def rencana_chart(parsed_data: list, maks: int | None = None,
+                  kolom_w_in: float | None = None) -> list:
     """SKOR DULU, PILIH KEMUDIAN.
 
     skor = kekuatan syarat + bonus variasi (bentuk yang BELUM muncul di halaman ini).
@@ -2462,7 +2799,7 @@ def rencana_chart(parsed_data: list, maks: int | None = None) -> list:
     `maks` BUKAN kuota kualitas - batas fisik berapa chart muat di halaman ditangani
     perencana tata letak lewat chart_min_height. Default None = tanpa batas; sisa kandidat
     berskor tinggi jatuh ke halaman berikutnya."""
-    kand = [k for k in _semua_kandidat(parsed_data)
+    kand = [k for k in _semua_kandidat(parsed_data, kolom_w_in)
             if k["bentuk"] and k["kekuatan"] >= _AMBANG_KEKUATAN]
     terpakai_pasangan, dipakai_bentuk = set(), set()
     terpilih = []

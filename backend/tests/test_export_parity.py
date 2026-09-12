@@ -189,18 +189,6 @@ def _sample_report_ids(template_contains: str, limit: int | None) -> list:
         db.close()
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Topik yang DICENTANG pengguna bisa hilang karena aturan pelewatan tile: chart yang "
-        "tidak bermakna (mis. treemap dgn 7 dari 8 segmen di bawah ambang label) dilewati, "
-        "lalu kolomnya dibuang seluruhnya. Keduanya aturan yang benar; yang salah adalah "
-        "BENTUK CHART-nya dipilih tanpa membaca sebaran data. Diselesaikan oleh pemilih chart "
-        "berbasis TANDA TANGAN KOLOM (Bagian 1) - yang tidak akan memilih treemap untuk "
-        "sebaran seperti itu, jadi tile-nya tidak perlu dilewati & topiknya tetap ada. "
-        "HAPUS xfail ini setelah Bagian 1 selesai; penghapusannya syarat selesainya Bagian 1."
-    ),
-    strict=False,
-)
 def test_management_reports_render_every_tile_in_both_formats():
     report_ids = _sample_report_ids("management", MAX_REPORTS_PER_STYLE)
     failures = _run_parity_check(report_ids)

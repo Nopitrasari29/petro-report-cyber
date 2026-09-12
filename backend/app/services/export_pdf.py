@@ -385,7 +385,7 @@ def _vertical_bar_chart_html(categories, values, color=None, height_pt=90) -> st
     )
 
 
-def _stacked_proportion_bar_html(values, colors=None, height_px=46, labels=None) -> str:
+def _stacked_proportion_bar_html(values, colors=None, height_px=46, labels=None, w_in=4.0) -> str:
     """Alternatif visual KETIGA (selain _bar_chart_html/_donut_chart_svg) — satu batang
     penuh dibagi proporsional per kategori (gaya "100% stacked bar"). Segmen dibangun
     dari <table style="width:{pct}%"> BERJAJAR SATU BARIS (trik lebar-persen yang sama
@@ -410,7 +410,16 @@ def _stacked_proportion_bar_html(values, colors=None, height_px=46, labels=None)
                 f'<td style="width:{pct:.3f}%;background:{color};height:{height_px}px;'
                 f'font-size:1px;line-height:1px;">&nbsp;</td>'
             )
-            if labels and pct >= 8:
+            # AMBANG 8% DIGANTI PENGUKURAN (bug nyata, uji tumpang-tindih laporan
+            # 152/153/157/164): "8% lebar" tidak melihat geometri sama sekali - 8% dari kolom
+            # 4in cuma 0.32in, sementara "Mendekati Target" butuh ~1in. Labelnya tetap
+            # digambar & menimpa tetangganya (44% tertutup). Sekarang label dipasang hanya
+            # kalau teksnya MUAT di lebar segmennya sendiri, diukur dgn faktor lebar yang
+            # sama dipakai pengukur lain di berkas ini. Yang tidak muat dilewati - itu sudah
+            # jadi perilaku yang disengaja di fungsi ini, ambangnya saja yang salah.
+            _seg_in = (pct / 100.0) * float(w_in or 4.0)
+            _teks_in = len(str(dd_labels[i] if dd_labels else "")) * (7.5 / 72.0) * 0.62
+            if labels and _teks_in <= _seg_in:
                 label_divs.append(
                     f'<div style="position:absolute;left:{cum_pct + pct / 2:.3f}%;top:0;'
                     f'transform:translateX(-50%);text-align:center;white-space:nowrap;">'
@@ -609,15 +618,29 @@ def _bar_line_chart_svg(categories, values, cumulative=None, color=None, size_w=
         x = pad_l + i * col_w
         y = pad_t + (plot_h - bar_h)
         bars.append(f'<rect x="{x + col_w*0.18:.1f}" y="{y:.1f}" width="{col_w*0.64:.1f}" height="{bar_h:.1f}" fill="{bar_color}" rx="2" />')
-        if val:
+        # DUA BUG NYATA DIPERBAIKI di satu tempat (terukur lewat uji tumpang-tindih, laporan
+        # 164/157): (1) nilainya dicetak MENTAH - "1696.6100000000001" muncul apa adanya di
+        # laporan, sementara seluruh angka lain sudah lewat _fmt_num; (2) labelnya selalu
+        # digambar di tengah tiap batang tanpa memeriksa apakah muat - dgn 12 periode di kolom
+        # 4in, teks tetangga saling menimpa (84% tertutup). Sekarang: diformat, dan hanya
+        # digambar kalau lebarnya MUAT di kolomnya sendiri. Lebar teks diperkirakan dgn faktor
+        # yang sama yang dipakai pengukur lebar lain di berkas ini.
+        _teks_val = _fmt_num(val) if val else ""
+        _muat_val = _teks_val and (len(_teks_val) * 7.5 * 0.62) <= col_w * 0.98
+        if val and _muat_val:
             _bly = max(y - 4, 10)
             bar_label_ys.append(_bly)
-            bars.append(f'<text x="{x + col_w/2:.1f}" y="{_bly:.1f}" text-anchor="middle" font-size="7.5" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{val}</text>')
+            bars.append(f'<text x="{x + col_w/2:.1f}" y="{_bly:.1f}" text-anchor="middle" font-size="7.5" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(_teks_val)}</text>')
         else:
             bar_label_ys.append(None)
         if max_cum:
             cy = pad_t + plot_h - ((cumulative[i] / max_cum) * (plot_h - 4))
             points.append((x + col_w / 2, cy))
+        # KEPUTUSAN DIBALIK (uji label: gerbang "muat" di sini menghapus 12 dari 12 tanggal
+        # di laporan 180 & 183 - kehilangan DIAM, yang lebih buruk daripada tumpang tindih
+        # yang setidaknya terlihat). Label kategori SELALU digambar; yang dibatasi adalah
+        # JUMLAH PERIODE, di hulu saat kandidat dibentuk (lihat _semua_kandidat), supaya
+        # yang sampai ke sini memang sudah pasti muat.
         labels.append(f'<text x="{x + col_w/2:.1f}" y="{size_h - 6}" text-anchor="middle" font-size="7.5" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(cat)}</text>')
     line_html = dots = ""
     if points:
@@ -825,9 +848,19 @@ def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="
         parts.append(f'<rect x="{xa:.1f}" y="{ya:.1f}" width="{bar_w:.1f}" height="{ha:.1f}" fill="{ca}" rx="2" />')
         parts.append(f'<rect x="{xb:.1f}" y="{yb:.1f}" width="{bar_w:.1f}" height="{hb:.1f}" fill="{cb}" rx="2" />')
         if series_a[i]:
-            parts.append(f'<text x="{xa + bar_w/2:.1f}" y="{max(ya - 4, 10):.1f}" text-anchor="middle" font-size="{val_font}" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{series_a[i]}</text>')
+            # Sama dgn _bar_line_chart_svg: angka DIFORMAT (mentah "1696.6100000000001"
+            # pernah muncul apa adanya) & hanya digambar kalau MUAT di lebar batangnya,
+            # krn dua deret berdampingan membuat jaraknya separuh lebih sempit.
+            _ta = _fmt_num(series_a[i])
+            if len(_ta) * val_font * 0.62 <= bar_w * 1.8:
+                parts.append(f'<text x="{xa + bar_w/2:.1f}" y="{max(ya - 4, 10):.1f}" text-anchor="middle" font-size="{val_font}" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(_ta)}</text>')
         if series_b[i]:
-            parts.append(f'<text x="{xb + bar_w/2:.1f}" y="{max(yb - 4, 10):.1f}" text-anchor="middle" font-size="{val_font}" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{series_b[i]}</text>')
+            # Sama dgn _bar_line_chart_svg: angka DIFORMAT (mentah "1696.6100000000001"
+            # pernah muncul apa adanya) & hanya digambar kalau MUAT di lebar batangnya,
+            # krn dua deret berdampingan membuat jaraknya separuh lebih sempit.
+            _tb = _fmt_num(series_b[i])
+            if len(_tb) * val_font * 0.62 <= bar_w * 1.8:
+                parts.append(f'<text x="{xb + bar_w/2:.1f}" y="{max(yb - 4, 10):.1f}" text-anchor="middle" font-size="{val_font}" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(_tb)}</text>')
         parts.append(f'<text x="{gx + group_w/2:.1f}" y="{size_h - 6}" text-anchor="middle" font-size="{cat_font}" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(cat)}</text>')
     parts.append("</svg>")
     legend = (
@@ -940,6 +973,7 @@ def _scatter_bubble_html_fallback(points, x_key, y_key, color=None) -> str:
 
 
 def _scatter_bubble_svg(points, x_key="count", y_key="avg", size_key=None, color=None, size_w=340, size_h=200, x_label="", y_label="") -> str:
+    _label_terpasang: list = []
     """PERMINTAAN USER (tambah jenis visualisasi baru): titik per entitas (mis. tiap vendor)
     diposisikan berdasar 2 angka ASLI BERBEDA sekaligus (lihat
     data_profiler._compute_category_numeric_pairs) — genuinely beda drpd chart lain di
@@ -971,6 +1005,20 @@ def _scatter_bubble_svg(points, x_key="count", y_key="avg", size_key=None, color
             # BATASAN USER: label TIDAK dipotong - ukuran font-nya yang menyesuaikan panjang
             # label terpanjang (dihitung di _funnel_chart_svg), jadi nama utuh selalu tampil.
             short_label = label
+            # BUG NYATA DIPERBAIKI (uji tumpang-tindih, laporan 158/164/157): label titik
+            # digambar di ATAS tiap gelembung tanpa memeriksa tetangganya sama sekali. Dua
+            # entitas yang nilainya berdekatan -> label bertumpuk, 95% tertutup ("PKG" di
+            # balik "PKG-AS-25"). Label TIDAK dipotong (aturan tetap) - yang bertabrakan
+            # DILEWATI, krn nama separuh tertutup lebih buruk daripada nama yang tidak
+            # digambar: yang tertutup terbaca SALAH, yang absen cuma absen.
+            _lw = len(short_label) * 7 * 0.62
+            _kotak = (cx - _lw / 2, cy - r - 11, cx + _lw / 2, cy - r - 1)
+            _bentrok = any(not (_kotak[2] <= q[0] or q[2] <= _kotak[0]
+                                or _kotak[3] <= q[1] or q[3] <= _kotak[1])
+                           for q in _label_terpasang)
+            if _bentrok:
+                continue
+            _label_terpasang.append(_kotak)
             parts.append(
                 f'<text x="{cx:.1f}" y="{cy - r - 4:.1f}" text-anchor="middle" font-size="7" font-weight="700" '
                 f'fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(short_label)}</text>'
@@ -3407,7 +3455,8 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
                 chart_w_in = w_in
             elif _style == "stacked":
                 chart_html = _stacked_proportion_bar_html(_values, labels=_labels,
-                                                          height_px=max(40, int(avail_h_px * 0.22)))
+                                                          height_px=max(40, int(avail_h_px * 0.22)),
+                                                          w_in=w_in)
                 chart_w_in = w_in
             else:
                 chart_html = _bar_chart_html(_labels, _values, colors=[ctx.accent_main] * len(_values))
@@ -3461,7 +3510,8 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
             # komposisi antar metrik -> proporsi, jujur meski skalanya beda jauh
             chart_html = _stacked_proportion_bar_html(tile.get("values") or [],
                                                       labels=tile.get("labels") or [],
-                                                      height_px=max(44, int(avail_h_px * 0.24)))
+                                                      height_px=max(44, int(avail_h_px * 0.24)),
+                                                      w_in=w_in)
             chart_w_in = w_in
         elif kind == "metric_compare":
             size_w = int(avail_w_px * 0.9)
