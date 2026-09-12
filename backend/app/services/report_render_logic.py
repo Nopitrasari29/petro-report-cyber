@@ -25,6 +25,7 @@ import math
 import os
 import random
 import re
+import statistics
 import unicodedata
 
 import pandas as pd
@@ -348,6 +349,109 @@ def fmt_persen(bagian, total) -> str:
             return (teks if render_is_en() else teks.replace(".", ",")) + "%"
     _t = f"{p:.4f}"
     return (_t if render_is_en() else _t.replace(".", ",")) + "%"
+
+
+def catatan_agregat(items: list, n_digambar: int, unit: str, report,
+                    n_penuh: int | None = None, total_penuh: float | None = None,
+                    nilai_penuh: list | None = None) -> list:
+    """Catatan = agregat yang TIDAK BISA dibaca dari chart di kolom itu.
+
+    KOREKSI USER: versi sebelumnya mengambil `items[n_digambar : n_digambar+4]` - entitas yang
+    kebetulan TIDAK KEBAGIAN KARTU - lalu membacakannya dgn pola tetap "X mencatat N data
+    (P% dari total)". Template memilih fakta berdasarkan SISA TEMPAT DI HALAMAN, bukan
+    berdasarkan apa yang hilang dari chart. Hasilnya tiga kalimat berpola identik tentang
+    entitas terkecil, yang semuanya sudah tergambar di halaman yang sama.
+
+    Sekarang faktanya dipilih dari apa yang TIDAK TERLIHAT: cakupan yang tidak tergambar,
+    pemusatan, median & rentang, entitas bernilai nol, dan simpangan teratas thd median.
+    Semua angka dari agregasi yang sama dgn yang digambar - tidak ada AI di jalur ini.
+
+    PENYARING: kalimat yang cuma menyebut SATU entitas dan SATU angka yang sudah tergambar
+    di chart yang sama dibuang - catatan yang mengulang chart lebih buruk drpd tidak ada."""
+    _ien = is_english(report)
+    pasangan = [(str(a), float(b or 0)) for a, b in (items or [])]
+    nilai = [v for _, v in pasangan]
+    n = len(nilai)
+    if n < 3:
+        return []
+    total = sum(nilai)
+    if total <= 0:
+        return []
+    urut = sorted(nilai, reverse=True)
+    # POPULASI PENUH dipakai untuk median/rentang/pemusatan. `items` sudah dipotong top-N,
+    # dan median dari 8 teratas BUKAN median dari 32 entitas - dua penyebut berbeda di dua
+    # kalimat bersebelahan juga membingungkan pembaca.
+    _pop = [float(x or 0) for x in (nilai_penuh or [])] or nilai
+    _pop_urut = sorted(_pop, reverse=True)
+    _pop_n = len(_pop)
+    _pop_total = sum(_pop) or total
+    catatan = []
+
+    # R1 - CAKUPAN: berapa entitas yang TIDAK tergambar & berapa sumbangannya.
+    # Tidak bisa dibaca dari chart: chart cuma menampilkan yang tergambar. Populasi PENUH
+    # dibawa tile (n_penuh/total_penuh) - `items` sendiri SUDAH dipotong top-N, jadi
+    # menghitung dari situ saja akan selalu bilang "menampilkan semuanya".
+    _np = int(n_penuh or n)
+    _tp = float(total_penuh or total)
+    if _np > n_digambar > 0 and _tp > 0:
+        sisa_n = _np - n_digambar
+        sisa_v = max(0.0, _tp - sum(urut[:n_digambar]))
+        catatan.append(_L(
+            report,
+            f"Chart menampilkan {n_digambar} dari {_np} entitas; {sisa_n} sisanya menyumbang "
+            f"{_fmt_count(sisa_v, _ien)} {unit} ({fmt_persen(sisa_v, _tp)} dari total).",
+            f"The chart shows {n_digambar} of {_np} entities; the remaining {sisa_n} contribute "
+            f"{_fmt_count(sisa_v, _ien)} {unit} ({fmt_persen(sisa_v, _tp)} of the total).",
+        ))
+
+    # R2 - PEMUSATAN: berapa entitas paling sedikit yang sudah mencapai 80% total.
+    _kum, _n80 = 0.0, 0
+    for v in _pop_urut:
+        _kum += v
+        _n80 += 1
+        if _kum >= 0.8 * _pop_total:
+            break
+    if 0 < _n80 < _pop_n:
+        catatan.append(_L(
+            report,
+            f"{_n80} dari {_pop_n} entitas sudah mencakup {fmt_persen(_kum, _pop_total)} dari "
+            f"seluruh {unit}.",
+            f"{_n80} of {_pop_n} entities already account for {fmt_persen(_kum, _pop_total)} "
+            f"of all {unit}.",
+        ))
+
+    # R3 - SEBARAN: median & rentang. Chart top-N menyembunyikan keduanya.
+    med = statistics.median(_pop)
+    if _pop_n >= 5 and max(_pop) > min(_pop):
+        catatan.append(_L(
+            report,
+            f"Median {_fmt_count(med, _ien)} {unit} per entitas, rentang "
+            f"{_fmt_count(min(_pop), _ien)}-{_fmt_count(max(_pop), _ien)}.",
+            f"Median {_fmt_count(med, _ien)} {unit} per entity, ranging "
+            f"{_fmt_count(min(_pop), _ien)}-{_fmt_count(max(_pop), _ien)}.",
+        ))
+
+    # R4 - ENTITAS NOL: jumlahnya & sumbangan sisanya. Batang nol tak terlihat di chart.
+    nol = sum(1 for v in _pop if v <= 0)
+    if nol >= 2:
+        catatan.append(_L(
+            report,
+            f"{nol} dari {_pop_n} entitas tercatat 0 {unit}; {_pop_n - nol} sisanya "
+            f"menyumbang seluruh {_fmt_count(_pop_total, _ien)}.",
+            f"{nol} of {_pop_n} entities recorded 0 {unit}; the other {_pop_n - nol} "
+            f"contribute the entire {_fmt_count(_pop_total, _ien)}.",
+        ))
+
+    # R5 - SIMPANGAN: teratas berapa kali median. Rasio ini tidak tergambar di mana pun.
+    if med > 0 and max(_pop) / med >= 3 and nilai:
+        _nama_top = pasangan[nilai.index(max(nilai))][0]
+        catatan.append(_L(
+            report,
+            f"{_nama_top} {fmt_desimal(max(_pop) / med, 1, _ien)}x median seluruh entitas.",
+            f"{_nama_top} is {fmt_desimal(max(_pop) / med, 1, _ien)}x the median across all "
+            f"entities.",
+        ))
+    return catatan
 
 
 def _tile_rank_items(tile: dict) -> list | None:
@@ -2001,6 +2105,109 @@ def _kolom_identifier(s) -> bool:
     return len(beda) == 1 and float(beda[0]) != 0.0
 
 
+def subjek_seksi(sec: dict, kolom_tersedia: list) -> set:
+    """KOLOM yang jadi SUBJEK satu seksi - bukan bentuk chart-nya.
+
+    Seksi menentukan kolom ini membahas APA; tanda tangan data menentukan digambar BAGAIMANA.
+    Dua sumber, urut prioritas:
+      1. chart_source dari AI - AI memang SUDAH diminta menunjuk PASANGAN NAMA KOLOM (lihat
+         SECTIONS_BATCH_SYSTEM_PROMPT), jadi pemetaan seksi->kolom sudah ada & tinggal dipakai;
+      2. kalau tidak ada, nama kolom yang DISEBUT di judul/deskripsi/isi seksi - untuk judul
+         bebas yang ditentukan AI sendiri.
+    """
+    keluar = set()
+    cs = sec.get("chart_source")
+    if isinstance(cs, dict):
+        for k in ("category_col", "numeric_col"):
+            v = cs.get(k)
+            if not v:
+                continue
+            for kol in kolom_tersedia:
+                if _norm_col_name(kol) == _norm_col_name(v):
+                    keluar.add(kol)
+    if keluar:
+        return keluar
+    teks = " ".join(str(sec.get(k) or "") for k in ("title", "description", "content")).lower()
+    for kol in kolom_tersedia:
+        nama = str(kol).strip().lower()
+        if len(nama) >= 3 and nama in teks:
+            keluar.add(kol)
+    return keluar
+
+
+def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | None = None) -> tuple:
+    """Seksi memilih SUBJEK, tanda tangan memilih BENTUK.
+
+    KOREKSI USER atas instruksinya sendiri: melarang is_included menentukan BENTUK chart itu
+    benar, TAPI konsekuensinya centangan pengguna jadi tidak berpengaruh pada apa pun -
+    terukur: 9 seksi dicentang, 9 dikembalikan AI utuh, hanya 1 sampai ke laporan karena
+    seluruh daftar tile lama dibuang. Dua pertanyaan berbeda disamakan jadi satu.
+
+    Sekarang tiap seksi tercentang MENGKLAIM satu pasangan kolom yang jadi subjeknya, lalu
+    BENTUKNYA tetap dipilih pemilih tanda tangan dari karakter datanya. Aturan
+    satu-pasangan-satu-chart & bonus variasi tetap berlaku. Pasangan bagus yang tidak diklaim
+    seksi mana pun TETAP dipakai sesudahnya - jangan dibuang cuma karena tidak disebut seksi.
+
+    Kembalikan (keputusan, laporan_seksi); laporan_seksi menjelaskan PER SEKSI kenapa ia
+    dapat / tidak dapat kolom visual, supaya tidak ada yang hilang tanpa alasan."""
+    kand = [k for k in _semua_kandidat(parsed_data, kolom_w_in)
+            if k["bentuk"] and k["kekuatan"] >= _AMBANG_KEKUATAN]
+    prof = profil_kolom(parsed_data)
+    kolom = list(prof.get("df").columns) if prof.get("df") is not None else []
+    terpakai_pasangan, dipakai_bentuk, terpilih = set(), set(), []
+    laporan = []
+
+    def _ambil(calon, judul):
+        for k in calon:
+            k["_skor"] = k["kekuatan"] + (_BOBOT_VARIASI if k["bentuk"] not in dipakai_bentuk else 0.0)
+        calon.sort(key=lambda k: (-k["_skor"], str(k["pasangan"])))
+        for k in calon:
+            if frozenset(k["pasangan"]) in terpakai_pasangan:
+                continue
+            terpilih.append(dict(k, seksi=judul))
+            terpakai_pasangan.add(frozenset(k["pasangan"]))
+            dipakai_bentuk.add(k["bentuk"])
+            return k
+        return None
+
+    # ---- FASE 1: tiap seksi mengklaim subjeknya ------------------------------------
+    for sec in (seksi or []):
+        judul = sanitize_text(coerce_narrative_text(sec.get("title"))) or ""
+        if not judul:
+            continue
+        subjek = subjek_seksi(sec, kolom)
+        if not subjek:
+            laporan.append((judul, "tanpa kolom visual", "tidak menyebut kolom data mana pun"))
+            continue
+        calon = [k for k in kand
+                 if subjek & {x for x in k["pasangan"] if not str(x).startswith("@")}]
+        if not calon:
+            laporan.append((judul, "tanpa kolom visual",
+                            "kolom subjeknya (%s) tidak punya pasangan yang lolos tanda tangan"
+                            % ", ".join(sorted(subjek))))
+            continue
+        dipilih = _ambil(list(calon), judul)
+        if dipilih:
+            laporan.append((judul, "dapat kolom visual",
+                            "%s dari %s" % (dipilih["bentuk"], list(dipilih["pasangan"]))))
+        else:
+            laporan.append((judul, "tanpa kolom visual",
+                            "semua pasangan subjeknya sudah diklaim seksi lain"))
+
+    # ---- FASE 2: pasangan bagus yang tidak diklaim seksi mana pun -------------------
+    sisa = [k for k in kand if frozenset(k["pasangan"]) not in terpakai_pasangan]
+    while sisa:
+        if not _ambil(sisa, None):
+            break
+        sisa = [k for k in sisa if frozenset(k["pasangan"]) not in terpakai_pasangan]
+
+    for k in terpilih:
+        logger.info("pemilih chart: %s -> %s [%s] skor %.2f%s",
+                    k["pasangan"], k["bentuk"], k["alasan"], k.get("_skor", 0.0),
+                    (" | seksi: %s" % k["seksi"]) if k.get("seksi") else " | tanpa seksi")
+    return terpilih, laporan
+
+
 def _kuat(nilai: float) -> float:
     """Jepit ke 0..1 - seberapa KUAT syaratnya terpenuhi, bukan sekadar terpenuhi."""
     return max(0.0, min(1.0, float(nilai)))
@@ -2689,6 +2896,11 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
         for met in mets:
             g = df.groupby(df[kat].astype(str))[met].sum()
             g = g[g > 0]
+            # POPULASI PENUH dicatat SEBELUM dipotong top-N: tanpa ini catatan tidak bisa
+            # menyatakan "chart menampilkan 8 dari 32 entitas" - fakta yang justru paling
+            # tidak terlihat dari chart-nya sendiri.
+            _n_penuh, _tot_penuh = len(g), float(g.sum())
+            _nilai_penuh = [float(v) for v in g.tolist()]
             if _urut_kat:
                 # Kolom ordinal: urutkan menurut SKALANYA (Rendah->Tinggi), bukan menurut
                 # besaran. Nilai di luar kosakata diletakkan di belakang, bukan dibuang.
@@ -2705,6 +2917,8 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
                 "labels": pendekkan_label([str(x) for x in g.index]),
                 "values": [float(v) for v in g.tolist()],
                 "urut_bermakna": bool(_urut_kat),
+                "n_entitas_penuh": _n_penuh, "total_entitas_penuh": _tot_penuh,
+                "nilai_penuh": _nilai_penuh,
                 "bagian_dari_total": True, "rasio_metrik": None, "sel_silang": None}))
 
     hasil = []
@@ -2726,6 +2940,9 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
                           "kekuatan": round(kekuatan * (0.5 + 0.5 * _isi), 3),
                           "keterisian": round(_isi, 2), "deret_garis": sig.get("deret_garis"),
                           "granularitas": sig.get("granularitas") or "",
+                          "n_entitas_penuh": sig.get("n_entitas_penuh"),
+                          "total_entitas_penuh": sig.get("total_entitas_penuh"),
+                          "nilai_penuh": sig.get("nilai_penuh"),
                           "labels": sig.get("labels") or [], "values": sig.get("values") or []})
     return hasil
 
@@ -3006,11 +3223,6 @@ def rencana_chart(parsed_data: list, maks: int | None = None,
     return terpilih
 
 
-
-
-def _kuat(nilai: float) -> float:
-    """Jepit ke 0..1 - seberapa KUAT syaratnya terpenuhi, bukan sekadar terpenuhi."""
-    return max(0.0, min(1.0, float(nilai)))
 
 
 def pendekkan_label(labels: list) -> list:
@@ -3536,15 +3748,9 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
             "raw_name": name, "value": val,
         })
 
-    rest = items[_NESTED_CARD_MAX_TOTAL:_NESTED_CARD_MAX_TOTAL + 4]
-    notes = [
-        _L(
-            report,
-            f"{name} mencatat {_fmt_count(val, _ien)} {unit} ({fmt_persen(val, total)} dari total).",
-            f"{name} recorded {_fmt_count(val, _ien)} {unit} ({fmt_persen(val, total)} of the total).",
-        )
-        for name, val in rest
-    ]
+    notes = catatan_agregat(items, min(len(items), _NESTED_CARD_MAX_TOTAL), unit, report,
+                            tile.get("n_entitas_penuh"), tile.get("total_entitas_penuh"),
+                            tile.get("nilai_penuh"))
     return {
         "kind": "management_insight_page", "title": headline,
         "kpi_summary": kpi_summary, "category_details": category_details, "notes": notes,
@@ -6491,6 +6697,37 @@ def build_management_report_blocks(report) -> list[dict]:
     # tile PERTAMA/baris pertama, & versi SOC-nya selalu 1 halaman penuh sendirian, keduanya
     # TIDAK pernah berisiko jatuh di baris ke-2+ grid padat spt custom_topic).
     dynamic_sections_all = [s for s in (ai_summary.get("sections") or []) if isinstance(s, dict)]
+
+    # ---- RENCANA CHART DIHITUNG DI SINI, SEBELUM loop seksi di bawah -----------------
+    # Urutannya penting: loop seksi perlu tahu seksi mana yang SUDAH dapat kolom visual,
+    # supaya seksi yang tidak dapat bisa langsung diarahkan jadi narasi & tidak ada yang
+    # hilang diam-diam. SEKSI memilih SUBJEK, TANDA TANGAN memilih BENTUK.
+    _seksi_dapat_visual: set = set()
+    _tiles_baru: list = []
+    _lap_seksi: list = []
+    _gagal: list = []
+    if _PAKAI_PEMILIH_TANDA_TANGAN:
+        _keputusan, _lap_seksi = rencana_chart_terarah(parsed_data, dynamic_sections_all)
+        _dibangun = [(k, bangun_tile(parsed_data, k, report)) for k in _keputusan]
+        for _k, _t in _dibangun:
+            if not _t:
+                continue
+            # POPULASI PENUH ditempel di SATU tempat (bukan di tiap cabang bangun_tile):
+            # catatan agregat butuh tahu berapa entitas yang TIDAK tergambar.
+            if _k.get("n_entitas_penuh"):
+                _t["n_entitas_penuh"] = int(_k["n_entitas_penuh"])
+                _t["total_entitas_penuh"] = float(_k.get("total_entitas_penuh") or 0)
+                _t["nilai_penuh"] = list(_k.get("nilai_penuh") or [])
+            if _k.get("seksi"):
+                # Judul kolom mengikuti SEKSI-nya: subjeknya yang menamai kolom, bentuknya
+                # cuma cara menggambarnya.
+                _t["source_topic_title"] = _k["seksi"]
+                _t["title"] = _k["seksi"]
+                _seksi_dapat_visual.add(_k["seksi"])
+            _tiles_baru.append(_t)
+        _gagal = [k["bentuk"] for k, t in _dibangun if not t]
+        for _j, _st, _alasan in _lap_seksi:
+            logger.info("SEKSI | %-38s %-20s %s", _j[:38], _st, _alasan)
     narrative_items = []
     # BUG DIPERBAIKI (dilaporkan user, disertai perbandingan checklist Include Sections vs
     # laporan jadi — topik order 0 hilang total): SEBELUMNYA section PERTAMA (order 0) selalu
@@ -6566,6 +6803,19 @@ def build_management_report_blocks(report) -> list[dict]:
             tile_values = [float(v) for v in legacy_values[:_NESTED_CARD_MAX_TOTAL]]
         else:
             tile_labels = tile_values = None
+        # SEKSI YANG SUDAH DAPAT KOLOM VISUAL tidak perlu tile custom_topic lagi (bentuknya
+        # sudah dipilih pemilih tanda tangan). Seksi yang TIDAK dapat kolom visual WAJIB tetap
+        # muncul sbg narasi - AI mengembalikannya utuh, jadi menghilangkannya adalah kehilangan
+        # diam. Itu yang terjadi sebelum ini: 9 seksi dikembalikan, 1 sampai ke laporan.
+        if _PAKAI_PEMILIH_TANDA_TANGAN:
+            if sec_title in _seksi_dapat_visual:
+                continue
+            narrative_items.append({
+                "title": sec_title,
+                "content": _shorten_to_caption(sec_content, max_sentences=3),
+                "preserve_topic": True,
+            })
+            continue
         if tile_labels:
             # ITEM 8: label dipendekkan PER LABEL sebelum bentuk chart dipilih - urutannya
             # penting, krn panjang label menentukan tinggi minimum chart (chart_min_height_in)
@@ -6614,13 +6864,8 @@ def build_management_report_blocks(report) -> list[dict]:
     # dihitung dan DICATAT berdampingan (log, bukan utk pembaca) supaya regresi bisa dilihat dari
     # data yang sama, bukan dari ingatan.
     if _PAKAI_PEMILIH_TANDA_TANGAN:
-        _tiles_lama = visual_tiles
-        _keputusan = rencana_chart(parsed_data)
-        _dibangun = [(k, bangun_tile(parsed_data, k, report)) for k in _keputusan]
-        _tiles_baru = [t for _, t in _dibangun if t]
-        _gagal = [k["bentuk"] for k, t in _dibangun if not t]
         logger.info("SUMBER TILE | lama=%d %s | baru=%d %s%s",
-                    len(_tiles_lama), sorted(t["tile_kind"] for t in _tiles_lama),
+                    len(visual_tiles), sorted(t["tile_kind"] for t in visual_tiles),
                     len(_tiles_baru), sorted(t["tile_kind"] for t in _tiles_baru),
                     f" | keputusan tanpa tile: {_gagal}" if _gagal else "")
         if _tiles_baru:
