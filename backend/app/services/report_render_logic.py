@@ -115,6 +115,11 @@ def best_grid_cols(n: int, min_cols: int = 2, max_cols: int = 3, max_rows: int =
 # kategori) TIDAK boleh dipaksa ikut grid padat dashboard Management sama spt tile bar/donut
 # kecil biasa — sama semangatnya dgn bobot 1.0 utk kpi_radar/time_heatmap di
 # build_report_blocks (gaya SOC) yang membuatnya SELALU jadi halaman sendiri.
+# CATATAN: ranked_bar_ternormalisasi & grouped_bar_ternormalisasi SENGAJA TIDAK di sini.
+# Keduanya PUNYA daftar entitas (label/kategori + nilainya), jadi bisa jadi kartu bersarang
+# lewat _build_insight_page spt metric_share/metric_compare. Sempat dimasukkan ke sini dan
+# akibatnya tile-nya HILANG diam-diam: _build_chart_insight_page rantai if/elif atas 3 jenis
+# di bawah saja, sisanya jatuh ke `return None` tanpa jejak.
 _SPACE_HUNGRY_TILE_KINDS = {"kpi_radar", "time_heatmap", "period_compare"}
 
 
@@ -375,6 +380,18 @@ def _tile_rank_items(tile: dict) -> list | None:
         return list(zip(tile.get("labels", []), tile.get("values", [])))
     if kind == "metric_compare":
         return list(zip(tile.get("categories", []), tile.get("series_a", [])))
+    # Dua bentuk ternormalisasi: sumber peringkatnya NILAI ASLI, bukan panjang batang yang
+    # ternormalisasi - kartu bersarang & catatan harus menyebut angka sebenarnya.
+    if kind == "ranked_bar_ternormalisasi":
+        return list(zip(tile.get("labels", []), tile.get("values", [])))
+    if kind == "grouped_bar_ternormalisasi":
+        return list(zip(tile.get("categories", []), tile.get("series_a", [])))
+    # KEPUTUSAN EKSPLISIT, bukan fallback diam: tile_kind tanpa cabang di sini membuat
+    # _build_insight_page mengembalikan None & TILE-NYA HILANG sebelum sampai exporter, tanpa
+    # jejak apa pun. Itu yang terjadi pada dua bentuk ternormalisasi di atas: renderer, tinggi
+    # kaki legenda & cabang exporter semuanya sudah siap, tapi tile-nya tidak pernah sampai.
+    logger.warning("tile_kind %r tidak punya cabang di _tile_rank_items - tile tidak akan "
+                   "jadi halaman insight", kind)
     return None
 
 
@@ -905,18 +922,24 @@ def muat_catatan(w_in: float, butir, tinggi_tersedia_in: float):
     return butir, dibuang
 
 
-def chart_min_mutlak_in(tile: dict) -> float:
+def chart_min_mutlak_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) -> float:
     """Tinggi TERKECIL yang masih menghasilkan chart bermakna - di bawah ini tile dilewati.
 
     Bar-like: 2 baris (satu baris bukan perbandingan). Bentuk lain memakai tinggi minimumnya
-    sendiri, krn mereka tidak bisa dikurangi barisnya (treemap/gauge/radar/stacked)."""
+    sendiri, krn mereka tidak bisa dikurangi barisnya (treemap/gauge/radar/stacked).
+
+    LEBAR KOLOM WAJIB DIALIRKAN. Dua bentuk ternormalisasi memuat KAKI LEGENDA utuh di tinggi
+    minimumnya, dan kaki itu membungkus jadi lebih banyak baris di kolom sempit: 0.55in pada
+    kolom 4.1in vs 0.79in pada 2.6in. Dgn lebar default, gerbang pelewatan meremehkan kebutuhan
+    sebesar selisih itu di kolom sempit - tile lolos gerbang lalu chartnya meluber, persis
+    kegagalan yang ingin dicegah gerbang ini."""
     k = (tile or {}).get("tile_kind")
     if k in ("risk_heatmap", "status_funnel", "trend_chart", "custom_topic"):
         gaya = (tile.get("chart_style") or "").lower() if k == "custom_topic" else ""
         if gaya in ("donut", "stacked"):
-            return chart_min_height_in(tile)
+            return chart_min_height_in(tile, col_w_in, is_en)
         return _tinggi_baris_bar(tile) * 2 + 0.16
-    return chart_min_height_in(tile)
+    return chart_min_height_in(tile, col_w_in, is_en)
 
 
 def _layout_dashboard_column_content(
@@ -926,6 +949,7 @@ def _layout_dashboard_column_content(
     cards: list | None = None,
     has_notes: bool = False,
     tile: dict | None = None,
+    is_en: bool = False,
 ) -> dict:
     """Reserve chart, cards, and notes before either exporter draws them.
 
@@ -944,7 +968,7 @@ def _layout_dashboard_column_content(
     # angka itu, kartu menyusul dari sisanya. Kalau total tidak muat, yang dikurangi
     # DICATAT ke log - tidak ada pemotongan diam di mana pun.
     tile_dipakai = tile
-    chart_h = chart_min_height_in(tile, col_w_in) if (has_chart and tile) else (
+    chart_h = chart_min_height_in(tile, col_w_in, is_en) if (has_chart and tile) else (
         _DASH_COLUMN_CHART_MIN_H_IN if has_chart else 0.0)
     n_gabung = 0
     if has_chart and tile and _tile_punya_segmen(tile):
@@ -1008,7 +1032,8 @@ def _layout_dashboard_column_content(
     if has_chart and chart_h > 0:
         _ruang_chart = body_h_in - note_h - gap - (_kartu_baris_min + 0.08 if cards else 0.0)
         if chart_h > _ruang_chart:
-            _min_mutlak = chart_min_mutlak_in(tile) if tile else _DASH_COLUMN_CHART_MIN_H_IN
+            _min_mutlak = (chart_min_mutlak_in(tile, col_w_in, is_en) if tile
+                           else _DASH_COLUMN_CHART_MIN_H_IN)
             if _ruang_chart < _min_mutlak:
                 # Dikurangi sampai batas minimum yang masih bermakna pun tetap tidak muat ->
                 # tile DILEWATI seluruhnya, lewat jalur yang SAMA dgn aturan "segmen lolos
@@ -1872,72 +1897,6 @@ def _kolom_identifier(s) -> bool:
     return len(beda) == 1 and float(beda[0]) != 0.0
 
 
-def profil_kolom(parsed_data: list) -> dict:
-    """Profil kolom mentah, dipilah jadi KATEGORI / METRIK / TANGGAL / IDENTIFIER / TURUNAN.
-
-    Tiga perbaikan (permintaan user) atas versi pertama:
-      - kolom INDEKS/IDENTIFIER dikeluarkan dari metrik (lihat _kolom_identifier);
-      - kolom TANGGAL dikenali sbg tanggal, bukan kategori - supaya tanda tangan
-        "tanggal + 2 satuan -> bar+garis" bisa hidup sama sekali;
-      - kolom TURUNAN (jumlah kolom lain) tetap dikecualikan dari metrik.
-    """
-    if not parsed_data:
-        return {"df": None, "kategori": [], "metrik": [], "turunan": [], "tanggal": [],
-                "identifier": [], "n_baris": 0}
-    df = pd.DataFrame(parsed_data)
-    # PAKAI PENGENALAN ANGKA YANG SUDAH ADA, jangan menulis sendiri. _coerce_indo_numeric_columns
-    # mengenali angka format Indonesia ("40.000.000" -> 40000000) & satuannya (Rp / %). Versi
-    # pertama profil_kolom menulis deteksi numerik sendiri dari nol lalu MELEWATI perbaikan
-    # itu: laporan pengadaan (183/165) berakhir NOL metrik - Nilai_Kontrak_Rp diklasifikasi
-    # sbg kategori krn isinya string "40.000.000" - sehingga satu-satunya pasangan yang
-    # tersisa kategori x kategori & seluruh laporan jadi 9 matriks.
-    # Fungsinya SUDAH terjangkau dari modul ini (lihat impor data_profiler di atas); tidak
-    # ada penghalang struktur - jalur baru ini yang melewatinya. Kalau butuh pengenalan angka
-    # di tempat lain, PANGGIL fungsi itu, jangan salin isinya.
-    try:
-        df, _satuan = _coerce_indo_numeric_columns(df)
-    except Exception:
-        pass
-    tanggal = [c for c in df.columns if _SIG_TGL_RE.search(str(c))]
-    kategori, metrik, identifier = [], [], []
-    for c in df.columns:
-        if c in tanggal:
-            continue
-        s = pd.to_numeric(df[c], errors="coerce")
-        # KEPUTUSAN USER: KETERISIAN TIDAK MENENTUKAN TIPE KOLOM. Ambang lama (>=90% terisi)
-        # memakai keterisian utk pertanyaan yang bukan urusannya - kolom 50% terisi bukan
-        # "bukan metrik", melainkan metrik dgn separuh data kosong (terukur di laporan 186:
-        # 8 kolom yang jelas metrik jatuh jadi kategori krn datanya dua bagian). Tipe
-        # ditentukan ISI NILAINYA: kalau yang TERISI semuanya angka, itu metrik, berapa pun
-        # proporsinya. Keterisian jadi komponen KEKUATAN kandidat (lihat "keterisian" di
-        # tanda tangan), bukan syarat kelayakan.
-        _terisi = s.notna().sum()
-        _dari_yang_terisi_angka = (s.notna().sum() / max(1, df[c].notna().sum())) if df[c].notna().sum() else 0
-        if _terisi >= 3 and _dari_yang_terisi_angka >= 0.9 and s.nunique() > 2:
-            (identifier if (_SIG_ID_RE.search(str(c)) or _kolom_identifier(df[c])) else metrik).append(c)
-        elif 2 <= df[c].astype(str).nunique() <= 60:
-            # HANYA dari NAMANYA utk kolom kategorikal. Kardinalitas tinggi BUKAN tanda
-            # identifier: "Virtual Server" punya 33 nilai unik dari 33 baris & tetap kategori
-            # yang sah (ranked bar top-N menanganinya). Versi pertama membuangnya, lalu
-            # keluarga F5 berakhir NOL pasangan.
-            (identifier if _SIG_ID_RE.search(str(c)) else kategori).append(c)
-    turunan = []
-    for c in metrik:
-        sc = pd.to_numeric(df[c], errors="coerce")
-        lain = [x for x in metrik if x != c]
-        for n in (2, 3):
-            if len(lain) < n:
-                continue
-            if any(((sc - sum(pd.to_numeric(df[k], errors="coerce") for k in komb)).abs()
-                    <= sc.abs() * 0.01 + 1e-9).mean() >= 0.7
-                   for komb in itertools.combinations(lain, n)):
-                turunan.append(c)
-                break
-    return {"df": df, "kategori": kategori, "tanggal": tanggal, "identifier": identifier,
-            "turunan": turunan, "metrik": [c for c in metrik if c not in turunan],
-            "n_baris": len(df)}
-
-
 def _kuat(nilai: float) -> float:
     """Jepit ke 0..1 - seberapa KUAT syaratnya terpenuhi, bukan sekadar terpenuhi."""
     return max(0.0, min(1.0, float(nilai)))
@@ -2320,6 +2279,24 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
     def _judul(t_id, t_en):
         return t_en if _ien else t_id
 
+    def _num(v):
+        """Pemisah ribuan + desimal mengikuti BAHASA LAPORAN - pakai _fmt_count yang sudah ada,
+        bukan f-string polos: "1097595" tak terbaca, dan "1,097,595" SALAH DIBACA pembaca
+        Indonesia (lihat catatan bug di _fmt_count)."""
+        return _fmt_count(v, _ien)
+
+    def _ket(id_txt, en_txt):
+        return en_txt if _ien else id_txt
+
+    def _ket_teratas(lbl, val, tot, satuan=""):
+        """Satu kalimat, angkanya dari agregasi yang SAMA dgn yang digambar - bukan prosa AI."""
+        if not lbl or not tot:
+            return None
+        return _ket(f"{lbl} tertinggi dengan {_num(val)}{satuan} dari total "
+                    f"{_num(tot)} ({fmt_persen(val, tot)}).",
+                    f"{lbl} is highest at {_num(val)}{satuan} of {_num(tot)} "
+                    f"total ({fmt_persen(val, tot)}).")
+
     if bentuk == "ranked_bar":
         # Bisa lahir dari pasangan (kategori, metrik) MAUPUN (kategori, metrik_a, metrik_b) -
         # yang kedua membandingkan TOTAL dua metrik sbg dua batang, dan itu sah. Labels &
@@ -2334,23 +2311,29 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "bars": [{"label": l, "count": v, "pct": round(100 * v / (sum(values) or 1)),
                           "color": palet[i % len(palet)]}
                          for i, (l, v) in enumerate(zip(labels, values))],
-                "caption": None}
+                "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
+                                        sum(values))}
     if bentuk == "treemap":
         return {"tile_kind": "metric_share", "labels": labels, "values": values,
                 "kicker": _judul("PANGSA PER ENTITAS", "SHARE PER ENTITY"),
                 "title": _judul(f"Pangsa {pasangan[-1]}", f"{pasangan[-1]} Share"),
-                "cat_col_name": pasangan[0] if pasangan else None, "caption": None}
+                "cat_col_name": pasangan[0] if pasangan else None,
+                "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
+                                        sum(values))}
     if bentuk in ("donut", "stacked"):
         return {"tile_kind": "metric_mix" if bentuk == "stacked" else "custom_topic",
                 "chart_style": "donut", "labels": labels, "values": values,
                 "kicker": _judul("KOMPOSISI", "COMPOSITION"),
                 "title": _judul(f"Komposisi {pasangan[-1]}", f"{pasangan[-1]} Composition"),
-                "cat_col_name": pasangan[0] if pasangan else None, "caption": None}
+                "cat_col_name": pasangan[0] if pasangan else None,
+                "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
+                                        sum(values))}
     if bentuk == "ranked_bar_ternormalisasi":
         return {"tile_kind": "ranked_bar_ternormalisasi", "labels": labels, "values": values,
                 "kicker": _judul("PERINGKAT", "RANKING"),
                 "title": _judul(f"{pasangan[-1]} per {pasangan[0]}", f"{pasangan[-1]} by {pasangan[0]}"),
-                "caption": None}
+                "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
+                                        sum(values))}
     if bentuk in ("grouped_bar", "grouped_bar_ternormalisasi") and len(pasangan) == 3:
         kat, ma, mb = pasangan
         g = df.groupby(df[kat].astype(str))[[ma, mb]].sum().sort_values(ma, ascending=False)[:6]
@@ -2363,19 +2346,30 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "categories": pendekkan_label([str(x) for x in g.index]),
                 "series_a": [float(v) for v in g[ma].tolist()],
                 "series_b": [float(v) for v in g[mb].tolist()],
-                "label_a": str(ma), "label_b": str(mb), "cat_col_name": kat, "caption": None}
+                "label_a": str(ma), "label_b": str(mb), "cat_col_name": kat,
+                "caption": _ket(
+                    f"{ma} total {_num(g[ma].sum())}, {mb} total "
+                    f"{_num(g[mb].sum())} pada {len(g)} {kat} teratas.",
+                    f"{ma} totals {_num(g[ma].sum())}, {mb} totals "
+                    f"{_num(g[mb].sum())} across the top {len(g)} {kat}.")}
     if bentuk == "matriks" and len(pasangan) == 2:
         a, b = pasangan
         ct = pd.crosstab(df[a].astype(str), df[b].astype(str))
         if ct.empty:
             return None
         ct = ct.iloc[:8, :8]
+        _r_maks, _k_maks = divmod(int(ct.values.argmax()), ct.shape[1])
         return {"tile_kind": "time_heatmap",
                 "kicker": _judul("SILANG DIMENSI", "CROSS DIMENSION"),
                 "title": _judul(f"{a} x {b}", f"{a} x {b}"),
                 "day_labels": pendekkan_label([str(x) for x in ct.index]),
                 "hour_labels": pendekkan_label([str(x) for x in ct.columns]),
-                "grid": [[int(v) for v in row] for row in ct.values], "caption": None}
+                "grid": [[int(v) for v in row] for row in ct.values],
+                "caption": _ket(
+                    f"Sel terpadat {ct.index[_r_maks]} x {ct.columns[_k_maks]} dengan "
+                    f"{int(ct.values.max())} data dari {int(ct.values.sum())}.",
+                    f"Densest cell {ct.index[_r_maks]} x {ct.columns[_k_maks]} with "
+                    f"{int(ct.values.max())} of {int(ct.values.sum())} records.")}
     if bentuk == "scatter" and len(pasangan) == 3:
         kat, ma, mb = pasangan
         g = df.groupby(df[kat].astype(str))[[ma, mb]].sum()
@@ -2386,7 +2380,12 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
         return {"tile_kind": "scatter_bubble", "points": titik,
                 "kicker": _judul("SEBARAN DATA", "DATA SPREAD"),
                 "title": _judul(f"{ma} vs {mb}", f"{ma} vs {mb}"),
-                "x_label": str(ma), "cat_col_name": kat, "caption": None}
+                "x_label": str(ma), "cat_col_name": kat,
+                "caption": _ket(
+                    f"{len(titik)} {kat} tersebar; {ma} dari {_num(min(t_['count'] for t_ in titik))} "
+                    f"sampai {_num(max(t_['count'] for t_ in titik))}.",
+                    f"{len(titik)} {kat} plotted; {ma} ranges {_num(min(t_['count'] for t_ in titik))} "
+                    f"to {_num(max(t_['count'] for t_ in titik))}.")}
     if bentuk == "bar_garis" and len(pasangan) == 2:
         tgl, met = pasangan
         g = df.groupby(df[tgl].astype(str))[met].sum().sort_index()[:12]
@@ -2399,15 +2398,29 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "kicker": _judul("TREN & POLA", "TRENDS & PATTERNS"),
                 "title": _judul(f"{met} per periode", f"{met} over time"),
                 "chart": {"type": "bar_line", "categories": [str(x) for x in g.index],
-                          "values": nilai, "cumulative": kum}, "caption": None}
+                          "values": nilai, "cumulative": kum},
+                "caption": _ket(
+                    f"Total {_num(sum(nilai))} sepanjang {len(nilai)} periode; puncak "
+                    f"{g.index[nilai.index(max(nilai))]} dengan {_num(max(nilai))}.",
+                    f"Total {_num(sum(nilai))} across {len(nilai)} periods; peak "
+                    f"{g.index[nilai.index(max(nilai))]} at {_num(max(nilai))}.")
+                if nilai else None}
     if bentuk == "radar":
         return {"tile_kind": "kpi_radar", "axes": [str(x) for x in labels[:6]],
                 "values": [round(v, 1) for v in (keputusan.get("indikator") or values)[:6]],
                 "kicker": _judul("PERBANDINGAN INDIKATOR", "INDICATOR COMPARISON"),
                 "title": _judul("Perbandingan Multi-Indikator", "Multi-Indicator Comparison"),
-                "caption": None}
+                "caption": _ket(f"{len(labels[:6])} indikator dibandingkan pada skala yang sama.",
+                                f"{len(labels[:6])} indicators compared on one common scale.")}
     return None
 
+
+# SEMENTARA (permintaan user): jalur katalog lama tidak dihapus, cuma DIMATIKAN, supaya
+# keluaran kedua jalur masih bisa dibandingkan dari DATA YANG SAMA kalau ada regresi besar.
+# Setelah pengukuran disepakati, katalog lama + bendera ini DIHAPUS - jangan ditinggalkan
+# jadi jalur mati (lihat _build_management_visual_dashboard_block/_slide yang dulu membuat
+# orang mengira renderer tertentu masih dipakai padahal tidak).
+_PAKAI_PEMILIH_TANDA_TANGAN = True
 
 _BOBOT_VARIASI = 0.6
 
@@ -3163,6 +3176,13 @@ def _build_chart_insight_page(tile: dict, report) -> dict | None:
                 f"{day_label} recorded {_fmt_count(day_total, _ien)} records ({fmt_persen(day_total, total)} of the total).",
             ))
     else:
+        # KEPUTUSAN EKSPLISIT, bukan fallback diam (pola yang sama dipakai kedua exporter):
+        # tile_kind space-hungry yang belum punya cabang di sini TIDAK jadi halaman - tapi
+        # DICATAT. Sebelum ini ia hilang tanpa jejak, dan itu persis yang terjadi saat dua
+        # bentuk ternormalisasi sempat salah diklasifikasikan sbg space-hungry: renderer-nya
+        # sudah jadi & teruji, tapi tile-nya tidak pernah sampai ke halaman mana pun.
+        logger.warning("tile_kind %r ada di _SPACE_HUNGRY_TILE_KINDS tapi tidak punya cabang "
+                       "di _build_chart_insight_page - tile tidak jadi halaman", kind)
         return None
     return {
         "kind": "management_insight_page", "title": headline,
@@ -6065,6 +6085,30 @@ def build_management_report_blocks(report) -> list[dict]:
     # topik genuinely layak halaman sendiri; topik yang KEBETULAN masih menghasilkan himpunan
     # entitas yang sama dgn topik lain tetap ditangkap & digabung oleh
     # _merge_overlapping_insight_pages di akhir fungsi ini (bukan gerbang di sini).
+    # ---- PENGGANTIAN SUMBER TILE ----
+    # Katalog di atas menggantungkan bentuk chart pada NAMA BAGIAN (is_included(...)): bentuknya
+    # ditentukan judul topik, bukan karakter kolomnya. Pemilih tanda tangan menilai SEMUA pasangan
+    # kolom terhadap SEMUA aturan bentuk & memilih skor tertinggi. Keluaran katalog lama tetap
+    # dihitung dan DICATAT berdampingan (log, bukan utk pembaca) supaya regresi bisa dilihat dari
+    # data yang sama, bukan dari ingatan.
+    if _PAKAI_PEMILIH_TANDA_TANGAN:
+        _tiles_lama = visual_tiles
+        _keputusan = rencana_chart(parsed_data)
+        _dibangun = [(k, bangun_tile(parsed_data, k, report)) for k in _keputusan]
+        _tiles_baru = [t for _, t in _dibangun if t]
+        _gagal = [k["bentuk"] for k, t in _dibangun if not t]
+        logger.info("SUMBER TILE | lama=%d %s | baru=%d %s%s",
+                    len(_tiles_lama), sorted(t["tile_kind"] for t in _tiles_lama),
+                    len(_tiles_baru), sorted(t["tile_kind"] for t in _tiles_baru),
+                    f" | keputusan tanpa tile: {_gagal}" if _gagal else "")
+        if _tiles_baru:
+            visual_tiles = _tiles_baru
+        else:
+            # Tidak ada pasangan kolom yang layak (26 dari 131 laporan pada profil terakhir).
+            # Katalog lama dipakai apa adanya - lebih baik bentuk yang digantungkan nama bagian
+            # daripada halaman tanpa chart sama sekali.
+            logger.info("SUMBER TILE | pemilih tidak menghasilkan tile, katalog lama dipakai")
+
     for tile in visual_tiles:
         if tile["tile_kind"] in _SPACE_HUNGRY_TILE_KINDS:
             page = _build_chart_insight_page(tile, report)

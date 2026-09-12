@@ -4191,7 +4191,8 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         _tile = col.get("main_chart_tile")
         _has_cards = bool(col.get("category_details"))
         _column_layout = _layout_dashboard_column_content(
-            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes), _tile
+            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes), _tile,
+            is_english(ctx.report),
         )
         _chart_h = _column_layout["chart_h"]
         # tile yang SUDAH disesuaikan perencana: barisnya dikurangi kalau ruang kurang, ekor
