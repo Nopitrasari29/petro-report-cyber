@@ -2473,21 +2473,6 @@ _SIG_TGL_RE = re.compile(r"tanggal|date|waktu|time|periode|bulan", re.I)
 _SIG_ID_RE = re.compile(r"^(no|nomor|id|kode|code|index|urut)([_\s.-]|$)", re.I)
 
 
-def _kolom_identifier(s) -> bool:
-    """Kolom INDEKS/IDENTIFIER numerik - bukan metrik walaupun isinya angka.
-
-    KOREKSI USER: syarat "nilai hampir seluruhnya unik" DIBUANG. "Total Received" nilainya
-    hampir semua unik & tetap metrik yang sah - sama persis dgn "Virtual Server" 33 dari 33
-    yang sudah diperbaiki sebelumnya. Kardinalitas tinggi BUKAN tanda identifier, baik utk
-    kategori maupun metrik. Yang menandai identifier numerik: beda antar baris KONSTAN
-    (nomor urut 1,2,3,...) atau nama kolom yang eksplisit (dicek terpisah lewat _SIG_ID_RE)."""
-    v = pd.to_numeric(s, errors="coerce").dropna()
-    if len(v) < 3:
-        return False
-    beda = v.sort_values().diff().dropna().unique()
-    return len(beda) == 1 and float(beda[0]) != 0.0
-
-
 # Kosakata ordinal yang URUTANNYA BERMAKNA. Disusun dari pengukuran, bukan dikarang: dari 85
 # kolom berjenis status di 133 laporan, 35 memakai skala ordinal (20x Di Bawah/Mendekati/
 # Tercapai, 15x Normal/Warning/Critical). Sisanya kategori sejajar & TIDAK ditandai - menandai
