@@ -4071,6 +4071,18 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
                               tile["categories"], tile["series_a"], tile["series_b"],
                               label_a=tile.get("label_a", ""), label_b=tile.get("label_b", ""),
                               color_a=t["main"], color_b=t["chart"])
+    elif kind == "ranked_bar_ternormalisasi":
+        # kembaran cabang di export_pdf.py. Kaki legenda sudah masuk chart_min_mutlak_in, jadi
+        # kalau tile sampai ke sini dia MUAT - peringatannya tidak pernah dipotong.
+        add_ranked_bar_ternorm(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                               tile.get("labels") or [], tile.get("values") or [],
+                               color=t["main"], is_en=is_en)
+    elif kind == "grouped_bar_ternormalisasi":
+        add_grouped_bar_ternorm(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+                                tile.get("categories") or [], tile.get("series_a") or [],
+                                tile.get("series_b") or [], label_a=tile.get("label_a", ""),
+                                label_b=tile.get("label_b", ""), color_a=t["main"],
+                                color_b=t["chart"], is_en=is_en)
     else:
         # KEPUTUSAN EKSPLISIT, bukan fallback diam - lihat catatan kembarannya di export_pdf.py
         logger.warning("tile_kind %r tidak punya cabang chart di _insight_main_chart - "

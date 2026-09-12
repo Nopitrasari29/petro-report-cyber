@@ -3472,6 +3472,18 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
                 color_a=ctx.accent_main, color_b=ctx.accent_chart, size_w=size_w, size_h=size_h,
             )
             chart_w_in = size_w / 96
+        elif kind == "ranked_bar_ternormalisasi":
+            # panjang batang relatif thd maksimum deretnya sendiri; nilai ASLI di ujung batang.
+            # Kaki legenda sudah masuk chart_min_mutlak_in, jadi kalau sampai di sini dia MUAT.
+            chart_html = _ranked_bar_ternorm_html(tile.get("labels") or [], tile.get("values") or [],
+                                                  color=ctx.accent_main, is_en=is_english(report))
+            chart_w_in = w_in
+        elif kind == "grouped_bar_ternormalisasi":
+            chart_html = _grouped_bar_ternorm_html(
+                tile.get("categories") or [], tile.get("series_a") or [], tile.get("series_b") or [],
+                label_a=tile.get("label_a", ""), label_b=tile.get("label_b", ""),
+                color_a=ctx.accent_main, color_b=ctx.accent_chart, is_en=is_english(report))
+            chart_w_in = w_in
         else:
             # KEPUTUSAN EKSPLISIT, bukan fallback diam: tile_kind yang tidak dikenali TIDAK
             # digambar - tapi dicatat, supaya jenis tile baru yang lupa diberi cabang ketahuan
@@ -3511,8 +3523,12 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
         note_html = _note_box_html(notes, theme=ctx.theme, title=note_title)
         html = (
             f'<div style="position:relative;height:{h_in}in;">'
+            # overflow:hidden SENGAJA TIDAK DIPASANG di pembungkus chart (aturan tetap: memotong
+            # diam-diam lebih buruk drpd terlihat meluber). Chart-nya sudah digambar ULANG dgn
+            # tinggi chart_h_in di atas, jadi kalau ia masih meluber itu cacat perhitungan yang
+            # HARUS kelihatan di uji tumpang-tindih & uji elemen-di-luar-slide, bukan disembunyikan.
             f'<div style="position:absolute;left:0;top:0;width:{w_in}in;height:{chart_h_in}in;'
-            f'overflow:hidden;text-align:center;padding-top:6pt;">{chart_html}</div>'
+            f'text-align:center;padding-top:6pt;">{chart_html}</div>'
             f'<div style="position:absolute;left:0;top:{chart_h_in}in;width:{w_in}in;'
             f'height:{h_in - chart_h_in}in;overflow:hidden;">{note_html}</div>'
             f'</div>'

@@ -234,10 +234,20 @@ def test_panel_kind_and_tile_kind_dispatch_parity():
     assert not missing_in_ppt, f"panel_kind ada builder PDF-nya tapi TIDAK dikenali dispatch PPT (bakal hilang diam2 di PPT): {missing_in_ppt}"
     assert not missing_in_pdf, f"panel_kind dikenali dispatch PPT tapi TIDAK ada builder PDF-nya: {missing_in_pdf}"
 
+    # CACAT ALAT UKUR DIPERBAIKI: tes ini dulu membaca _mgmt_tile_chart_html (PDF) dan
+    # _draw_dashboard_main_visual (PPT) — KEDUANYA sudah MATI sejak jalur
+    # management_visual_dashboard ditinggalkan (tidak ada di _PDF_BLOCK_BUILDERS maupun
+    # _PPT_BLOCK_BUILDERS). Jadi tes paritas membandingkan dua rantai mati satu sama lain:
+    # ia lulus terus, dan TIDAK bisa menangkap tile_kind yang hilang di rantai yang benar2
+    # digambar. Sekarang menunjuk rantai HIDUP: _insight_main_chart_html / _insight_main_chart.
+    # Penjaga di bawah memastikan keduanya benar2 terdaftar, supaya kalau jalurnya pindah lagi
+    # tes ini GAGAL, bukan diam2 menguji fungsi mati lagi.
+    assert "management_insight_page" in ep._PDF_BLOCK_BUILDERS
+    assert "management_insight_page" in eppt._PPT_BLOCK_BUILDERS
     kind_pattern = re.compile(r'kind == "([a-z_]+)"')
-    pdf_tile_kinds = set(kind_pattern.findall(inspect.getsource(ep._mgmt_tile_chart_html)))
-    ppt_tile_kinds = set(kind_pattern.findall(inspect.getsource(eppt._draw_dashboard_main_visual)))
-    assert pdf_tile_kinds, "regex tidak menemukan tile_kind apa pun di _mgmt_tile_chart_html -- pola dispatch source berubah, perbaiki regex tes ini"
+    pdf_tile_kinds = set(kind_pattern.findall(inspect.getsource(ep._insight_main_chart_html)))
+    ppt_tile_kinds = set(kind_pattern.findall(inspect.getsource(eppt._insight_main_chart)))
+    assert pdf_tile_kinds, "regex tidak menemukan tile_kind apa pun di _insight_main_chart_html -- pola dispatch source berubah, perbaiki regex tes ini"
     assert pdf_tile_kinds == ppt_tile_kinds, (
         f"dispatch tile_kind PDF vs PPT beda -- hanya di PDF: {pdf_tile_kinds - ppt_tile_kinds}, "
         f"hanya di PPT: {ppt_tile_kinds - pdf_tile_kinds}"
