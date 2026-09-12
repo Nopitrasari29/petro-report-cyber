@@ -25,7 +25,8 @@ from app.services.report_render_logic import (
     build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style,
     resolve_theme_color, best_grid_cols, _hard_truncate, _dedupe_truncated_labels, _layout_dashboard_column,
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MAIN_VISUAL_RANGE_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN,
-    _DASH_TITLE_MAX_H_IN, _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content, wrap_line_count, muat_catatan, kolom_yang_digambar, _kpi_card_widths,
+    _DASH_TITLE_MAX_H_IN, _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content,
+    tinggi_kartu_in, wrap_line_count, muat_catatan, kolom_yang_digambar, _kpi_card_widths,
     _NESTED_CARD_GAP_IN, _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -1279,7 +1280,9 @@ def _note_box_html(text, theme: dict | None = None, title: str | None = None) ->
     rows_html = _bullet_lines_html(text, theme=t, numbered=numbered)
     if not rows_html:
         return ""
-    label = title or "Catatan"
+    # Bawaan ikut BAHASA LAPORAN, bukan Indonesia. Pemanggil yang lupa mengoper judul
+    # dulu menghasilkan "Catatan:" di laporan berbahasa Inggris.
+    label = title or ("Notes" if render_is_en() else "Catatan")
     return (
         f'<div style="background:{IVORY};border-left:3px solid {GRAY_TEXT};border-radius:3px;padding:9pt 12pt;margin-top:10pt;">'
         f'<div style="font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:{GRAY_TEXT};margin-bottom:4pt;">{_esc(label)}:</div>'
@@ -2155,7 +2158,8 @@ def _mini_legend_html(categories, ramp, text_color=None, compact=False) -> str:
     return f'<div style="margin-top:{margin_top}pt;line-height:{line_height};">{dots}</div>'
 
 
-def _merge_tail_into_other(labels, values, colors, max_items=4, other_label="Lainnya"):
+def _merge_tail_into_other(labels, values, colors, max_items=4, other_label=None):
+    # other_label bawaan ikut BAHASA LAPORAN (dulu "Lainnya" apa adanya).
     """Kalau item lebih dari `max_items`, gabungkan SISA item (indeks max_items-1 dan
     seterusnya) jadi SATU entri "{other_label}" (nilainya dijumlah) — dipakai bareng utk
     donat & legend-nya SEBELUM keduanya digambar (bukan 2 pemotongan terpisah).
@@ -2171,6 +2175,7 @@ def _merge_tail_into_other(labels, values, colors, max_items=4, other_label="Lai
         return labels, values, colors
     keep = max_items - 1
     merged_value = sum(values[keep:])
+    other_label = other_label or ("Others" if render_is_en() else "Lainnya")
     new_labels = list(labels[:keep]) + [other_label]
     new_values = list(values[:keep]) + [merged_value]
     new_colors = list(colors[:keep]) + [GRAY_TEXT]
@@ -3306,7 +3311,10 @@ def _insight_detail_row_html(cards: list, total_w_in: float, h_in: float, y_in: 
     for row_count in rows_n:
         x = 0.0
         for _ in range(row_count):
-            parts.append(_nested_category_card_html(cards[idx], card_w, row_h_in, x, y, theme=ctx.theme))
+            # TIAP KARTU setinggi ISINYA sendiri (dibatasi tinggi baris), bukan diregangkan
+            # ke tinggi baris. Rumusnya SATU, dipakai perencana juga - lihat tinggi_kartu_in.
+            _kh = min(row_h_in, tinggi_kartu_in(cards[idx]))
+            parts.append(_nested_category_card_html(cards[idx], card_w, _kh, x, y, theme=ctx.theme))
             x += card_w + gap_in
             idx += 1
         y += row_h_in + _NESTED_CARD_ROW_GAP_IN

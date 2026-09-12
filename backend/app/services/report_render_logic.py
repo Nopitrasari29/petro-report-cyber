@@ -345,8 +345,9 @@ def fmt_persen(bagian, total) -> str:
     for desimal in range(0, 5):
         teks = f"{p:.{desimal}f}"
         if float(teks) not in (0.0, 100.0):
-            return teks.replace(".", ",") + "%"
-    return f"{p:.4f}".replace(".", ",") + "%"
+            return (teks if render_is_en() else teks.replace(".", ",")) + "%"
+    _t = f"{p:.4f}"
+    return (_t if render_is_en() else _t.replace(".", ",")) + "%"
 
 
 def _tile_rank_items(tile: dict) -> list | None:
@@ -642,6 +643,17 @@ def chart_label_count(tile: dict) -> int:
         return len(tile.get("day_labels") or [])
     if k == "scatter_bubble":
         return len(tile.get("points") or [])
+    if k == "ranked_bar_ternormalisasi":
+        return len(tile.get("labels") or [])
+    if k == "grouped_bar_ternormalisasi":
+        return len(tile.get("categories") or [])
+    # KEPUTUSAN EKSPLISIT, bukan 0 diam-diam: tanpa cabang di sini chart_min_height_in
+    # menghitung tinggi untuk NOL baris. Terukur di laporan 188: dua bentuk ternormalisasi
+    # melapor butuh 1.10in padahal 8 barisnya nyatanya memakai 2.88in, lalu chart-nya
+    # menggambar menembus grid kartu di bawahnya (tertangkap uji tumpang-tindih).
+    if k:
+        logger.warning("tile_kind %r tidak punya cabang di chart_label_count - tinggi "
+                       "minimum chart dihitung untuk 0 label", k)
     return 0
 
 
@@ -654,7 +666,11 @@ def _tinggi_baris_bar(tile: dict) -> float:
     laporan 187: kotak chart berakhir 343pt, labelnya sampai 367pt, lalu menabrak grid kartu."""
     labels = []
     k = tile.get("tile_kind")
-    if k == "risk_heatmap":
+    if k == "ranked_bar_ternormalisasi":
+        labels = [str(x) for x in (tile.get("labels") or [])]
+    elif k == "grouped_bar_ternormalisasi":
+        labels = [str(x) for x in (tile.get("categories") or [])]
+    elif k == "risk_heatmap":
         labels = [str(b.get("label") or "") for b in (tile.get("bars") or [])]
     elif k == "custom_topic":
         labels = [str(x) for x in (tile.get("labels") or [])]
@@ -672,7 +688,15 @@ def _tinggi_baris_bar(tile: dict) -> float:
     # bawahnya (terukur: label terakhir berakhir 418pt, kotak kartu mulai 418pt).
     # Angka 0.444in berlaku utk label SATU baris; label yang membungkus n baris menambah
     # tinggi teksnya sendiri.
-    _satu_baris_in = 0.444
+    # JARAK BARIS BERBEDA PER RENDERER - dikalibrasi masing-masing dari render nyata, bukan
+    # satu angka untuk semua. _bar_chart_html: 32.0pt = 0.444in (laporan 158).
+    # _ranked_bar_ternorm_html / _grouped_bar_ternorm_html: 25.6pt = 0.355in (laporan 188),
+    # tabelnya lebih rapat (padding 6pt, batang 14px).
+    # BUG YANG DIPERBAIKI BERSAMAAN: dua bentuk ternormalisasi TIDAK punya cabang di daftar
+    # label di atas, jadi `labels` kosong & fungsi ini mengembalikan _CHART_ROW_H_IN (0.38in)
+    # apa adanya - chart_min_height_in melaporkan 1.10in untuk 8 baris yang nyatanya butuh
+    # 2.88in, lalu chart-nya menggambar menembus grid kartu di bawahnya.
+    _satu_baris_in = 0.355 if k in ("ranked_bar_ternormalisasi", "grouped_bar_ternormalisasi") else 0.444
     if baris <= 1:
         return max(_CHART_ROW_H_IN, _satu_baris_in)
     return max(_CHART_ROW_H_IN, _satu_baris_in + (baris - 1) * (_BAR_LABEL_PT * 1.18 / 72.0))
@@ -767,6 +791,15 @@ def chart_min_height_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) 
 # dua format yang menampilkan isi berbeda dari data yang sama lebih berbahaya daripada
 # dua-duanya menampilkan lebih sedikit - TAPI yang jatuh WAJIB masuk "Lainnya", bukan hilang.
 _LABEL_LAINNYA = "Lainnya"
+
+
+def label_lainnya() -> str:
+    """Nama segmen gabungan, mengikuti BAHASA LAPORAN.
+
+    BUG NYATA (terukur di laporan 188 berbahasa Inggris): _LABEL_LAINNYA dipakai apa adanya
+    sbg label segmen, jadi pembaca Inggris melihat kotak bernama "Lainnya". Hanya
+    keterangannya yang ikut bahasa. Satu fungsi supaya keduanya tidak bisa berpisah lagi."""
+    return "Others" if render_is_en() else _LABEL_LAINNYA
 
 
 def _fmt_angka_ringkas(v) -> str:
@@ -896,7 +929,7 @@ def _potong_isi_chart(tile: dict | None, tinggi_in: float):
     # untuk kita; "Lainnya" itu untuk pembaca. Chart yang menggambar 5 dari 8 kategori tanpa
     # penanda membuat pembaca menyimpulkan kategorinya memang 5.
     if k in ("custom_topic",) and len(nilai) == len(isi) and muat >= 1:
-        baru[kunci] = list(isi[:muat - 1]) + [_LABEL_LAINNYA]
+        baru[kunci] = list(isi[:muat - 1]) + [label_lainnya()]
         baru["values"] = nilai[:muat - 1] + [sum(nilai[muat - 1:])]
         return baru, len(isi) - muat + 1
     baru[kunci] = isi[:muat]
@@ -952,6 +985,19 @@ def chart_min_mutlak_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) 
     return chart_min_height_in(tile, col_w_in, is_en)
 
 
+def tinggi_kartu_in(card: dict) -> float:
+    """Tinggi yang BENAR-BENAR dibutuhkan satu kartu bersarang, dari jumlah sub-itemnya.
+
+    SATU rumus, tiga pemakai (perencana + kedua exporter). Sebelumnya perencana menghitung
+    kebutuhan baris dari kartu TERDALAM lalu kedua exporter menggambar SEMUA kartu setinggi
+    baris itu - kartu dgn 1 sub-item berdiri di kotak setinggi kartu 3 sub-item & menyisakan
+    ~1.2in hampa di bawahnya (terukur di laporan 188, sekolom dgn kartu 3 sub-item)."""
+    n = len(card.get("sub_items") or [])
+    item_h = (_NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN
+              + _NESTED_CARD_SUBITEM_GAP_IN)
+    return _NESTED_CARD_HEADER_H_IN + 0.20 + n * item_h
+
+
 def _layout_dashboard_column_content(
     body_h_in: float,
     col_w_in: float,
@@ -1002,7 +1048,7 @@ def _layout_dashboard_column_content(
                 chart_h = 0.0
                 tile_dipakai = None
             else:
-                _nl, _nv, n_gabung = gabung_ekor_ke_lainnya(_l, _v, _gw, _gh, _LABEL_LAINNYA)
+                _nl, _nv, n_gabung = gabung_ekor_ke_lainnya(_l, _v, _gw, _gh, label_lainnya())
                 if n_gabung:
                     tile_dipakai = dict(tile)
                     tile_dipakai["labels"] = _nl
@@ -1017,11 +1063,11 @@ def _layout_dashboard_column_content(
                     if not segmen_bisa_dinamai(_nv, _gw, _gh)[-1]:
                         tile_dipakai["catatan_lainnya"] = (
                             "%s: %s (%d %s)" % (
-                                "Others" if render_is_en() else _LABEL_LAINNYA,
+                                label_lainnya(),
                                 _fmt_angka_ringkas(_nv[-1]), n_gabung,
                                 "entities" if render_is_en() else "entitas"))
                     logger.info("tile %r: %d segmen di bawah ambang label digabung ke %r",
-                                tile.get("tile_kind"), n_gabung, _LABEL_LAINNYA)
+                                tile.get("tile_kind"), n_gabung, label_lainnya())
     if has_chart and not cards:
         chart_h = max(chart_h, body_h_in - note_h)
 
@@ -1036,9 +1082,7 @@ def _layout_dashboard_column_content(
     # 8 label URL) - _strip_common_affix nanti memendekkan label itu & angkanya bergerak.
     _kartu_baris_min = 0.0
     if cards:
-        _ms = max((len(c.get("sub_items") or []) for c in cards), default=0)
-        _ih = _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN + _NESTED_CARD_SUBITEM_GAP_IN
-        _kartu_baris_min = _NESTED_CARD_HEADER_H_IN + 0.20 + _ms * _ih
+        _kartu_baris_min = max((tinggi_kartu_in(c) for c in cards), default=_NESTED_CARD_HEADER_H_IN)
     if has_chart and chart_h > 0:
         # ---- CHART DULU, KARTU DAPAT SISANYA -----------------------------------------
         # Komentar di atas menyebut "arah dibalik: chart melapor duluan", TAPI kartu tetap
@@ -1083,9 +1127,7 @@ def _layout_dashboard_column_content(
     cards_h = 0.0
     rows = []
     if cards:
-        max_subs = max((len(card.get("sub_items") or []) for card in cards), default=0)
-        item_h = _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN + _NESTED_CARD_SUBITEM_GAP_IN
-        row_need = _NESTED_CARD_HEADER_H_IN + 0.20 + max_subs * item_h
+        row_need = max((tinggi_kartu_in(c) for c in cards), default=_NESTED_CARD_HEADER_H_IN)
         sisa_kartu = max(0.0, body_h_in - chart_h - note_h - gap - 0.08)
         rows_fit = int((sisa_kartu + _NESTED_CARD_ROW_GAP_IN) / (row_need + _NESTED_CARD_ROW_GAP_IN))
         if rows_fit < 1:
@@ -1915,6 +1957,20 @@ _SIG_TERATAS_TIMPANG = 0.50
 _SIG_BATANG_MIN_FRAC = 0.02
 _SIG_MATRIKS_MAKS_SEL = 60
 _SIG_SCATTER_MIN_BARIS = 15
+# SEBARAN SUMBU SCATTER, diukur sbg PEMUSATAN, bukan rentang.
+# Penjaga lama memakai "rentang >= 20% dari nilai terbesar" - dan laporan 188 LOLOS dgn
+# rasio 1.00 di kedua sumbu, padahal 18 dari 20 gelembung jatuh di satu garis. Sebabnya satu
+# pencilan ("Overall") menguasai skala: rentangnya penuh, tapi semua titik lain runtuh ke nol.
+# Rentang memang statistik yang salah untuk pertanyaan "apakah titiknya terpisah".
+#
+# Yang dipakai sekarang: rentang sumbu dibagi 32 kotak, lalu diukur pangsa kotak TERPADAT.
+# Diukur pada 900 pasangan metrik di seluruh laporan tersimpan:
+#     > 50% terpusat : 377   > 60% : 307   > 70% : 227   > 80% : 207   > 90% : 113
+# Pita 0,7-0,8 cuma berisi 20 pasangan, sementara pita di kiri (0,6-0,7) berisi 80 dan di
+# kanan (0,8-0,9) berisi 94 - lembah yang memisahkan dua populasi. Ambang diletakkan di
+# tengah lembah itu. Laporan 188: sumbu-x 0,70 dan sumbu-y 0,85 -> ditolak.
+_SIG_SCATTER_EMBER = 32
+_SIG_SCATTER_MAKS_PEMUSATAN = 0.75
 _SIG_RADAR_MIN_SEBARAN = 25.0
 _SIG_LABEL_COL_W_PX = 150.0
 _SIG_LABEL_PT = 9.5
@@ -2151,10 +2207,44 @@ def _r_ranked_bar_ternorm(sig):
         return ("ranked_bar_ternormalisasi", "batang terkecil %.2f%% < 2%%" % (kecil * 100), 0.45)
 
 
+def pemusatan_sumbu(v: list) -> float:
+    """Pangsa titik yang jatuh di SATU kotak terpadat, setelah rentang dibagi 32 kotak.
+
+    1.0 = semua titik menumpuk di satu tempat (garis/gumpalan), rendah = menyebar."""
+    if len(v) < 3:
+        return 1.0
+    lo, hi = min(v), max(v)
+    if hi <= lo:
+        return 1.0
+    ember: dict = {}
+    for x in v:
+        k = min(_SIG_SCATTER_EMBER - 1, int((x - lo) / (hi - lo) * _SIG_SCATTER_EMBER))
+        ember[k] = ember.get(k, 0) + 1
+    return max(ember.values()) / len(v)
+
+
+def _sebaran_cukup(v: list) -> bool:
+    """Apakah satu sumbu punya sebaran yang layak digambar sbg sumbu scatter."""
+    if len(v) < 3 or len({round(x, 6) for x in v}) < 3:
+        return False
+    return pemusatan_sumbu(v) <= _SIG_SCATTER_MAKS_PEMUSATAN
+
+
 def _r_scatter(sig):
-    if len(sig.get("metrik") or []) >= 2 and (sig.get("n_baris") or 0) >= _SIG_SCATTER_MIN_BARIS:
-        return ("scatter", "%d metrik, %d baris" % (len(sig["metrik"]), sig["n_baris"]),
-                _kuat((sig["n_baris"]) / 60.0))
+    # KEDUA SUMBU diperiksa dgn syarat yang SAMA. Penjaga lama memakai "atau" antar sumbu -
+    # satu sumbu bersebaran sudah meloloskan chart - dan aturan versi pertama ini tidak
+    # memeriksa sebaran sama sekali, cuma jumlah baris. Akibatnya terukur di laporan 188:
+    # 20 gelembung, 18 di antaranya pada satu garis horizontal krn Illegal Requests bernilai
+    # 0 untuk hampir semua entitas. Scatter yang sumbunya tidak bersebaran bukan scatter.
+    if len(sig.get("metrik") or []) < 2 or (sig.get("n_baris") or 0) < _SIG_SCATTER_MIN_BARIS:
+        return None
+    tx, ty = sig.get("titik_x") or [], sig.get("titik_y") or []
+    if not tx or not ty:
+        return None
+    if not (_sebaran_cukup(tx) and _sebaran_cukup(ty)):
+        return None
+    return ("scatter", "%d metrik, %d baris, kedua sumbu bersebaran"
+            % (len(sig["metrik"]), sig["n_baris"]), _kuat((sig["n_baris"]) / 60.0))
 
 
 _ATURAN_BENTUK = (_r_radar, _r_bar_deret_waktu, _r_bar_garis, _r_matriks, _r_grouped_bar, _r_grouped_bar_ternorm,
@@ -2236,6 +2326,81 @@ def urutan_ordinal(nilai: list) -> list | None:
     return None
 
 
+# BARIS AGREGAT: baris rekapitulasi yang ikut terbaca sbg entitas biasa.
+# Terukur di 109 laporan tersimpan: 64 punya baris yang nilainya ~= jumlah SELURUH baris lain.
+# TAPI uji angka saja SALAH TANGKAP - 'E-Katalog' (26x) & 'Critical' (17x) kategori sungguhan
+# yang kebetulan menguasai ~50% total; membuangnya berarti menghapus data nyata. Karena itu
+# syaratnya GANDA: namanya harus nama rekapitulasi DAN angkanya harus ~= jumlah baris lain.
+# Dgn syarat ganda yang tersisa: 'Total' 40x, '▣ Overall' 20x, 'Overall' 12x.
+_RE_BARIS_AGREGAT = re.compile(
+    "^[^0-9A-Za-z]*(total|overall|aggregat[a-z]*|grand[ ]*total|keseluruhan|seluruhnya"
+    "|semua|all|sum|jumlah)([^0-9A-Za-z]|$)",
+    re.IGNORECASE)
+
+# Toleransi BUKAN tombol setelan: diukur pada 134 baris bernama-rekapitulasi di seluruh
+# laporan, 87 di antaranya tepat 0,00% (agregat sungguhan) dan melebarkan toleransi sampai
+# 50% tidak menambah satu pun. Laporan 188 'Overall' = 0,00%; 'Aggregated' = 92-97% (nama
+# cocok tapi angkanya jelas bukan agregat - itulah gunanya syarat ganda).
+_AGREGAT_TOLERANSI = 0.02
+
+
+def baris_agregat(labels: list, values: list) -> set:
+    """Label mana yang merupakan BARIS REKAPITULASI, bukan entitas.
+
+    Dipakai SEBELUM entitas dipakai bentuk apa pun: kalau baris "Overall" ikut digambar
+    sejajar dgn komponennya sendiri, totalnya terhitung dua kali (terukur di laporan 188:
+    treemap menuliskan TOTAL 2.172.598 padahal total sebenarnya ~1.097.595)."""
+    if len(labels) < 3 or len(labels) != len(values):
+        return set()
+    v = [float(x or 0) for x in values]
+    tot = sum(v)
+    if tot <= 0:
+        return set()
+    buang = set()
+    for lbl, val in zip(labels, v):
+        if not _RE_BARIS_AGREGAT.match(str(lbl).strip()):
+            continue
+        sisa = tot - val
+        if sisa > 0 and abs(val - sisa) <= _AGREGAT_TOLERANSI * sisa:
+            buang.add(str(lbl))
+    return buang
+
+
+def buang_baris_agregat(df):
+    """Buang baris rekapitulasi dari df, SEKALI, supaya seluruh pemakai hilir melihat data
+    yang sama. Mengembalikan (df, daftar_label_yang_dibuang)."""
+    if df is None or df.empty:
+        return df, []
+    dibuang = []
+    for c in df.columns:
+        try:
+            kol = df[c].astype(str)
+        except Exception:
+            continue
+        if not (2 <= kol.nunique() <= 200):
+            continue
+        kandidat = [x for x in kol.unique() if _RE_BARIS_AGREGAT.match(str(x).strip())]
+        if not kandidat:
+            continue
+        for num in df.columns:
+            sn = pd.to_numeric(df[num], errors="coerce")
+            if sn.notna().sum() < 3:
+                continue
+            g = sn.groupby(kol).sum()
+            g = g[g > 0]
+            if len(g) < 3:
+                continue
+            for lbl in baris_agregat(list(g.index), list(g.values)):
+                if lbl not in dibuang:
+                    dibuang.append(lbl)
+        if dibuang:
+            df = df[~kol.isin(dibuang)]
+            kol = df[c].astype(str)
+    if dibuang:
+        logger.info("baris agregat dibuang dari himpunan entitas: %s", dibuang)
+    return df, dibuang
+
+
 def profil_kolom(parsed_data: list) -> dict:
     """Profil kolom mentah, dipilah jadi KATEGORI / METRIK / TANGGAL / IDENTIFIER / TURUNAN.
 
@@ -2263,6 +2428,7 @@ def profil_kolom(parsed_data: list) -> dict:
         df, _satuan = _coerce_indo_numeric_columns(df)
     except Exception:
         pass
+    df, _agregat_dibuang = buang_baris_agregat(df)
     tanggal = [c for c in df.columns if _SIG_TGL_RE.search(str(c))]
     kategori, metrik, identifier = [], [], []
     for c in df.columns:
@@ -2314,6 +2480,7 @@ def profil_kolom(parsed_data: list) -> dict:
     return {"df": df, "kategori": kategori, "tanggal": tanggal, "identifier": identifier,
             "turunan": turunan, "metrik": [c for c in metrik if c not in turunan],
             "satuan": _satuan or {}, "urutan_bermakna": urutan,
+            "agregat_dibuang": _agregat_dibuang,
             "n_baris": len(df)}
 
 
@@ -2397,9 +2564,16 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
             tb = float(pd.to_numeric(df[mb], errors="coerce").sum() or 0)
             if ta <= 0 or tb <= 0:
                 continue
+            # TITIK PER-ENTITAS dibawa ke tanda tangan supaya aturan scatter bisa menilai
+            # SEBARAN, bukan cuma jumlah baris. Tanpa ini _r_scatter menyala walau seluruh
+            # titik jatuh di satu garis.
+            _g2 = df.groupby(df[kat].astype(str))[[ma, mb]].sum()
+            _tx = [float(v) for v in pd.to_numeric(_g2[ma], errors="coerce").fillna(0).tolist()]
+            _ty = [float(v) for v in pd.to_numeric(_g2[mb], errors="coerce").fillna(0).tolist()]
             kand.append(((kat, ma, mb), {
                 "n_baris": prof["n_baris"], "kategori": kat, "metrik": [ma, mb],
                 "rasio_metrik": max(ta, tb) / min(ta, tb), "labels": [ma, mb],
+                "titik_x": _tx, "titik_y": _ty,
                 "values": [ta, tb], "bagian_dari_total": False,
                 "punya_tanggal": bool(prof["tanggal"]),
                 "n_satuan_berbeda": 2 if prof["tanggal"] else 0}))
@@ -2573,6 +2747,10 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
         df, _ = _coerce_indo_numeric_columns(df)
     except Exception:
         pass
+    # PEMBERSIH YANG SAMA dgn profil_kolom - baris rekapitulasi ("Overall"/"Total") tidak
+    # boleh ikut jadi entitas di sini. Kalau hanya profil yang dibersihkan sementara tile
+    # diagregasi ulang dari data mentah, keduanya berbeda & total tergambar dua kali lipat.
+    df, _ = buang_baris_agregat(df)
     _ien = is_english(report) if report is not None else False
 
     def _judul(t_id, t_en):
@@ -3820,9 +3998,16 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
                         continue
                     if not isinstance(c.get("value"), (int, float)):
                         continue
+                    # BUG NYATA DIPERBAIKI (terukur di laporan 188): angka yang dicetak di
+                    # samping "vs rata-rata" adalah nilai KARTU ITU SENDIRI, jadi pembaca
+                    # melihat "1.097.595 / vs rata-rata 1.097.595" - tiga kartu berturut-turut
+                    # membandingkan dirinya dgn dirinya sendiri, dan batang di bawahnya jadi
+                    # tak bermakna. Rata-ratanya sendiri hanya ada sbg garis target tanpa
+                    # angka. Yang dicetak sekarang RATA-RATA populasinya (pembanding), batang
+                    # tetap sepanjang nilai kartu, garis target tetap di rata-rata.
                     c["sub_items"] = [{
                         "label": _L(report, "vs rata-rata", "vs average"),
-                        "value": c["value"],
+                        "value": round(_avg, 1) if _avg % 1 else int(_avg),
                         "frac": c["value"] / _top,
                         "target_frac": _avg / _top,
                     }]

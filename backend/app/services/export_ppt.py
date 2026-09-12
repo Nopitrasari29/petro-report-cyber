@@ -43,7 +43,8 @@ from app.services.report_render_logic import (
     build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style,
     resolve_theme_color, best_grid_cols, _hard_truncate, _dedupe_truncated_labels, _layout_dashboard_column,
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN, _DASH_TITLE_MAX_H_IN,
-    _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content, wrap_line_count, kolom_yang_digambar, _kpi_card_widths, _NESTED_CARD_GAP_IN,
+    _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content,
+    tinggi_kartu_in, wrap_line_count, kolom_yang_digambar, _kpi_card_widths, _NESTED_CARD_GAP_IN,
     _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -894,7 +895,7 @@ def _note_box_height_in(w_in: float, lines) -> float:
         _estimate_wrapped_height_in(line, 10, text_w_in) + 0.05 for line in lines) + 0.1
 
 
-def add_note_box(slide, x, y, w, text, theme: dict | None = None, title: str = "Catatan"):
+def add_note_box(slide, x, y, w, text, theme: dict | None = None, title: str | None = None):
     """Kotak "Catatan:" (garis kiri warna aksen + bullet per kalimat, lewat add_bullet_lines
     di atas) — GANTI dari add_ai_insight_strip lama (1 baris italic polos) supaya caption AI
     terasa seperti kotak catatan di laporan referensi, BUKAN paragraf mengalir biasa (temuan
@@ -903,6 +904,8 @@ def add_note_box(slide, x, y, w, text, theme: dict | None = None, title: str = "
     overflow/kependekan kalau captionnya panjang. Return tinggi kotak (inci) supaya
     pemanggil bisa menaruh elemen berikutnya tepat di bawahnya. `text` boleh list/tuple
     (beberapa butir bernomor, kalimat utuh) — lihat add_bullet_lines."""
+    # Bawaan ikut BAHASA LAPORAN, bukan Indonesia (kembaran perbaikan di export_pdf.py).
+    title = title or ("Notes" if render_is_en() else "Catatan")
     t = theme or THEME_PALETTES["green"]
     numbered = isinstance(text, (list, tuple))
     lines = [str(l).strip() for l in text if str(l or "").strip()] if numbered else [
@@ -3900,7 +3903,9 @@ def _insight_detail_row(slide, cards: list, x_in: float, total_w_in: float, h_in
     for row_count in rows_n:
         x = x_in
         for _ in range(row_count):
-            _nested_category_card(slide, cards[idx], x, y, card_w, row_h_in, theme=theme)
+            # Kembaran perbaikan di export_pdf.py: tiap kartu setinggi ISINYA sendiri.
+            _kh = min(row_h_in, tinggi_kartu_in(cards[idx]))
+            _nested_category_card(slide, cards[idx], x, y, card_w, _kh, theme=theme)
             x += card_w + gap_in
             idx += 1
         y += row_h_in + _NESTED_CARD_ROW_GAP_IN
