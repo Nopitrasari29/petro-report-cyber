@@ -35,8 +35,4 @@ Thumbs.db
 
 # AI coding assistant instruction/notes files — local-only, not part of the project
 AGENTS.md
-CLAUDE.md
 backend_audit*.md
-
-# Claude Code: setelan lokal per-mesin, jangan ikut ter-commit
-.claude/settings.local.json
