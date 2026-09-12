@@ -651,7 +651,44 @@ def _tinggi_baris_bar(tile: dict) -> float:
     return max(_CHART_ROW_H_IN, baris * (_BAR_LABEL_PT * 1.18 / 72.0) + 14.0 / 72.0)
 
 
-def chart_min_height_in(tile: dict) -> float:
+# Teks kaki legenda kedua bentuk ternormalisasi - SATU sumber, dipakai perhitungan tinggi
+# maupun kedua renderer, supaya tinggi yang dihitung & teks yang digambar tidak bisa bergeser.
+_KAKI_TERNORM_ID = "tiap deret relatif thd maksimumnya sendiri - panjang sama BUKAN berarti nilai sama"
+_KAKI_TERNORM_EN = "each series relative to its own max - equal lengths are NOT equal values"
+_KAKI_PT = 7.0
+
+
+def tinggi_kaki_legenda(tile: dict, col_w_in: float, is_en: bool = False) -> float:
+    """Tinggi kaki legenda, DIHITUNG dari pembungkusan SEBENARNYA - bukan diperkirakan.
+
+    PERINGATAN USER (pola bug nomor 1, kandidat kedelapan di sesi ini): kalimat peringatan
+    ternormalisasi itu PANJANG. Di kolom sempit ia pecah jadi 2-3 baris, dan tingginya
+    berubah menurut lebar kolom SERTA panjang nama metriknya. Menetapkannya di muka persis
+    cacat yang sudah tujuh kali kena. Dipakai wrap_line_count yang sudah ada - bukan
+    simulator baru."""
+    k = tile.get("tile_kind")
+    if k not in ("ranked_bar_ternormalisasi", "grouped_bar_ternormalisasi"):
+        return 0.0
+    lebar_px = max(40.0, col_w_in * 96 - 30)
+    baris = 0
+    if k == "grouped_bar_ternormalisasi":
+        # baris pertama: "<metrik A> (maks N)   <metrik B> (maks N)" - panjangnya bergantung
+        # nama metriknya, jadi ikut dihitung, bukan diasumsikan satu baris.
+        legenda = "%s (maks %s)   %s (maks %s)" % (
+            tile.get("label_a", ""), _fmt_angka_ringkas(max(tile.get("series_a") or [0]) or 0),
+            tile.get("label_b", ""), _fmt_angka_ringkas(max(tile.get("series_b") or [0]) or 0))
+        baris += wrap_line_count(legenda, lebar_px, _KAKI_PT, 0.80)
+        baris += wrap_line_count(_KAKI_TERNORM_EN if is_en else _KAKI_TERNORM_ID,
+                                 lebar_px, _KAKI_PT, 0.80)
+    else:
+        sumbu = ("relative to highest - highest %s" if is_en else
+                 "relatif terhadap tertinggi - tertinggi %s") % _fmt_angka_ringkas(
+            max(tile.get("values") or [0]) or 0)
+        baris += wrap_line_count(sumbu, lebar_px, _KAKI_PT, 0.80)
+    return baris * (_KAKI_PT * 1.25 / 72.0) + 0.06
+
+
+def chart_min_height_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) -> float:
     """Tinggi MINIMUM yang dibutuhkan chart ini utk menggambar SELURUH isinya.
 
     PERMINTAAN USER (pembalikan arah tata letak): sebelumnya kartu dipesan lebih dulu &
@@ -680,6 +717,15 @@ def chart_min_height_in(tile: dict) -> float:
         return _STACKED_MIN_H_IN
     if k == "time_heatmap":
         return max(_CHART_ROW_H_IN * 0.62 * max(1, n) + 0.30, 1.2)
+    if k == "ranked_bar_ternormalisasi":
+        _rh = _tinggi_baris_bar(tile)
+        return (max(_rh * max(1, n), _rh * 2) + 0.16
+                + tinggi_kaki_legenda(tile, col_w_in, is_en))
+    if k == "grouped_bar_ternormalisasi":
+        # dua batang per baris -> tinggi baris ~1.6x ranked bar biasa
+        _rh = _tinggi_baris_bar(tile) * 1.6
+        return (max(_rh * max(1, n), _rh * 2) + 0.16
+                + tinggi_kaki_legenda(tile, col_w_in, is_en))
     if k in ("kpi_radar", "kpi_gauge"):
         return _CHART_SQUARE_MIN_H_IN
     return _CHART_AXIS_MIN_H_IN
@@ -898,7 +944,7 @@ def _layout_dashboard_column_content(
     # angka itu, kartu menyusul dari sisanya. Kalau total tidak muat, yang dikurangi
     # DICATAT ke log - tidak ada pemotongan diam di mana pun.
     tile_dipakai = tile
-    chart_h = chart_min_height_in(tile) if (has_chart and tile) else (
+    chart_h = chart_min_height_in(tile, col_w_in) if (has_chart and tile) else (
         _DASH_COLUMN_CHART_MIN_H_IN if has_chart else 0.0)
     n_gabung = 0
     if has_chart and tile and _tile_punya_segmen(tile):
@@ -2250,6 +2296,117 @@ def _semua_kandidat(parsed_data: list) -> list:
                           "keterisian": round(_isi, 2),
                           "labels": sig.get("labels") or [], "values": sig.get("values") or []})
     return hasil
+
+
+def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
+    """Ubah satu keputusan pemilih jadi tile yang bisa digambar exporter.
+
+    Bentuk chart -> tile_kind renderer yang SUDAH ADA, kecuali dua bentuk ternormalisasi yang
+    punya renderer sendiri. Angkanya diagregasi ULANG dari parsed_data lewat pandas di sini -
+    bukan dibawa dari tanda tangan - supaya yang digambar persis yang dihitung."""
+    bentuk = keputusan.get("bentuk")
+    pasangan = [x for x in (keputusan.get("pasangan") or []) if not str(x).startswith("@")]
+    labels = keputusan.get("labels") or []
+    values = [float(v or 0) for v in (keputusan.get("values") or [])]
+    if not bentuk:
+        return None
+    df = pd.DataFrame(parsed_data)
+    try:
+        df, _ = _coerce_indo_numeric_columns(df)
+    except Exception:
+        pass
+    _ien = is_english(report) if report is not None else False
+
+    def _judul(t_id, t_en):
+        return t_en if _ien else t_id
+
+    if bentuk == "ranked_bar":
+        # Bisa lahir dari pasangan (kategori, metrik) MAUPUN (kategori, metrik_a, metrik_b) -
+        # yang kedua membandingkan TOTAL dua metrik sbg dua batang, dan itu sah. Labels &
+        # values-nya sudah dibawa keputusan, jadi tidak perlu diagregasi ulang per bentuk.
+        kat = pasangan[0] if pasangan else ""
+        met = pasangan[-1] if pasangan else ""
+        palet = ["blue", "green", "amber", "orange", "gray"]
+        return {"tile_kind": "risk_heatmap", "mode": "category",
+                "kicker": _judul("DISTRIBUSI DATA", "DATA DISTRIBUTION"),
+                "title": _judul(f"{met} per {kat}", f"{met} by {kat}"),
+                "cat_col_name": kat,
+                "bars": [{"label": l, "count": v, "pct": round(100 * v / (sum(values) or 1)),
+                          "color": palet[i % len(palet)]}
+                         for i, (l, v) in enumerate(zip(labels, values))],
+                "caption": None}
+    if bentuk == "treemap":
+        return {"tile_kind": "metric_share", "labels": labels, "values": values,
+                "kicker": _judul("PANGSA PER ENTITAS", "SHARE PER ENTITY"),
+                "title": _judul(f"Pangsa {pasangan[-1]}", f"{pasangan[-1]} Share"),
+                "cat_col_name": pasangan[0] if pasangan else None, "caption": None}
+    if bentuk in ("donut", "stacked"):
+        return {"tile_kind": "metric_mix" if bentuk == "stacked" else "custom_topic",
+                "chart_style": "donut", "labels": labels, "values": values,
+                "kicker": _judul("KOMPOSISI", "COMPOSITION"),
+                "title": _judul(f"Komposisi {pasangan[-1]}", f"{pasangan[-1]} Composition"),
+                "cat_col_name": pasangan[0] if pasangan else None, "caption": None}
+    if bentuk == "ranked_bar_ternormalisasi":
+        return {"tile_kind": "ranked_bar_ternormalisasi", "labels": labels, "values": values,
+                "kicker": _judul("PERINGKAT", "RANKING"),
+                "title": _judul(f"{pasangan[-1]} per {pasangan[0]}", f"{pasangan[-1]} by {pasangan[0]}"),
+                "caption": None}
+    if bentuk in ("grouped_bar", "grouped_bar_ternormalisasi") and len(pasangan) == 3:
+        kat, ma, mb = pasangan
+        g = df.groupby(df[kat].astype(str))[[ma, mb]].sum().sort_values(ma, ascending=False)[:6]
+        if len(g) < 2:
+            return None
+        kind = "metric_compare" if bentuk == "grouped_bar" else "grouped_bar_ternormalisasi"
+        return {"tile_kind": kind,
+                "kicker": _judul("PERBANDINGAN METRIK", "METRIC COMPARISON"),
+                "title": _judul(f"{ma} vs {mb}", f"{ma} vs {mb}"),
+                "categories": pendekkan_label([str(x) for x in g.index]),
+                "series_a": [float(v) for v in g[ma].tolist()],
+                "series_b": [float(v) for v in g[mb].tolist()],
+                "label_a": str(ma), "label_b": str(mb), "cat_col_name": kat, "caption": None}
+    if bentuk == "matriks" and len(pasangan) == 2:
+        a, b = pasangan
+        ct = pd.crosstab(df[a].astype(str), df[b].astype(str))
+        if ct.empty:
+            return None
+        ct = ct.iloc[:8, :8]
+        return {"tile_kind": "time_heatmap",
+                "kicker": _judul("SILANG DIMENSI", "CROSS DIMENSION"),
+                "title": _judul(f"{a} x {b}", f"{a} x {b}"),
+                "day_labels": pendekkan_label([str(x) for x in ct.index]),
+                "hour_labels": pendekkan_label([str(x) for x in ct.columns]),
+                "grid": [[int(v) for v in row] for row in ct.values], "caption": None}
+    if bentuk == "scatter" and len(pasangan) == 3:
+        kat, ma, mb = pasangan
+        g = df.groupby(df[kat].astype(str))[[ma, mb]].sum()
+        titik = [{"label": str(i), "count": float(r[ma]), "avg": float(r[mb])}
+                 for i, r in g.iterrows()][:20]
+        if len(titik) < 3:
+            return None
+        return {"tile_kind": "scatter_bubble", "points": titik,
+                "kicker": _judul("SEBARAN DATA", "DATA SPREAD"),
+                "title": _judul(f"{ma} vs {mb}", f"{ma} vs {mb}"),
+                "x_label": str(ma), "cat_col_name": kat, "caption": None}
+    if bentuk == "bar_garis" and len(pasangan) == 2:
+        tgl, met = pasangan
+        g = df.groupby(df[tgl].astype(str))[met].sum().sort_index()[:12]
+        nilai = [float(v) for v in g.tolist()]
+        kum, s = [], 0.0
+        for v in nilai:
+            s += v
+            kum.append(s)
+        return {"tile_kind": "trend_chart",
+                "kicker": _judul("TREN & POLA", "TRENDS & PATTERNS"),
+                "title": _judul(f"{met} per periode", f"{met} over time"),
+                "chart": {"type": "bar_line", "categories": [str(x) for x in g.index],
+                          "values": nilai, "cumulative": kum}, "caption": None}
+    if bentuk == "radar":
+        return {"tile_kind": "kpi_radar", "axes": [str(x) for x in labels[:6]],
+                "values": [round(v, 1) for v in (keputusan.get("indikator") or values)[:6]],
+                "kicker": _judul("PERBANDINGAN INDIKATOR", "INDICATOR COMPARISON"),
+                "title": _judul("Perbandingan Multi-Indikator", "Multi-Indicator Comparison"),
+                "caption": None}
+    return None
 
 
 _BOBOT_VARIASI = 0.6

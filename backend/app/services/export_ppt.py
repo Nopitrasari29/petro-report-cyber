@@ -1890,6 +1890,98 @@ def add_heatmap_grid(slide, x, y, cx, cy, day_labels, hour_labels, grid, color=N
                 _set_font(vp, BODY_FONT, Pt(7), color=(WHITE if frac > 0.5 else TEXT_DARK))
 
 
+def add_ranked_bar_ternorm(slide, x, y, cx, cy, labels, values, color=None, is_en=False):
+    """Kembaran _ranked_bar_ternorm_html di export_pdf.py - lihat catatan lengkap di sana.
+
+    Panjang relatif thd tertinggi, NILAI ASLI di ujung tiap batang, sumbu berlabel eksplisit."""
+    if not values:
+        return
+    warna = color or GREEN_MAIN
+    maks = max(values) or 1
+    x_in, y_in = Emu(x).inches, Emu(y).inches
+    w_in, h_in = Emu(cx).inches, Emu(cy).inches
+    lbl_w, val_w, kaki = 1.45, 1.0, 0.22
+    track_w = max(0.5, w_in - lbl_w - val_w - 0.15)
+    n = max(1, len(values))
+    row_h = max(0.18, (h_in - kaki) / n)
+    for i, (lbl, val) in enumerate(zip(labels, values)):
+        ty = y_in + i * row_h
+        tb = slide.shapes.add_textbox(Inches(x_in), Inches(ty), Inches(lbl_w), Inches(row_h))
+        tp = tb.text_frame.paragraphs[0]
+        tp.text = str(lbl)
+        _set_font(tp, BODY_FONT, Pt(9.5), color=TEXT_DARK)
+        trek = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in + lbl_w),
+                                      Inches(ty + row_h * 0.28), Inches(track_w), Inches(max(0.1, row_h * 0.42)))
+        trek.fill.solid(); trek.fill.fore_color.rgb = PANEL_BORDER
+        trek.line.fill.background(); _no_shadow(trek)
+        frac = max(0.012, float(val) / maks)
+        isi = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in + lbl_w),
+                                     Inches(ty + row_h * 0.28), Inches(max(0.05, track_w * frac)),
+                                     Inches(max(0.1, row_h * 0.42)))
+        isi.fill.solid(); isi.fill.fore_color.rgb = _as_rgb(warna, GREEN_MAIN)
+        isi.line.fill.background(); _no_shadow(isi)
+        vb = slide.shapes.add_textbox(Inches(x_in + lbl_w + track_w + 0.06), Inches(ty),
+                                      Inches(val_w), Inches(row_h))
+        vp = vb.text_frame.paragraphs[0]
+        vp.text = _fmt_num(val)
+        vp.alignment = PP_ALIGN.RIGHT
+        _set_font(vp, BODY_FONT, Pt(9.5), bold=True, color=TEXT_DARK)
+    sb = slide.shapes.add_textbox(Inches(x_in), Inches(y_in + h_in - kaki), Inches(w_in), Inches(kaki))
+    sp = sb.text_frame.paragraphs[0]
+    sp.text = ("relative to highest - highest %s" if is_en else "relatif terhadap tertinggi - tertinggi %s") % _fmt_num(maks)
+    _set_font(sp, BODY_FONT, Pt(7), color=GRAY_TEXT)
+
+
+def add_grouped_bar_ternorm(slide, x, y, cx, cy, labels, seri_a, seri_b, label_a="", label_b="",
+                            color_a=None, color_b=None, is_en=False):
+    """Kembaran _grouped_bar_ternorm_html di export_pdf.py - lihat catatan lengkap di sana.
+
+    Tiap deret dinormalkan ke MAKSIMUMNYA SENDIRI, jadi dua batang SAMA PANJANG tidak berarti
+    nilainya sama - karena itu tiap deret membawa maksimumnya sendiri di legenda, dan nilai
+    asli tetap tertulis di ujung tiap batang."""
+    if not labels:
+        return
+    ca = _as_rgb(color_a, GREEN_MAIN)
+    cb = _as_rgb(color_b, GOLD_MAIN)
+    maks_a, maks_b = max(seri_a) or 1, max(seri_b) or 1
+    x_in, y_in = Emu(x).inches, Emu(y).inches
+    w_in, h_in = Emu(cx).inches, Emu(cy).inches
+    lbl_w, val_w, kaki = 1.3, 0.95, 0.36
+    track_w = max(0.5, w_in - lbl_w - val_w - 0.15)
+    n = max(1, len(labels))
+    row_h = max(0.22, (h_in - kaki) / n)
+    for i, (lbl, va, vb) in enumerate(zip(labels, seri_a, seri_b)):
+        ty = y_in + i * row_h
+        tb = slide.shapes.add_textbox(Inches(x_in), Inches(ty), Inches(lbl_w), Inches(row_h))
+        tp = tb.text_frame.paragraphs[0]
+        tp.text = str(lbl)
+        _set_font(tp, BODY_FONT, Pt(9), color=TEXT_DARK)
+        for j, (val, maks, warna) in enumerate(((va, maks_a, ca), (vb, maks_b, cb))):
+            by = ty + 0.02 + j * (row_h * 0.45)
+            bh = max(0.07, row_h * 0.34)
+            frac = max(0.012, float(val) / maks)
+            b = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x_in + lbl_w), Inches(by),
+                                       Inches(max(0.05, track_w * frac)), Inches(bh))
+            b.fill.solid(); b.fill.fore_color.rgb = warna
+            b.line.fill.background(); _no_shadow(b)
+            vbx = slide.shapes.add_textbox(Inches(x_in + lbl_w + track_w + 0.05), Inches(by - 0.03),
+                                           Inches(val_w), Inches(bh + 0.08))
+            vp = vbx.text_frame.paragraphs[0]
+            vp.text = _fmt_num(val)
+            vp.alignment = PP_ALIGN.RIGHT
+            _set_font(vp, BODY_FONT, Pt(7.5), bold=True, color=TEXT_DARK)
+    mk = "max" if is_en else "maks"
+    lb = slide.shapes.add_textbox(Inches(x_in), Inches(y_in + h_in - kaki), Inches(w_in), Inches(kaki))
+    lp = lb.text_frame.paragraphs[0]
+    lp.text = "%s (%s %s)   %s (%s %s)" % (label_a, mk, _fmt_num(maks_a), label_b, mk, _fmt_num(maks_b))
+    _set_font(lp, BODY_FONT, Pt(7), color=GRAY_TEXT)
+    lp2 = lb.text_frame.add_paragraph()
+    lp2.text = ("each series relative to its own max - equal lengths are NOT equal values"
+                if is_en else
+                "tiap deret relatif thd maksimumnya sendiri - panjang sama BUKAN berarti nilai sama")
+    _set_font(lp2, BODY_FONT, Pt(7), color=GRAY_TEXT)
+
+
 def add_funnel_chart(slide, x, y, cx, cy, categories, values, color=None):
     """Alur bertingkat (mis. status penanganan Open -> Investigating -> Resolved) — batang
     melebar/menyempit sesuai proporsi tiap tahap, ditumpuk vertikal dari terbesar ke terkecil

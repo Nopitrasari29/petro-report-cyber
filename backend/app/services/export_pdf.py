@@ -980,6 +980,98 @@ def _scatter_bubble_svg(points, x_key="count", y_key="avg", size_key=None, color
     return f'<div style="text-align:center;">{"".join(parts)}</div>'
 
 
+def _ranked_bar_ternorm_html(labels, values, color=None, is_en=False) -> str:
+    """Ranked bar TERNORMALISASI - panjang relatif, angka tetap absolut.
+
+    Dipakai saat batang terkecil < 2% dari terbesar: di bawah itu batangnya praktis garis &
+    panjangnya tidak bisa dibedakan. Skala log SENGAJA TIDAK dipakai - pembaca non-teknis
+    membaca panjang batang sbg besaran, dan log memutus hubungan itu DIAM-DIAM (kelas
+    kesalahan yang sama dgn pemotongan diam: pembaca tidak punya cara tahu).
+
+    TIGA SYARAT yang membuat normalisasi jujur:
+      1. tiap nilai dinormalkan ke MAKSIMUM deret ini;
+      2. sumbu diberi label EKSPLISIT ("relatif terhadap tertinggi"), tidak tersirat;
+      3. NILAI ASLI tertulis di ujung tiap batang - tanpa ini normalisasi jadi pemotongan
+         diam dalam bentuk lain."""
+    if not values:
+        return ""
+    warna = color or GREEN_MAIN
+    maks = max(values) or 1
+    baris = []
+    for lbl, val in zip(labels, values):
+        pct = max(1.2, (float(val) / maks) * 100.0)
+        baris.append(
+            f'<tr>'
+            f'<td style="width:150px;padding:6pt 8pt 6pt 0;font-size:9.5pt;color:{TEXT_DARK};'
+            f'vertical-align:middle;">{_esc(str(lbl))}</td>'
+            f'<td style="vertical-align:middle;padding:6pt 0;">'
+            f'<table style="width:100%;background:{PANEL_BORDER};border-radius:4px;" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="width:{pct:.2f}%;background:{warna};height:14px;border-radius:4px;font-size:1px;line-height:1px;">&nbsp;</td>'
+            f'<td></td></tr></table></td>'
+            f'<td style="width:96px;text-align:right;padding:6pt 0 6pt 8pt;font-size:9.5pt;'
+            f'font-weight:700;color:{TEXT_DARK};vertical-align:middle;">{_fmt_num(val)}</td>'
+            f'</tr>'
+        )
+    sumbu = "relative to highest" if is_en else "relatif terhadap tertinggi"
+    return (
+        f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">'
+        f'{"".join(baris)}</table>'
+        f'<div style="font-size:7pt;color:{GRAY_TEXT};margin-top:3pt;">'
+        f'| {_esc(sumbu)} &mdash; {_esc("highest" if is_en else "tertinggi")} {_fmt_num(maks)}</div>'
+    )
+
+
+def _grouped_bar_ternorm_html(labels, seri_a, seri_b, label_a="", label_b="",
+                              color_a=None, color_b=None, is_en=False) -> str:
+    """Grouped bar TERNORMALISASI - tiap deret ke MAKSIMUMNYA SENDIRI.
+
+    Dipakai saat rasio antar metrik >= 20x. Ambang 20x sengaja TIDAK dilonggarkan: rasio
+    100x berarti batang terkecil 1% dari terbesar, sementara 2% sudah ditetapkan sbg ambang
+    keterbacaan ranked bar - melonggarkannya berarti dua standar berbeda utk masalah visual
+    yang sama.
+
+    BAHAYA KHAS BENTUK INI (permintaan user, ditangani eksplisit): karena tiap deret
+    dinormalkan ke maksimumnya SENDIRI, dua batang bersebelahan yang SAMA PANJANG TIDAK
+    berarti nilainya sama. Satu label sumbu tidak cukup menyampaikan itu - jadi tiap deret
+    membawa MAKSIMUMNYA SENDIRI di legenda ("Illegal (maks 66)", "Legal (maks 71.034)"),
+    supaya panjang batang bisa dibaca sbg proporsi thd angka yang tertulis. Dan nilai ASLI
+    tetap tertulis di ujung tiap batang."""
+    if not labels:
+        return ""
+    ca, cb = color_a or GREEN_MAIN, color_b or GOLD_MAIN
+    maks_a = max(seri_a) or 1
+    maks_b = max(seri_b) or 1
+    baris = []
+    for lbl, va, vb in zip(labels, seri_a, seri_b):
+        pa = max(1.2, (float(va) / maks_a) * 100.0)
+        pb = max(1.2, (float(vb) / maks_b) * 100.0)
+        sel = []
+        for pct, val, warna in ((pa, va, ca), (pb, vb, cb)):
+            sel.append(
+                f'<table style="width:100%;background:{PANEL_BORDER};border-radius:3px;margin-bottom:2pt;" cellpadding="0" cellspacing="0"><tr>'
+                f'<td style="width:{pct:.2f}%;background:{warna};height:9px;border-radius:3px;font-size:1px;line-height:1px;">&nbsp;</td>'
+                f'<td style="text-align:right;font-size:7.5pt;font-weight:700;color:{TEXT_DARK};'
+                f'padding-left:5px;white-space:nowrap;">{_fmt_num(val)}</td></tr></table>'
+            )
+        baris.append(
+            f'<tr><td style="width:130px;padding:5pt 8pt 5pt 0;font-size:9pt;color:{TEXT_DARK};'
+            f'vertical-align:middle;">{_esc(str(lbl))}</td>'
+            f'<td style="vertical-align:middle;padding:5pt 0;">{"".join(sel)}</td></tr>'
+        )
+    mk = "max" if is_en else "maks"
+    legenda = (
+        f'<div style="font-size:7pt;color:{GRAY_TEXT};margin-top:3pt;">'
+        f'<span style="display:inline-block;width:7px;height:7px;background:{ca};margin-right:4px;"></span>'
+        f'{_esc(label_a)} ({mk} {_fmt_num(maks_a)}) &nbsp;&nbsp;'
+        f'<span style="display:inline-block;width:7px;height:7px;background:{cb};margin-right:4px;"></span>'
+        f'{_esc(label_b)} ({mk} {_fmt_num(maks_b)})<br>'
+        f'{_esc("each series relative to its own max - equal lengths are NOT equal values" if is_en else "tiap deret relatif thd maksimumnya sendiri - panjang sama BUKAN berarti nilai sama")}'
+        f'</div>'
+    )
+    return (f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">'
+            f'{"".join(baris)}</table>{legenda}')
+
+
 def _funnel_chart_svg(categories, values, color=None, size_w=320, size_h=200) -> str:
     """Alur bertingkat (mis. status penanganan Open -> Investigating -> Resolved) — batang
     melebar/menyempit sesuai proporsi tiap tahap, ditumpuk vertikal dari terbesar ke terkecil."""
