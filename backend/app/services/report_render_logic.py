@@ -1763,6 +1763,80 @@ def _verify_narrative_sentences(text: str, report_stats: dict, field_name: str =
 _AFFIX_BOUNDARY_CHARS = set("/.-_ ")
 
 
+_PEMISAH_SEGMEN = "/."
+
+
+def pendekkan_label(labels: list) -> list:
+    """Pendekkan tiap label dgn membuang SEGMEN yang dipakai bersama, bukan awalan bersama.
+
+    KENAPA BUKAN _strip_common_affix: fungsi itu memotong AWALAN/AKHIRAN yang sama persis di
+    SELURUH label, jadi ia mati begitu himpunannya heterogen. Terukur: pada
+    ["Overall", "/Common/vs.ams.petrokimia-gresik.com", ...] tidak ada awalan bersama sama
+    sekali, jadi tidak ada yang dipendekkan & ranked bar gagal krn namanya tidak muat.
+    Confound yang sama persis dgn glyph "▣ Overall" - perbaikan berbasis "bagian bersama"
+    selalu mati pada himpunan campuran.
+
+    Cara ini bekerja per SEGMEN (dipisah "/" dan "."): segmen yang muncul di >= setengah
+    label dianggap boilerplate & dibuang dari label yang memuatnya; label yang tidak
+    memuatnya (mis. "Overall") tidak tersentuh sama sekali.
+
+    JAMINAN:
+      - deterministik: hasilnya hanya bergantung pada daftar masukan;
+      - TIDAK menghasilkan dua label sama: kalau bentuk pendeknya bertabrakan, segmen
+        pembeda dikembalikan satu per satu sampai unik lagi;
+      - TIDAK memakai elipsis: kalau setelah dipendekkan tetap tidak muat, itu keputusan
+        PEMILIH CHART (bentuk ini tidak cocok), bukan keputusan pemotong teks.
+    """
+    asli = [str(x) for x in (labels or [])]
+    if len(asli) < 2:
+        return asli
+
+    def segmen(t):
+        out, buf = [], ""
+        for ch in t:
+            if ch in _PEMISAH_SEGMEN:
+                if buf:
+                    out.append(buf)
+                buf = ""
+            else:
+                buf += ch
+        if buf:
+            out.append(buf)
+        return out
+
+    segs = [segmen(t) for t in asli]
+    hitung: dict = {}
+    for s in segs:
+        for bagian in set(s):
+            hitung[bagian] = hitung.get(bagian, 0) + 1
+    ambang = max(2, (len(asli) + 1) // 2)
+    boilerplate = {b for b, n in hitung.items() if n >= ambang}
+
+    hasil = []
+    for s, t in zip(segs, asli):
+        sisa = [b for b in s if b not in boilerplate]
+        hasil.append(".".join(sisa) if sisa else t)
+
+    # tabrakan: kembalikan segmen pembeda sampai unik
+    for _ in range(4):
+        bentrok = {h for h in hasil if hasil.count(h) > 1}
+        if not bentrok:
+            break
+        for idx, h in enumerate(hasil):
+            if h not in bentrok:
+                continue
+            s = segs[idx]
+            sisa = [b for b in s if b not in boilerplate]
+            tambahan = [b for b in s if b in boilerplate][:1]
+            hasil[idx] = ".".join(tambahan + sisa) if (tambahan or sisa) else asli[idx]
+        boilerplate = set(list(boilerplate)[1:]) if boilerplate else boilerplate
+    # jaminan terakhir: kalau masih bentrok, pakai label aslinya (utuh, tidak dipotong)
+    for idx, h in enumerate(hasil):
+        if hasil.count(h) > 1:
+            hasil[idx] = asli[idx]
+    return hasil
+
+
 def _strip_common_affix(labels: list) -> list:
     """PERMINTAAN USER: label kartu bersarang sempit (~1.74in) - nama aset F5 BIG-IP mentah
     (mis. "/Common/vs.bimbingankp.petrokimia-gresik.com") jauh lebih panjang dari itu, DILARANG
@@ -2188,7 +2262,7 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
 
     max_val = items[0][1] or 1
     shown_items = items[:_NESTED_CARD_MAX_TOTAL]
-    display_names = _strip_common_affix([name for name, _ in shown_items])
+    display_names = pendekkan_label([name for name, _ in shown_items])
     category_details = []
     for (name, val), display_name in zip(shown_items, display_names):
         frac = val / max_val
@@ -5019,7 +5093,7 @@ def build_management_report_blocks(report) -> list[dict]:
                 "tile_kind": "metric_share",
                 "kicker": L("PANGSA PER ENTITAS", "SHARE PER ENTITY"),
                 "title": L(f"Pangsa {_big_label} per {_mcat_label}", f"{_big_label} Share by {_mcat_label}"),
-                "labels": _strip_common_affix([str(i.get("label")) for i in _big_items]),
+                "labels": pendekkan_label([str(i.get("label")) for i in _big_items]),
                 "values": [i.get("value") or 0 for i in _big_items],
                 "cat_col_name": _mcat,
                 "caption": L(
@@ -5232,6 +5306,10 @@ def build_management_report_blocks(report) -> list[dict]:
         else:
             tile_labels = tile_values = None
         if tile_labels:
+            # ITEM 8: label dipendekkan PER LABEL sebelum bentuk chart dipilih - urutannya
+            # penting, krn panjang label menentukan tinggi minimum chart (chart_min_height_in)
+            # yang menentukan apakah tile muat, yang menentukan apakah kolomnya dibuang.
+            tile_labels = pendekkan_label(tile_labels)
             style = _choose_categorical_chart_style(tile_labels, tile_values)
             visual_tiles.append({
                 "tile_kind": "custom_topic",
