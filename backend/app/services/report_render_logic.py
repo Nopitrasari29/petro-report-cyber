@@ -2060,6 +2060,13 @@ _SIG_SEGMEN_MIN_FRAC = 0.08
 _SIG_TERATAS_TIMPANG = 0.50
 _SIG_BATANG_MIN_FRAC = 0.02
 _SIG_MATRIKS_MAKS_SEL = 60
+# Ambang "data sempit" untuk dimensi turunan: jumlah pasangan MENTAH (kategori x metrik).
+# F5 = 1x2 = 2 (diturunkan), 186 = 2x8 = 16 (tidak). Batas jumlah kolom turunan menjaga
+# ruang kandidat tetap bisa dihitung.
+_AMBANG_DATA_SEMPIT = 6
+_MAKS_RASIO_TURUNAN = 3
+_MAKS_KELOMPOK_TURUNAN = 2
+
 _SIG_SCATTER_MIN_BARIS = 15
 # SEBARAN SUMBU SCATTER, diukur sbg PEMUSATAN, bukan rentang.
 # Penjaga lama memakai "rentang >= 20% dari nilai terbesar" - dan laporan 188 LOLOS dgn
@@ -2105,6 +2112,16 @@ def _kolom_identifier(s) -> bool:
     return len(beda) == 1 and float(beda[0]) != 0.0
 
 
+# Kata KONSEP untuk kolom turunan. Nama kolom turunan panjang & teknis ("Rasio Illegal
+# Requests:Legal Requests"), sementara judul seksi menyebut KONSEPNYA ("Summary of Traffic
+# Ratios", "Request Volume Comparison"). Tanpa pemetaan konsep, dua seksi itu gagal memetakan
+# walaupun kolom yang mereka minta SUDAH ADA - terukur di laporan 187 & 184.
+_KONSEP_TURUNAN = (
+    (("ratio", "rasio", "perbandingan", "comparison", "vs "), ("rasio ", "ratio ")),
+    (("volume", "band", "kelompok", "tier", "segment"), ("kelompok ", "band")),
+)
+
+
 def subjek_seksi(sec: dict, kolom_tersedia: list) -> set:
     """KOLOM yang jadi SUBJEK satu seksi - bukan bentuk chart-nya.
 
@@ -2132,6 +2149,18 @@ def subjek_seksi(sec: dict, kolom_tersedia: list) -> set:
         nama = str(kol).strip().lower()
         if len(nama) >= 3 and nama in teks:
             keluar.add(kol)
+    if keluar:
+        return keluar
+    # Belum ketemu lewat nama kolom -> coba lewat KONSEP kolom turunan.
+    for kata_seksi, kata_kolom in _KONSEP_TURUNAN:
+        if not any(k in teks for k in kata_seksi):
+            continue
+        for kol in kolom_tersedia:
+            n = str(kol).strip().lower()
+            if any(n.startswith(k) or n.endswith(k.strip()) for k in kata_kolom):
+                keluar.add(kol)
+        if keluar:
+            return keluar
     return keluar
 
 
@@ -2593,7 +2622,7 @@ def buang_baris_agregat(df):
     return df, dibuang
 
 
-def profil_kolom(parsed_data: list) -> dict:
+def profil_kolom(parsed_data: list, boleh_turunan: bool = True) -> dict:
     """Profil kolom mentah, dipilah jadi KATEGORI / METRIK / TANGGAL / IDENTIFIER / TURUNAN.
 
     Tiga perbaikan (permintaan user) atas versi pertama:
@@ -2604,7 +2633,8 @@ def profil_kolom(parsed_data: list) -> dict:
     """
     if not parsed_data:
         return {"df": None, "kategori": [], "metrik": [], "turunan": [], "tanggal": [],
-                "identifier": [], "satuan": {}, "urutan_bermakna": {}, "n_baris": 0}
+                "identifier": [], "satuan": {}, "urutan_bermakna": {},
+                "rumus_turunan": {}, "induk_turunan": {}, "n_baris": 0}
     df = pd.DataFrame(parsed_data)
     # PAKAI PENGENALAN ANGKA YANG SUDAH ADA, jangan menulis sendiri. _coerce_indo_numeric_columns
     # mengenali angka format Indonesia ("40.000.000" -> 40000000) & satuannya (Rp / %). Versi
@@ -2656,6 +2686,82 @@ def profil_kolom(parsed_data: list) -> dict:
                    for komb in itertools.combinations(lain, n)):
                 turunan.append(c)
                 break
+    # ---- DIMENSI TURUNAN ------------------------------------------------------------
+    # Pemilih hanya memasangkan kolom yang SUDAH ADA; untuk data sesempit F5 (1 kategori x
+    # 2 metrik efektif) itu berarti 3 pasangan dan mentok di 3 chart. Dua dimensi diturunkan
+    # dari data yang sama - bukan optimasi, melainkan satu-satunya cara menambah isi.
+    #
+    # SYARAT YANG DISEPAKATI, ditegakkan di sini:
+    #   - labelnya MENYATAKAN dirinya turunan ("Rasio"/"Ratio", "Kelompok"/"Band"),
+    #   - rumusnya dibawa (rumus_turunan) & dicetak di keterangan chart,
+    #   - turunan TIDAK dipasangkan dgn induknya (induk_turunan, ditegakkan _pasangan_sah).
+    #
+    # HANYA UNTUK DATA SEMPIT. Turunan ada supaya data yang pasangannya sedikit tetap bisa
+    # menghasilkan beberapa chart - bukan supaya data yang sudah kaya makin banyak. Tanpa
+    # batas ini laporan 186 (8 metrik) melahirkan 28 kolom rasio + 8 kolom kelompok dan ruang
+    # kandidatnya meledak: pengukuran seksi yang tadinya hitungan detik tidak rampung dalam
+    # 10 menit. Ambang dihitung dari pasangan MENTAH (kategori x metrik): F5 = 1x2 = 2,
+    # 186 = 2x8 = 16.
+    metrik_asli = [c for c in metrik if c not in turunan]
+    _rumus: dict = {}
+    _induk: dict = {}
+    # KEPUTUSAN SEMPIT/TIDAK DIAMBIL SEKALI DI TINGKAT ATAS lalu diturunkan (boleh_turunan).
+    # Data bersusun (kolom Section) diprofilkan ULANG per bagian, dan di tiap bagian sebagian
+    # metrik kosong sehingga hitungannya turun di bawah ambang - laporan 186 lolos lewat jalur
+    # itu & melahirkan 95 chart tambahan padahal datanya justru yang paling kaya.
+    if boleh_turunan and len(kategori) * len(metrik_asli) <= _AMBANG_DATA_SEMPIT:
+        # (1) RASIO antar dua metrik -> METRIK baru. Hanya kalau rasionya bermakna: penyebut
+        # positif di mayoritas baris, dan hasilnya bukan konstanta.
+        for ma, mb in itertools.combinations(metrik_asli, 2):
+            if len(_induk) >= _MAKS_RASIO_TURUNAN:
+                break
+            sa = pd.to_numeric(df[ma], errors="coerce")
+            sb = pd.to_numeric(df[mb], errors="coerce")
+            sah = sb.notna() & (sb > 0) & sa.notna()
+            if sah.sum() < max(3, int(0.5 * len(df))):
+                continue
+            rasio = (sa / sb).where(sah)
+            if rasio.dropna().nunique() < 3:
+                continue
+            nama = ("Ratio %s:%s" if render_is_en() else "Rasio %s:%s") % (ma, mb)
+            if nama in df.columns:
+                continue
+            df[nama] = rasio
+            metrik.append(nama)
+            _rumus[nama] = "%s / %s" % (ma, mb)
+            _induk[nama] = {ma, mb}
+
+        # (2) BIN volume -> KATEGORI baru: entitas dikelompokkan menurut besaran metriknya,
+        # jadi kolom kategori KEDUA - yang membuka matriks & silang dimensi.
+        _n_kelompok = 0
+        for met in metrik_asli:
+            if _n_kelompok >= _MAKS_KELOMPOK_TURUNAN:
+                break
+            sm = pd.to_numeric(df[met], errors="coerce")
+            if sm.notna().sum() < 6 or sm.dropna().nunique() < 6:
+                continue
+            try:
+                q = sm.quantile([0.0, 1 / 3, 2 / 3, 1.0]).tolist()
+            except Exception:
+                continue
+            if len({round(x, 9) for x in q}) < 4:
+                continue
+            nama = ("%s Band" if render_is_en() else "Kelompok %s") % met
+            if nama in df.columns:
+                continue
+            _lbl = ["Low", "Medium", "High"] if render_is_en() else ["Rendah", "Sedang", "Tinggi"]
+            df[nama] = pd.cut(sm, bins=q, labels=_lbl, include_lowest=True).astype(str)
+            if df[nama].nunique() < 2:
+                df.drop(columns=[nama], inplace=True)
+                continue
+            _n_kelompok += 1
+            kategori.append(nama)
+            _rumus[nama] = (("%s split into three equal-sized bands (%.0f / %.0f / %.0f)"
+                             if render_is_en()
+                             else "%s dibagi tiga kelompok sama banyak (%.0f / %.0f / %.0f)")
+                            % (met, q[1], q[2], q[3]))
+            _induk[nama] = {met}
+
     # ---- KOLOM YANG URUTANNYA BERMAKNA ----------------------------------------------
     # Tanggal SELALU masuk; kategori masuk kalau nilainya skala ordinal (lihat urutan_ordinal).
     # Bentuk yang MENGURUTKAN ULANG menurut besaran (ranked_bar, treemap, donut) menolak kolom
@@ -2672,6 +2778,7 @@ def profil_kolom(parsed_data: list) -> dict:
     return {"df": df, "kategori": kategori, "tanggal": tanggal, "identifier": identifier,
             "turunan": turunan, "metrik": [c for c in metrik if c not in turunan],
             "satuan": _satuan or {}, "urutan_bermakna": urutan,
+            "rumus_turunan": _rumus, "induk_turunan": _induk,
             "agregat_dibuang": _agregat_dibuang,
             "n_baris": len(df)}
 
@@ -2696,7 +2803,8 @@ def _bagian_data(df):
     return [(v, df[df[_KOLOM_SECTION].astype(str) == v]) for v in nilai]
 
 
-def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
+def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None,
+                    boleh_turunan: bool | None = None) -> list:
     """Nilai SEMUA pasangan terhadap SELURUH tabel tanda tangan - tanpa berhenti di tengah.
 
     KOREKSI USER: versi sebelumnya menilai pasangan berurutan sampai KUOTA habis, jadi
@@ -2705,7 +2813,12 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
     (terukur: 183 turun dari 8 keputusan jadi 2 padahal pasangannya masih banyak).
     Sekarang tidak ada kuota sama sekali di tahap ini."""
     kolom_w_in = float(kolom_w_in or _KOLOM_ACUAN_W_IN)
-    prof = profil_kolom(parsed_data)
+    if boleh_turunan is None:
+        # Dinilai SEKALI dari data UTUH, sebelum pemecahan per bagian.
+        _p0 = profil_kolom(parsed_data, boleh_turunan=False)
+        boleh_turunan = (len(_p0.get("kategori") or []) * len(_p0.get("metrik") or [])
+                         <= _AMBANG_DATA_SEMPIT)
+    prof = profil_kolom(parsed_data, boleh_turunan=boleh_turunan)
     df = prof.get("df")
     if df is None or df.empty:
         return []
@@ -2722,7 +2835,7 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
         _hasil = []
         _metrik_bersama = [m for m in mets if all(g[m].notna().any() for _, g in _bagian)]
         for _nama, _g in _bagian:
-            for k in _semua_kandidat(_g.to_dict("records"), kolom_w_in):
+            for k in _semua_kandidat(_g.to_dict("records"), kolom_w_in, boleh_turunan):
                 k["pasangan"] = tuple(list(k["pasangan"]) + ["@" + str(_nama)[:18]])
                 _hasil.append(k)
         for m in _metrik_bersama:
@@ -2875,6 +2988,18 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
                 "keterisian": float(min(df[ma].notna().mean(), df[mb].notna().mean())),
                 "bagian_dari_total": False, "rasio_metrik": None, "sel_silang": None}))
 
+    _induk_turunan = prof.get("induk_turunan") or {}
+
+    def _pasangan_sah(kolom_pasangan) -> bool:
+        """Turunan TIDAK boleh dipasangkan dgn induknya - "Rasio A:B vs A" membandingkan
+        angka dgn dirinya sendiri yang dibagi sesuatu, dan "Kelompok X vs X" cuma
+        menggambar ulang kolom yang sama dalam bentuk kasar."""
+        ks = {str(x) for x in kolom_pasangan if not str(x).startswith("@")}
+        for k in ks:
+            if ks & (_induk_turunan.get(k) or set()):
+                return False
+        return True
+
     _urutan = prof.get("urutan_bermakna") or {}
     for kat in kats:
         _urut_kat = _urutan.get(kat)
@@ -2907,10 +3032,16 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
                 "bagian_dari_total": True, "rasio_metrik": None, "sel_silang": None}))
 
     hasil = []
+    kand = [(p, g) for p, g in kand if _pasangan_sah(p)]
     for pasangan, sig in kand:
         # LEBAR KOLOM masuk tanda tangan. Bentuk yang butuh kotak lebih besar dari yang
         # tersedia bukan kandidat - jadi pasangannya bisa dipakai bentuk lain, bukan hangus.
         sig.setdefault("kolom_w_in", kolom_w_in)
+        # RUMUS kolom turunan yang terlibat di pasangan ini - wajib tertulis di chart/
+        # keterangannya, supaya pembaca tahu "Rasio Illegal:Legal" itu DIHITUNG, bukan
+        # kolom asli yang ada di datanya.
+        _rt = prof.get("rumus_turunan") or {}
+        sig["rumus_dipakai"] = {str(x): _rt[str(x)] for x in pasangan if str(x) in _rt}
         # SATU PASANGAN -> SATU KANDIDAT PER BENTUK YANG COCOK, bukan cabang pertama saja.
         cocok = bentuk_yang_cocok(sig)
         if not cocok:
@@ -2928,6 +3059,7 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None) -> list:
                           "n_entitas_penuh": sig.get("n_entitas_penuh"),
                           "total_entitas_penuh": sig.get("total_entitas_penuh"),
                           "nilai_penuh": sig.get("nilai_penuh"),
+                          "rumus_dipakai": sig.get("rumus_dipakai") or {},
                           "labels": sig.get("labels") or [], "values": sig.get("values") or []})
     return hasil
 
@@ -2944,15 +3076,18 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
     values = [float(v or 0) for v in (keputusan.get("values") or [])]
     if not bentuk:
         return None
-    df = pd.DataFrame(parsed_data)
-    try:
-        df, _ = _coerce_indo_numeric_columns(df)
-    except Exception:
-        pass
-    # PEMBERSIH YANG SAMA dgn profil_kolom - baris rekapitulasi ("Overall"/"Total") tidak
-    # boleh ikut jadi entitas di sini. Kalau hanya profil yang dibersihkan sementara tile
-    # diagregasi ulang dari data mentah, keduanya berbeda & total tergambar dua kali lipat.
-    df, _ = buang_baris_agregat(df)
+    _rumus_dipakai = keputusan.get("rumus_dipakai") or {}
+    # SATU SUMBER DATAFRAME: dipakai profil_kolom, bukan dibangun ulang di sini.
+    # BUG NYATA (KeyError 'Kelompok CVSS' di laporan 158): fungsi ini dulu membangun
+    # DataFrame-nya SENDIRI dari parsed_data, jadi kolom TURUNAN yang lahir di profil_kolom
+    # (rasio & kelompok) tidak ada di sini - dan bentuk yang mengagregasi ulang
+    # (grouped_bar/matriks/scatter/bar_garis) mencari kolom yang tidak pernah dibuat.
+    # Kelas yang sama dgn pembersih baris agregat dulu: dua tempat menghitung hal yang sama,
+    # lalu berbeda. Pembersihan angka & baris agregat juga sudah dilakukan profil_kolom.
+    _prof = profil_kolom(parsed_data)
+    df = _prof.get("df")
+    if df is None or df.empty:
+        return None
     _ien = is_english(report) if report is not None else False
 
     def _judul(t_id, t_en):
@@ -6699,6 +6834,13 @@ def build_management_report_blocks(report) -> list[dict]:
                 continue
             # POPULASI PENUH ditempel di SATU tempat (bukan di tiap cabang bangun_tile):
             # catatan agregat butuh tahu berapa entitas yang TIDAK tergambar.
+            # RUMUS KOLOM TURUNAN ditempel ke keterangan - syarat yang disepakati: pembaca
+            # harus tahu kolom itu dihitung, bukan kolom asli. Satu tempat, semua bentuk.
+            _rd = _k.get("rumus_dipakai") or {}
+            if _rd:
+                _teks = "; ".join(f"{k} = {v}" for k, v in _rd.items())
+                _awal = "Derived: " if is_english(report) else "Turunan: "
+                _t["caption"] = ((_t.get("caption") + " ") if _t.get("caption") else "") + _awal + _teks + "."
             if _k.get("n_entitas_penuh"):
                 _t["n_entitas_penuh"] = int(_k["n_entitas_penuh"])
                 _t["total_entitas_penuh"] = float(_k.get("total_entitas_penuh") or 0)
