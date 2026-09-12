@@ -25,7 +25,7 @@ from app.services.report_render_logic import (
     build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style,
     resolve_theme_color, best_grid_cols, _hard_truncate, _dedupe_truncated_labels, _layout_dashboard_column,
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MAIN_VISUAL_RANGE_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN,
-    _DASH_TITLE_MAX_H_IN, _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content, _kpi_card_widths,
+    _DASH_TITLE_MAX_H_IN, _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content, wrap_line_count, muat_catatan, kolom_yang_digambar, _kpi_card_widths,
     _NESTED_CARD_GAP_IN, _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -603,14 +603,18 @@ def _bar_line_chart_svg(categories, values, cumulative=None, color=None, size_w=
     col_w = plot_w / n
     max_val = max(values) if values and max(values) else 1
     max_cum = max(cumulative) if cumulative and max(cumulative) else 0
-    bars, points, labels = [], [], []
+    bars, points, labels, bar_label_ys = [], [], [], []
     for i, (cat, val) in enumerate(zip(categories, values)):
         bar_h = (val / max_val) * (plot_h - 8) if max_val else 0
         x = pad_l + i * col_w
         y = pad_t + (plot_h - bar_h)
         bars.append(f'<rect x="{x + col_w*0.18:.1f}" y="{y:.1f}" width="{col_w*0.64:.1f}" height="{bar_h:.1f}" fill="{bar_color}" rx="2" />')
         if val:
-            bars.append(f'<text x="{x + col_w/2:.1f}" y="{max(y - 4, 10):.1f}" text-anchor="middle" font-size="7.5" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{val}</text>')
+            _bly = max(y - 4, 10)
+            bar_label_ys.append(_bly)
+            bars.append(f'<text x="{x + col_w/2:.1f}" y="{_bly:.1f}" text-anchor="middle" font-size="7.5" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{val}</text>')
+        else:
+            bar_label_ys.append(None)
         if max_cum:
             cy = pad_t + plot_h - ((cumulative[i] / max_cum) * (plot_h - 4))
             points.append((x + col_w / 2, cy))
@@ -628,8 +632,15 @@ def _bar_line_chart_svg(categories, values, cumulative=None, color=None, size_w=
         # (> 8) - di lebar chart tile, label sebanyak itu saling tumpuk & malah tidak terbaca.
         if len(points) <= 8:
             _cum_labels = []
-            for (cx, cy), cval in zip(points, cumulative):
+            # Label kumulatif dijauhkan dari label nilai BATANG di kolom yang sama - keduanya
+            # dulu bisa jatuh di pita y yang sama & saling menimpa (terukur tes span: 25
+            # tabrakan, mis. "5" x "26" beririsan 49%). Posisi label batang diketahui persis
+            # (bar_label_y di bawah), jadi tabrakannya dihindari, bukan diperkecil peluangnya.
+            for (cx, cy), cval, _bly in zip(points, cumulative, bar_label_ys):
                 ly = cy + 8 if cy + 8 < pad_t + plot_h - 2 else cy - 5
+                if _bly is not None and abs(ly - _bly) < 11:
+                    ly = _bly + 13 if ly >= _bly else _bly - 13
+                    ly = min(max(ly, 8), pad_t + plot_h - 2)
                 _cum_labels.append(
                     f'<text x="{cx:.1f}" y="{ly:.1f}" text-anchor="middle" font-size="6.5" '
                     f'fill="{line_color}" font-family="{BODY_FONT}">{_esc(_fmt_num(cval))}</text>'
@@ -2249,7 +2260,7 @@ def _build_severity_distribution_block(block: dict, ctx: _PdfBlockContext) -> tu
     # adalah konvensi semantik cyber-security yang fixed, terlepas dari theme_color laporan.
     sev_colors = [SEVERITY_COLOR[k] for k in block["severity_keys"]]
     chart_html = _bar_chart_html(block["categories"], block["values"], colors=sev_colors)
-    panel = _critical_highlight_panel(f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"], theme=ctx.theme)
+    panel = _critical_highlight_panel(f'{block["crit_pct"]}', block["panel_text"], block["detail_text"], theme=ctx.theme)
     caption_html = _note_box_html(block["ai_caption"], theme=ctx.theme) if block.get("ai_caption") else ""
     inner = (
         _kicker(ctx.kicker_analisis) + _title(block["title"]) +
@@ -3036,22 +3047,30 @@ def _insight_kpi_row_html(cards: list, total_w_in: float, h_in: float, y_in: flo
     return "".join(parts)
 
 
-def _muat_nama_kartu(nama: str, w_in: float, maks_baris: int = 2):
-    """(ukuran font pt, jumlah baris) supaya `nama` muat UTUH - tidak pernah dipotong.
+# Dikalibrasi dari render PDF (WeasyPrint) - lihat _muat_nama_kartu.
+_NAMA_KARTU_FAKTOR_LEBAR = 0.80
 
-    BATASAN USER: tidak ada teks yang boleh berakhir "…" di mana pun. Ukuran font diturunkan
-    bertahap sampai nama muat dalam <= maks_baris; kalau di ukuran terkecil pun masih lebih
-    panjang, baris dibiarkan bertambah (kartu ikut lebih tinggi) - TETAP tidak dipotong."""
+
+def _muat_nama_kartu(nama: str, w_in: float, maks_baris: int = 2):
+    """(ukuran font pt, jumlah baris SEBENARNYA) - nama tidak pernah dipotong.
+
+    ITEM 3 (permintaan user): jumlah baris kini DIHITUNG lewat wrap_line_count - simulasi
+    pembungkusan dgn titik pecah yang sungguhan dipakai perender (spasi, "/", "-", dan "."
+    bila diikuti huruf) - BUKAN diperkirakan dari len(nama)/kapasitas. Perkiraan lama
+    mengasumsikan baris terisi penuh; nyatanya "/Common/vs.ams.petrokimia-gresik.com" jadi
+    TIGA baris, lalu skor & sub-item kartu tertabrak (terukur di laporan 187).
+
+    FAKTOR LEBAR _NAMA_KARTU_FAKTOR_LEBAR DIKALIBRASI dari render sungguhan: pada kotak 173px/9pt, baris
+    terpanjang yang benar-benar dihasilkan perender berisi 18 karakter - faktor 0.80 yang
+    menghasilkan kapasitas itu (0.55 menghasilkan 26, meleset jauh & itu sumber cacatnya)."""
     if not nama:
         return 9.0, 1
-    lebar_px = max(20.0, w_in * 96 - 27)          # dikurangi padding 10pt kiri+kanan
+    lebar_px = max(20.0, w_in * 96 - 27)
     for pt in (9.0, 8.0, 7.0, 6.5):
-        per_baris = max(1, int(lebar_px / (pt * 0.55 * 96 / 72)))
-        baris = -(-len(nama) // per_baris)
+        baris = wrap_line_count(nama, lebar_px, pt, _NAMA_KARTU_FAKTOR_LEBAR)
         if baris <= maks_baris:
             return pt, baris
-    per_baris = max(1, int(lebar_px / (6.5 * 0.55 * 96 / 72)))
-    return 6.5, -(-len(nama) // per_baris)
+    return 6.5, wrap_line_count(nama, lebar_px, 6.5, _NAMA_KARTU_FAKTOR_LEBAR)
 
 
 def _nested_category_card_html(card: dict, w_in: float, h_in: float, x_in: float, y_in: float, theme: dict | None = None) -> str:
@@ -3327,9 +3346,24 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
             size_h = int(avail_h_px * 0.88)
             _tv = tile.get("values") or []
             _tbase = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
+            _ramp_tm = [_tbase[i % len(_tbase)] for i in range(max(1, len(_tv)))]
             chart_html = _treemap_svg(tile.get("labels") or [], _tv,
-                                      colors=[_tbase[i % len(_tbase)] for i in range(max(1, len(_tv)))],
+                                      colors=_ramp_tm,
                                       size_w=size_w, size_h=size_h)
+            # keterangan "Lainnya" saat segmennya terlalu tipis utk diberi label DI DALAM
+            # chart - dibawa perencana lewat tile["catatan_lainnya"], tidak dihitung ulang
+            # di sini. Sisi PDF sering tidak membutuhkannya (kotaknya lebih tinggi drpd
+            # PPT), tapi tetap dipasang supaya tidak bergantung pada kebetulan itu.
+            if tile.get("catatan_lainnya"):
+                # PETAK WARNA cocok dgn segmen terakhir treemap: tanpa itu pembaca melihat
+                # satu kotak tanpa nama & satu baris teks yang tidak bisa dipetakan ke kotak
+                # mana pun - masalah lama dalam bentuk baru.
+                _sw = _ramp_tm[(len(_tv) - 1) % len(_ramp_tm)] if _tv else ctx.accent_main
+                chart_html += (f'<div style="font-size:7pt;color:{GRAY_TEXT};margin-top:3pt;'
+                               f'text-align:center;">'
+                               f'<span style="display:inline-block;width:7px;height:7px;'
+                               f'background:{_sw};border-radius:1px;margin-right:4px;"></span>'
+                               f'{_esc(tile["catatan_lainnya"])}</div>')
             chart_w_in = size_w / 96
         elif kind == "metric_mix":
             # komposisi antar metrik -> proporsi, jujur meski skalanya beda jauh
@@ -3384,7 +3418,7 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
         note_title = "Notes" if is_english(report) else "Catatan"
         note_html = _note_box_html(notes, theme=ctx.theme, title=note_title)
         html = (
-            f'<div style="position:relative;height:{h_in}in;overflow:hidden;">'
+            f'<div style="position:relative;height:{h_in}in;">'
             f'<div style="position:absolute;left:0;top:0;width:{w_in}in;height:{chart_h_in}in;'
             f'overflow:hidden;text-align:center;padding-top:6pt;">{chart_html}</div>'
             f'<div style="position:absolute;left:0;top:{chart_h_in}in;width:{w_in}in;'
@@ -3393,7 +3427,7 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
         )
         return html, True
     return (
-        f'<div style="position:relative;height:{h_in}in;overflow:hidden;text-align:center;'
+        f'<div style="position:relative;height:{h_in}in;text-align:center;'
         f'padding-top:10pt;">{chart_html}</div>'
     ), False
 
@@ -3473,6 +3507,11 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
     sini (pola sama dgn perbaikan akar Prioritas 1): tidak ada elemen yang tingginya lahir di
     luar anggaran halaman."""
     cols = [c for c in (block.get("columns") or []) if c]
+    # kolom yang tile-nya DILEWATI dibuang seluruhnya, sebelum lebar kolom dihitung - supaya
+    # sisanya melebar mengisi halaman, bukan menyisakan kolom yatim berisi header + 2 kartu.
+    cols = kolom_yang_digambar(cols, 13.333 - 2 * _DASH_MARGIN_X_IN, _DASH_COLS_GAP_IN,
+                               _DASH_CONTENT_BOTTOM_IN - _DASH_COLS_TITLE_H_IN
+                               - _DASH_COLS_KPI_H_IN - 0.10)
     if not cols:
         return ("", False, None, False)
     total_w_in = 13.333 - 2 * _DASH_MARGIN_X_IN
@@ -3529,19 +3568,33 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         _tile = col.get("main_chart_tile")
         _has_cards = bool(col.get("category_details"))
         _column_layout = _layout_dashboard_column_content(
-            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes)
+            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes), _tile
         )
         _chart_h = _column_layout["chart_h"]
+        # tile yang SUDAH disesuaikan perencana: barisnya dikurangi kalau ruang kurang, ekor
+        # segmennya digabung ke "Lainnya", atau None kalau tile-nya DILEWATI (segmen yang
+        # lolos ambang label < 2). None berarti chart TIDAK digambar - bukan jatuh kembali ke
+        # tile asli; kolomnya dibiarkan tanpa chart, tidak diisi penambal.
+        _tile = _column_layout.get("tile")
+        if _tile is None:
+            _has_cards = bool(col.get("category_details"))
+            _chart_h = 0.0
         if _tile:
             inner, _nc = _insight_main_chart_html(
-                col["main_chart_tile"], ctx, col_w, _chart_h,
+                _tile, ctx, col_w, _chart_h,
                 notes=(None if _has_cards else notes), report=ctx.report,
             )
             notes_consumed = notes_consumed or _nc
             if inner:
+        # PERMINTAAN USER: overflow:hidden DIBUANG dari pembungkus chart. Ia memotong TANPA
+        # penanda apa pun - pembaca melihat treemap 2 label & mengira memang cuma ada 2
+        # entitas (terukur: 182 metric_share 4 dari 6 label hilang, 184 custom_topic 5 dari
+        # 8). Lebih buruk dari elipsis, dan menyembunyikan salah-hitung tinggi dari tes
+        # maupun dari kita. Tanpa ini, salah hitung akan TERLIHAT (menonjol/menimpa) &
+        # tertangkap tes tumpang tindih level span.
                 col_parts.append(
                     f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
-                    f'height:{_chart_h}in;overflow:hidden;">{inner}</div>'
+                    f'height:{_chart_h}in;">{inner}</div>'
                 )
                 if _has_cards:
                     y += _chart_h + 0.10
@@ -3571,6 +3624,12 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                 if notes:
                     note_y = y + cards_h + 0.08
                     note_h = max(0.0, avail_h_in - note_y)
+                    # Butir catatan dibuang dari BELAKANG sampai muat - sebelumnya kotaknya
+                    # mengalir melewati jatah & menimpa nomor halaman (laporan 143).
+                    notes, _dibuang_note = muat_catatan(col_w, notes, note_h)
+                    if _dibuang_note:
+                        logger.info("tata letak kolom: %d butir catatan tidak digambar "
+                                    "(ruang tersisa %.2fin)", _dibuang_note, note_h)
                     col_parts.append(
                         f'<div style="position:absolute;left:{x}in;top:{note_y}in;width:{col_w}in;'
                         f'height:{note_h}in;overflow:hidden;">{_note_box_html(notes, theme=ctx.theme)}</div>'

@@ -300,6 +300,49 @@ def _fmt_count_unit(val, unit: str | None, is_en: bool | None = None) -> str:
     return formatted
 
 
+def fmt_desimal(nilai, n_desimal: int, is_en: bool) -> str:
+    """Angka berdesimal mengikuti konvensi bahasa laporan (koma utk Indonesia).
+
+    AUDIT USER: setelah "0.0%" ketahuan memakai titik di laporan Indonesia, jalur desimal
+    lain ikut diperiksa. Yang lolos: rata-rata radar (:.1f) & rasio antar-metrik (:.2f) -
+    dua-duanya tampil "12.5" / "1.23" sementara seluruh angka lain di halaman yang sama
+    sudah memakai koma. Yang ber-:.0f tidak terpengaruh (tidak punya desimal)."""
+    try:
+        teks = f"{float(nilai):.{n_desimal}f}"
+    except (TypeError, ValueError):
+        return str(nilai)
+    return teks if is_en else teks.replace(".", ",")
+
+
+def fmt_persen(bagian, total) -> str:
+    """Persentase yang TIDAK berbohong saat dibulatkan, dgn format yang SERAGAM.
+
+    KOREKSI USER: ">99%" itu bentuk yang berbeda dari "49%" & "0,04%" di halaman yang sama,
+    dan pembaca tidak bisa mencocokkannya dgn angka mana pun. Yang perlu ditolak adalah
+    PEMBULATAN YANG BERBOHONG, bukan angka desimalnya.
+
+    Aturannya: "100%" hanya kalau pembilang benar-benar sama dgn penyebut, "0%" hanya kalau
+    pembilangnya benar-benar nol. Selain itu desimal DITAMBAH secukupnya sampai angkanya
+    tidak lagi membulat ke 100 atau 0 - 99,96% & 0,04%, bukan ">99%" & "<1%"."""
+    try:
+        t = float(total)
+        b = float(bagian)
+    except (TypeError, ValueError):
+        return "0%"
+    if not t:
+        return "0%"
+    if b >= t:
+        return "100%"
+    if b <= 0:
+        return "0%"
+    p = b / t * 100
+    for desimal in range(0, 5):
+        teks = f"{p:.{desimal}f}"
+        if float(teks) not in (0.0, 100.0):
+            return teks.replace(".", ",") + "%"
+    return f"{p:.4f}".replace(".", ",") + "%"
+
+
 def _tile_rank_items(tile: dict) -> list | None:
     """Daftar (label, angka) dari data MENTAH tile ini sendiri (bukan analisis baru) — dipakai
     _build_insight_page() utk lapis ringkasan KPI/detail per kategori/catatan. Tile
@@ -351,22 +394,24 @@ def _attach_column_facts(tile: dict, report, sec_domain: bool) -> None:
             (_L(report, "Kategori", "Categories"), str(len(items))),
         ]
         if len(items) >= 2:
-            tile["fact_pair"] = [(name, f"{_fmt_count(val, _ien)} ({round(val / total * 100)}%)") for name, val in items[:2]]
+            tile["fact_pair"] = [(name, f"{_fmt_count(val, _ien)} ({fmt_persen(val, total)})") for name, val in items[:2]]
         rest = items[2:6]
         if rest:
             tile["notes"] = [
                 _L(
                     report,
-                    f"{name} mencatat {_fmt_count(val, _ien)} {unit} ({round(val / total * 100)}% dari total).",
-                    f"{name} recorded {_fmt_count(val, _ien)} {unit} ({round(val / total * 100)}% of the total).",
+                    f"{name} mencatat {_fmt_count(val, _ien)} {unit} ({fmt_persen(val, total)} dari total).",
+                    f"{name} recorded {_fmt_count(val, _ien)} {unit} ({fmt_persen(val, total)} of the total).",
                 )
                 for name, val in rest
             ]
     elif tile.get("tile_kind") == "kpi_gauge":
         pct = tile.get("pct", 0)
         tile["fact_strip"] = [
-            (_L(report, "Pencapaian", "Achievement"), f"{pct}%"),
-            (_L(report, "Sisa", "Remaining"), f"{max(0, 100 - pct)}%"),
+            # tile ini cuma membawa `pct` (sudah dibulatkan di hulu), bukan pembilang/penyebut
+            # aslinya - jadi fmt_persen dipakai dgn basis 100 agar formatnya tetap seragam.
+            (_L(report, "Pencapaian", "Achievement"), fmt_persen(pct, 100)),
+            (_L(report, "Sisa", "Remaining"), fmt_persen(max(0, 100 - pct), 100)),
         ]
 
 
@@ -490,12 +535,350 @@ def _layout_dashboard_column(tile: dict, avail_h_in: float) -> dict:
     return {"gap": gap, **heights}
 
 
+# Tinggi minimum chart, DITURUNKAN dari konstanta perendernya sendiri:
+#   _CHART_ROW_H_IN      : _bar_chart_html -> bar 18px + padding 7pt atas & bawah (~0.38in)
+#   _CHART_AXIS_MIN_H_IN : chart bersumbu (grouped bar / bar+line / scatter) butuh area plot
+#                          + baris label kategori di kaki, di bawah itu batangnya jadi garis
+#   _TREEMAP_MIN_H_IN    : tinggi minimum supaya segmen masih lolos ambang label treemap
+#                          (rh > 24px = 0.25in) utk beberapa baris slice-and-dice
+#   _STACKED_MIN_H_IN    : batang 0.5in + baris label 0.32in
+_CHART_ROW_H_IN = 0.38
+_CHART_AXIS_MIN_H_IN = 1.30
+_TREEMAP_MIN_H_IN = 1.60
+_STACKED_MIN_H_IN = 0.82
+_CHART_SQUARE_MIN_H_IN = 1.45
+# Kolom label _bar_chart_html: lebar 150px, font 9.5pt (lihat _bar_chart_html di export_pdf).
+_BAR_LABEL_COL_W_PX = 150.0
+_BAR_LABEL_PT = 9.5
+
+
+# Titik pecah baris yang BENAR-BENAR dipakai perender. Bukan hanya spasi: teks berbentuk
+# URL ("/Common/vs.ams.petrokimia-gresik.com") dipecah SETELAH "/" dan "-", serta setelah
+# "." bila diikuti huruf - itulah kenapa nama seperti itu jadi TIGA baris, bukan satu atau
+# dua seperti perkiraan berbasis hitungan karakter.
+_BREAK_AFTER = "/-"
+
+
+def _peluang_pecah(teks: str) -> list:
+    """Indeks posisi tempat baris BOLEH dipecah (indeks = awal potongan berikutnya)."""
+    out = []
+    for i, ch in enumerate(teks):
+        if ch == " ":
+            out.append(i + 1)
+        elif ch in _BREAK_AFTER:
+            out.append(i + 1)
+        elif ch == "." and i + 1 < len(teks) and teks[i + 1].isalpha():
+            out.append(i + 1)
+    out.append(len(teks))
+    return sorted(set(out))
+
+
+def wrap_line_count(teks: str, lebar_px: float, font_pt: float, faktor_lebar: float) -> int:
+    """Jumlah baris hasil pembungkusan SEBENARNYA - bukan len(teks) / kapasitas per baris.
+
+    PERMINTAAN USER (item 3, pola bug nomor 1 kejadian ketujuh): tinggi header kartu dulu
+    DIPERKIRAKAN dari hitungan karakter. Perkiraan itu mengasumsikan baris terisi penuh,
+    padahal pembungkusan hanya boleh memecah di titik tertentu - jadi baris nyatanya lebih
+    pendek & jumlahnya LEBIH BANYAK. Terukur: "/Common/vs.ams.petrokimia-gresik.com" jadi 3
+    baris sementara perkiraan bilang 2, lalu skor & sub-item kartu tertabrak.
+
+    `faktor_lebar` beda per engine (lebar rata-rata karakter thd ukuran font) - dioper oleh
+    pemanggil, bukan ditetapkan di sini."""
+    teks = (teks or "").strip()
+    if not teks:
+        return 1
+    lebar_kar = max(0.1, font_pt * faktor_lebar * 96.0 / 72.0)
+    muat = max(1, int(lebar_px / lebar_kar))
+    if len(teks) <= muat:
+        return 1
+    peluang = _peluang_pecah(teks)
+    baris, mulai = 1, 0
+    while mulai < len(teks):
+        # potongan terpanjang yang masih muat, berhenti di peluang pecah
+        kandidat = [p for p in peluang if p > mulai and p - mulai <= muat]
+        if kandidat:
+            berikut = max(kandidat)
+        else:
+            # satu potongan tak-terpecah lebih panjang dari lebar baris: perender memaksa
+            # memotongnya di tengah, jadi barisnya tetap bertambah
+            berikut = min(len(teks), mulai + muat)
+        if berikut >= len(teks):
+            break
+        mulai = berikut
+        baris += 1
+    return baris
+
+
+def chart_label_count(tile: dict) -> int:
+    """Berapa label yang HARUS digambar chart ini (dipakai utk hitung tinggi minimumnya)."""
+    k = tile.get("tile_kind")
+    if k == "risk_heatmap":
+        return len(tile.get("bars") or [])
+    if k in ("status_funnel", "metric_compare", "period_compare"):
+        return len(tile.get("categories") or [])
+    if k in ("metric_share", "metric_mix", "custom_topic"):
+        return len(tile.get("labels") or [])
+    if k == "trend_chart":
+        return len((tile.get("chart") or {}).get("categories") or [])
+    if k == "time_heatmap":
+        return len(tile.get("day_labels") or [])
+    if k == "scatter_bubble":
+        return len(tile.get("points") or [])
+    return 0
+
+
+def _tinggi_baris_bar(tile: dict) -> float:
+    """Tinggi SATU baris ranked-bar, dihitung dari pembungkusan label yang sebenarnya.
+
+    ITEM 3, sisi chart: _CHART_ROW_H_IN mengasumsikan label muat SATU baris. Label seperti
+    "/Common/vs.ams.petrokimia-gresik.com" membungkus jadi TIGA baris di kolom label selebar
+    150px, jadi barisnya jauh lebih tinggi & chart menggambar MELEWATI kotaknya - terukur di
+    laporan 187: kotak chart berakhir 343pt, labelnya sampai 367pt, lalu menabrak grid kartu."""
+    labels = []
+    k = tile.get("tile_kind")
+    if k == "risk_heatmap":
+        labels = [str(b.get("label") or "") for b in (tile.get("bars") or [])]
+    elif k == "custom_topic":
+        labels = [str(x) for x in (tile.get("labels") or [])]
+    elif k == "trend_chart":
+        labels = [str(x) for x in ((tile.get("chart") or {}).get("categories") or [])]
+    elif k == "status_funnel":
+        labels = [str(x) for x in (tile.get("categories") or [])]
+    if not labels:
+        return _CHART_ROW_H_IN
+    baris = max(wrap_line_count(l, _BAR_LABEL_COL_W_PX, _BAR_LABEL_PT, 0.80) for l in labels)
+    return max(_CHART_ROW_H_IN, baris * (_BAR_LABEL_PT * 1.18 / 72.0) + 14.0 / 72.0)
+
+
+def chart_min_height_in(tile: dict) -> float:
+    """Tinggi MINIMUM yang dibutuhkan chart ini utk menggambar SELURUH isinya.
+
+    PERMINTAAN USER (pembalikan arah tata letak): sebelumnya kartu dipesan lebih dulu &
+    chart dijejalkan ke sisa ruang - renderernya lalu memotong diam-diam alih-alih melapor
+    tidak muat (terukur: membuang overflow:hidden TIDAK mengubah jumlah label hilang sama
+    sekali, krn pemotongannya terjadi DI DALAM renderer). Sekarang chart melapor duluan &
+    tata letak memakai angka itu."""
+    k = tile.get("tile_kind")
+    n = chart_label_count(tile)
+    if k in ("risk_heatmap", "custom_topic", "trend_chart") and not (
+        k == "trend_chart" and ((tile.get("chart") or {}).get("cumulative"))
+    ):
+        gaya = (tile.get("chart_style") or "").lower() if k == "custom_topic" else ""
+        if gaya == "donut":
+            return _CHART_SQUARE_MIN_H_IN
+        if gaya == "stacked":
+            return _STACKED_MIN_H_IN
+        _rh = _tinggi_baris_bar(tile)
+        return max(_rh * max(1, n) + 0.16, _rh * 2)
+    if k == "status_funnel":
+        _rh = _tinggi_baris_bar(tile)
+        return max(_rh * max(1, n) + 0.16, _rh * 2)
+    if k == "metric_share":
+        return _TREEMAP_MIN_H_IN
+    if k == "metric_mix":
+        return _STACKED_MIN_H_IN
+    if k == "time_heatmap":
+        return max(_CHART_ROW_H_IN * 0.62 * max(1, n) + 0.30, 1.2)
+    if k in ("kpi_radar", "kpi_gauge"):
+        return _CHART_SQUARE_MIN_H_IN
+    return _CHART_AXIS_MIN_H_IN
+
+
+# ---- AMBANG LABEL: SATU angka, DUA pemakai (permintaan user) ------------------------
+# Diturunkan dari syarat label di kedua renderer, diambil yang TERKETAT supaya PDF & PPTX
+# menggabungkan segmen yang SAMA & tidak divergen:
+#     PDF  _treemap_svg      : rw > 44px, rh > 24px  -> 0.458in x 0.25in
+#     PPT  add_treemap_shapes: rw > 0.9in, rh > 0.5in  <- TERKETAT, dipakai keduanya
+# Konsekuensinya sisi PDF ikut TURUN dari yang sebelumnya bisa dinamai. Itu disengaja:
+# dua format yang menampilkan isi berbeda dari data yang sama lebih berbahaya daripada
+# dua-duanya menampilkan lebih sedikit - TAPI yang jatuh WAJIB masuk "Lainnya", bukan hilang.
+_LABEL_LAINNYA = "Lainnya"
+
+
+def _fmt_angka_ringkas(v) -> str:
+    """Pemisah ribuan mengikuti BAHASA LAPORAN, bukan selalu gaya Indonesia.
+
+    BUG NYATA DIPERBAIKI (tertangkap test_number_format_follows_report_language): versi
+    pertama helper ini selalu memakai titik sbg pemisah ribuan, jadi keterangan "Lainnya:
+    137.235" muncul di laporan BERBAHASA INGGRIS - pembaca Inggris membacanya sbg 137,235
+    desimal. Asumsi "nama + angka saja jadi tidak bergantung bahasa" itu salah: justru
+    angkanya yang paling bergantung bahasa."""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    teks = f"{int(round(n)):,}"
+    return teks if render_is_en() else teks.replace(",", ".")
+# Tile yang segmennya bisa jatuh di bawah ambang label (dipakai mekanisme penggabungan yang
+# SAMA - bukan dibangun terpisah per jenis chart).
+_TILE_BERSEGMEN = {"metric_share", "metric_mix", "custom_topic"}
+
+
+def _tile_punya_segmen(tile: dict) -> bool:
+    """Apakah tile ini digambar sbg SEGMEN berukuran (treemap/stacked/donut)?
+
+    BUG NYATA DIPERBAIKI: custom_topic dulu selalu dianggap bersegmen, padahal gaya "bar"
+    menggambar baris berlabel di kolom label - tidak ada segmen yang bisa terlalu kecil utk
+    dinamai. Akibatnya aturan "segmen lolos ambang < 2" melewati tile bar yang sebenarnya
+    sehat: terukur 5 dari 7 kolom di laporan 184 & 8 dari 10 di 187 kehilangan chart-nya."""
+    k = tile.get("tile_kind")
+    if k in ("metric_share", "metric_mix"):
+        return True
+    if k == "custom_topic":
+        return (tile.get("chart_style") or "").lower() in ("donut", "stacked", "treemap")
+    return False
+# margin yang disisakan _insight_main_chart di kedua exporter sebelum menggambar
+_CHART_MARGIN_IN = 0.15
+_LABEL_MIN_W_IN = 0.9
+_LABEL_MIN_H_IN = 0.5
+
+
+def _rect_treemap(values: list, w_in: float, h_in: float) -> list:
+    """Kotak tiap segmen dgn algoritma slice-and-dice yang SAMA dgn kedua renderer."""
+    total = float(sum(values) or 1)
+    rects, x, y, w, h, sisa = [], 0.0, 0.0, w_in, h_in, total
+    horizontal = True
+    for val in values:
+        frac = (val / sisa) if sisa else 0
+        if horizontal:
+            seg = w * frac
+            rects.append((seg, h))
+            x += seg
+            w -= seg
+        else:
+            seg = h * frac
+            rects.append((w, seg))
+            y += seg
+            h -= seg
+        sisa -= val
+        horizontal = not horizontal
+    return rects
+
+
+def segmen_bisa_dinamai(values: list, w_in: float, h_in: float) -> list:
+    """[bool] - segmen mana yang kotaknya cukup besar untuk diberi label."""
+    return [(rw > _LABEL_MIN_W_IN and rh > _LABEL_MIN_H_IN)
+            for rw, rh in _rect_treemap(values, w_in, h_in)]
+
+
+def gabung_ekor_ke_lainnya(labels: list, values: list, w_in: float, h_in: float, label_lainnya: str):
+    """Segmen yang terlalu kecil untuk dinamai DIGABUNG jadi satu "Lainnya".
+
+    PERMINTAAN USER: kotak berwarna tanpa identitas adalah isi yang hilang tanpa penanda -
+    kelas yang sama dgn overflow:hidden. Menaikkan ambang atau mengecilkan font tidak
+    menolong: segmen 0.84% memang tidak muat menampung namanya berapa pun fontnya.
+    Kembalikan (labels, values, n_digabung)."""
+    # DIULANG SAMPAI STABIL: menggabungkan ekor MENGUBAH susunan slice-and-dice, jadi
+    # "Lainnya" sendiri (atau segmen lain) bisa jatuh di potongan tipis yang baru. Sekali
+    # jalan menyisakan 1 label hilang di PPTX - terukur sebelum perbaikan ini.
+    kerja_l, kerja_v = list(labels), list(values)
+    total_gabung = 0
+    for _ in range(6):
+        bisa = segmen_bisa_dinamai(kerja_v, w_in, h_in)
+        if all(bisa):
+            break
+        simpan = [i for i, ok in enumerate(bisa) if ok]
+        buang = [i for i, ok in enumerate(bisa) if not ok]
+        if not simpan or len(buang) == len(kerja_v):
+            break
+        nilai_gabung = sum(kerja_v[i] for i in buang)
+        # butir "Lainnya" yang sudah ada tidak ditumpuk jadi dua
+        sudah = [i for i in simpan if kerja_l[i] == label_lainnya]
+        baru_l = [kerja_l[i] for i in simpan]
+        baru_v = [kerja_v[i] for i in simpan]
+        if sudah:
+            baru_v[simpan.index(sudah[0])] += nilai_gabung
+        else:
+            baru_l.append(label_lainnya)
+            baru_v.append(nilai_gabung)
+        total_gabung += len(buang)
+        if (baru_l, baru_v) == (kerja_l, kerja_v):
+            break
+        kerja_l, kerja_v = baru_l, baru_v
+    return kerja_l, kerja_v, total_gabung
+
+
+def _potong_isi_chart(tile: dict | None, tinggi_in: float):
+    """Kurangi JUMLAH BARIS chart supaya muat di `tinggi_in`. Kembalikan (tile, n_dibuang).
+
+    Bukan memotong gambar - datanya yang dikurangi, jadi renderer menggambar lebih sedikit
+    baris secara utuh. Dipakai hanya saat tata letak memang tidak menyisakan ruang; jumlah
+    yang dibuang DICATAT pemanggil ke log (bukan ke laporan)."""
+    if not tile:
+        return tile, 0
+    k = tile.get("tile_kind")
+    kunci = {"risk_heatmap": "bars", "custom_topic": "labels",
+             "status_funnel": "categories"}.get(k)
+    if not kunci:
+        return tile, 0
+    isi = tile.get(kunci) or []
+    rh = _tinggi_baris_bar(tile)
+    muat = max(2, int(max(0.0, tinggi_in - 0.16) / rh)) if rh else len(isi)
+    if muat >= len(isi):
+        return tile, 0
+    baru = dict(tile)
+    nilai = list(tile.get("values") or [])
+    # KOREKSI USER: baris yang tidak muat DIGABUNG ke "Lainnya", bukan dibuang. Log itu
+    # untuk kita; "Lainnya" itu untuk pembaca. Chart yang menggambar 5 dari 8 kategori tanpa
+    # penanda membuat pembaca menyimpulkan kategorinya memang 5.
+    if k in ("custom_topic",) and len(nilai) == len(isi) and muat >= 1:
+        baru[kunci] = list(isi[:muat - 1]) + [_LABEL_LAINNYA]
+        baru["values"] = nilai[:muat - 1] + [sum(nilai[muat - 1:])]
+        return baru, len(isi) - muat + 1
+    baru[kunci] = isi[:muat]
+    if nilai:
+        baru["values"] = nilai[:muat]
+    return baru, len(isi) - muat
+
+
+def note_box_height_in(w_in: float, butir) -> float:
+    """Tinggi kotak catatan, DIHITUNG sebelum digambar - satu sumber utk PDF & PPT.
+
+    Aturan tetap proyek ini: elemen yang tingginya bergantung isi harus bisa dihitung
+    sebelum ditempatkan. Sisi PPT sudah punya _note_box_height_in; sisi PDF belum, jadi
+    catatan PDF mengalir melewati jatahnya & menimpa nomor halaman (terukur di laporan 143)."""
+    baris = [str(b).strip() for b in (butir or []) if str(b or "").strip()]
+    if not baris:
+        return 0.0
+    lebar_kar = max(20, int((w_in * 96 - 46) / (10 * 0.62 * 96 / 72)))
+    tinggi = 0.14 + 0.24
+    for b in baris:
+        n = max(1, -(-len(b) // lebar_kar))
+        tinggi += n * (10 * 1.25 / 72) + 0.05
+    return tinggi + 0.1
+
+
+def muat_catatan(w_in: float, butir, tinggi_tersedia_in: float):
+    """Buang butir catatan PALING BELAKANG sampai muat. Kembalikan (butir, n_dibuang)."""
+    butir = list(butir or [])
+    dibuang = 0
+    while butir and note_box_height_in(w_in, butir) > tinggi_tersedia_in:
+        butir.pop()
+        dibuang += 1
+    return butir, dibuang
+
+
+def chart_min_mutlak_in(tile: dict) -> float:
+    """Tinggi TERKECIL yang masih menghasilkan chart bermakna - di bawah ini tile dilewati.
+
+    Bar-like: 2 baris (satu baris bukan perbandingan). Bentuk lain memakai tinggi minimumnya
+    sendiri, krn mereka tidak bisa dikurangi barisnya (treemap/gauge/radar/stacked)."""
+    k = (tile or {}).get("tile_kind")
+    if k in ("risk_heatmap", "status_funnel", "trend_chart", "custom_topic"):
+        gaya = (tile.get("chart_style") or "").lower() if k == "custom_topic" else ""
+        if gaya in ("donut", "stacked"):
+            return chart_min_height_in(tile)
+        return _tinggi_baris_bar(tile) * 2 + 0.16
+    return chart_min_height_in(tile)
+
+
 def _layout_dashboard_column_content(
     body_h_in: float,
     col_w_in: float,
     has_chart: bool,
     cards: list | None = None,
     has_notes: bool = False,
+    tile: dict | None = None,
 ) -> dict:
     """Reserve chart, cards, and notes before either exporter draws them.
 
@@ -505,29 +888,166 @@ def _layout_dashboard_column_content(
     the card rows and notes first, then gives the chart only the remaining rectangle.
     """
     cards = list(cards or [])[:6]
-    chart_h = body_h_in if has_chart and not cards else 0.0
-    cards_h = 0.0
     note_h = _DASH_COLUMN_NOTE_RESERVE_H_IN if has_notes else 0.0
+    gap = 0.10 if (has_chart and cards) else 0.0
+
+    # ---- ARAH DIBALIK (permintaan user) ----------------------------------------------
+    # Dulu: kartu dipesan dulu, chart dapat SISA -> renderer chart memotong diam-diam.
+    # Sekarang: chart melapor tinggi minimumnya (chart_min_height_in), tata letak memakai
+    # angka itu, kartu menyusul dari sisanya. Kalau total tidak muat, yang dikurangi
+    # DICATAT ke log - tidak ada pemotongan diam di mana pun.
+    tile_dipakai = tile
+    chart_h = chart_min_height_in(tile) if (has_chart and tile) else (
+        _DASH_COLUMN_CHART_MIN_H_IN if has_chart else 0.0)
+    n_gabung = 0
+    if has_chart and tile and _tile_punya_segmen(tile):
+        _l = list(tile.get("labels") or [])
+        _v = list(tile.get("values") or [])
+        if len(_l) == len(_v) and len(_l) >= 2:
+            # KOTAK GAMBAR SEBENARNYA, bukan jatah kolom: kedua renderer menyisakan margin
+            # (_insight_main_chart PPT: 0.15in tiap sisi). Memakai jatah penuh membuat
+            # segmen "lolos" di perencana tapi gagal saat digambar - terukur: PPTX tetap
+            # kehilangan 1 label walau penggabungannya sudah diulang sampai stabil.
+            _gw, _gh = max(0.5, col_w_in - 2 * _CHART_MARGIN_IN), max(0.4, chart_h - 2 * _CHART_MARGIN_IN)
+            _lolos = sum(1 for ok in segmen_bisa_dinamai(_v, _gw, _gh) if ok)
+            if _lolos < 2:
+                # ITEM 5: tile dilewati kalau segmen yang LOLOS ambang label kurang dari 2 -
+                # tidak tersisa chart yang bermakna utk digambar. Dicatat ke log, TIDAK ke
+                # laporan (pesan kegagalan sistem tidak tampil ke pembaca).
+                logger.info("tile %r dilewati: cuma %d segmen lolos ambang label "
+                            "(butuh >=2) pada kotak %.2f x %.2fin",
+                            tile.get("tile_kind"), _lolos, col_w_in, chart_h)
+                has_chart = False
+                chart_h = 0.0
+                tile_dipakai = None
+            else:
+                _nl, _nv, n_gabung = gabung_ekor_ke_lainnya(_l, _v, _gw, _gh, _LABEL_LAINNYA)
+                if n_gabung:
+                    tile_dipakai = dict(tile)
+                    tile_dipakai["labels"] = _nl
+                    tile_dipakai["values"] = _nv
+                    # Segmen "Lainnya" SELALU jadi potongan TERAKHIR slice-and-dice & sering
+                    # kebagian slice tipis (terukur 0.33in vs ambang 0.5in) - jadi di PPTX ia
+                    # tidak pernah diberi label, dan pembaca melihat treemap 2 segmen tanpa
+                    # petunjuk ada 4 entitas lain. Menggabungkannya lagi tidak menolong (ia
+                    # SUDAH hasil gabungan) & menggeser ambang cuma memindah masalahnya.
+                    # Keterangannya karena itu dibawa sebagai TEKS DI BAWAH chart, yang tidak
+                    # bergantung pada geometri segmen sama sekali.
+                    if not segmen_bisa_dinamai(_nv, _gw, _gh)[-1]:
+                        tile_dipakai["catatan_lainnya"] = (
+                            "%s: %s (%d %s)" % (
+                                "Others" if render_is_en() else _LABEL_LAINNYA,
+                                _fmt_angka_ringkas(_nv[-1]), n_gabung,
+                                "entities" if render_is_en() else "entitas"))
+                    logger.info("tile %r: %d segmen di bawah ambang label digabung ke %r",
+                                tile.get("tile_kind"), n_gabung, _LABEL_LAINNYA)
+    if has_chart and not cards:
+        chart_h = max(chart_h, body_h_in - note_h)
+
+    # ---- SATU TEMPAT untuk seluruh kasus "isi melebihi ruang" -------------------------
+    # KOREKSI USER: sebelumnya pengurangan cuma menyala di cabang "kartu tidak muat", jadi
+    # cabang "chart tidak muat" & "dua-duanya tidak muat" lolos - chart berakhir 0.00in &
+    # tidak digambar sama sekali (terukur: 5 dari 7 kolom di laporan 184). Menambal cabang
+    # satu per satu pola yang sudah kena sebelumnya (rantai cabang chart terduplikasi, 11
+    # dari 29 laporan gagal), jadi ketiganya diselesaikan di sini sekaligus.
+    #
+    # CATATAN: jangan menyetel konstanta apa pun dari angka 6.70in (chart_min custom_topic
+    # 8 label URL) - _strip_common_affix nanti memendekkan label itu & angkanya bergerak.
+    _kartu_baris_min = 0.0
+    if cards:
+        _ms = max((len(c.get("sub_items") or []) for c in cards), default=0)
+        _ih = _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN + _NESTED_CARD_SUBITEM_GAP_IN
+        _kartu_baris_min = _NESTED_CARD_HEADER_H_IN + 0.20 + _ms * _ih
+    if has_chart and chart_h > 0:
+        _ruang_chart = body_h_in - note_h - gap - (_kartu_baris_min + 0.08 if cards else 0.0)
+        if chart_h > _ruang_chart:
+            _min_mutlak = chart_min_mutlak_in(tile) if tile else _DASH_COLUMN_CHART_MIN_H_IN
+            if _ruang_chart < _min_mutlak:
+                # Dikurangi sampai batas minimum yang masih bermakna pun tetap tidak muat ->
+                # tile DILEWATI seluruhnya, lewat jalur yang SAMA dgn aturan "segmen lolos
+                # ambang < 2". Bukan digambar setinggi nol.
+                logger.info("tile %r dilewati: butuh minimal %.2fin, ruang tersedia %.2fin",
+                            (tile or {}).get("tile_kind"), _min_mutlak, max(0.0, _ruang_chart))
+                has_chart = False
+                chart_h = 0.0
+                tile_dipakai = None
+                gap = 0.0
+            else:
+                _sebelum = chart_h
+                chart_h = _ruang_chart
+                tile_dipakai, _dibuang = _potong_isi_chart(tile_dipakai, chart_h)
+                logger.info("tile %r dipendekkan %.2fin -> %.2fin, %d baris chart digabung/"
+                            "tidak digambar", (tile or {}).get("tile_kind"),
+                            _sebelum, chart_h, _dibuang)
+
+    cards_h = 0.0
+    rows = []
     if cards:
         max_subs = max((len(card.get("sub_items") or []) for card in cards), default=0)
         item_h = _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN + _NESTED_CARD_SUBITEM_GAP_IN
         row_need = _NESTED_CARD_HEADER_H_IN + 0.20 + max_subs * item_h
-        available_for_cards = max(0.0, body_h_in - note_h - 0.08)
-        rows_fit = max(1, int((available_for_cards + _NESTED_CARD_ROW_GAP_IN) / (row_need + _NESTED_CARD_ROW_GAP_IN)))
+        sisa_kartu = max(0.0, body_h_in - chart_h - note_h - gap - 0.08)
+        rows_fit = int((sisa_kartu + _NESTED_CARD_ROW_GAP_IN) / (row_need + _NESTED_CARD_ROW_GAP_IN))
+        if rows_fit < 1:
+            # Bahkan SATU baris kartu tidak muat di sisa ruang. Chart dipendekkan sebanyak
+            # yang dibutuhkan satu baris - dicatat, bukan didiamkan.
+            kurang = row_need + _NESTED_CARD_ROW_GAP_IN - sisa_kartu
+            chart_h = max(_DASH_COLUMN_CHART_MIN_H_IN * 0.6, chart_h - kurang)
+            # ISI chart ikut dikurangi, bukan cuma jatah ruangnya. Kalau cuma ruangnya yang
+            # dipotong, renderer tetap menggambar seukuran isinya & menembus kotak - terukur
+            # di laporan 186: 8 baris dijejalkan ke 0.75in lalu menabrak grid kartu.
+            tile_dipakai, dibuang = _potong_isi_chart(tile, chart_h)
+            if dibuang:
+                logger.info("tata letak kolom: chart %r dipendekkan %.2fin, %d baris chart "
+                            "TIDAK digambar supaya kartu muat",
+                            (tile or {}).get("tile_kind"), kurang, dibuang)
+            else:
+                logger.info("tata letak kolom: chart %r dipendekkan %.2fin supaya 1 baris kartu muat",
+                            (tile or {}).get("tile_kind"), kurang)
+            sisa_kartu = max(0.0, body_h_in - chart_h - note_h - gap - 0.08)
+            rows_fit = max(1, int((sisa_kartu + _NESTED_CARD_ROW_GAP_IN) / (row_need + _NESTED_CARD_ROW_GAP_IN)))
         grid = _layout_nested_card_grid(len(cards), col_w_in, max_rows=min(3, rows_fit))
         rows = grid["rows"] or [len(cards)]
-        cards_h = min(available_for_cards, len(rows) * row_need + (len(rows) - 1) * _NESTED_CARD_ROW_GAP_IN)
-        cards = cards[:sum(rows)]
-    if has_chart and cards:
-        chart_h = max(_DASH_COLUMN_CHART_MIN_H_IN, body_h_in - cards_h - note_h - 0.18)
-        if chart_h + cards_h + note_h + 0.18 > body_h_in:
-            chart_h = max(0.0, body_h_in - cards_h - note_h - 0.18)
-    elif has_chart:
-        chart_h = max(_DASH_COLUMN_CHART_MIN_H_IN, body_h_in - note_h)
-    cards_y = chart_h + 0.10 if has_chart and cards else 0.0
+        muat = sum(rows)
+        if muat < len(cards):
+            logger.info("tata letak kolom: %d dari %d kartu tidak digambar (ruang tersisa %.2fin)",
+                        len(cards) - muat, len(cards), sisa_kartu)
+        cards = cards[:muat]
+        cards_h = min(sisa_kartu, len(rows) * row_need + (len(rows) - 1) * _NESTED_CARD_ROW_GAP_IN)
+
+    cards_y = chart_h + gap if (has_chart and cards) else 0.0
     note_y = cards_y + cards_h + 0.08 if cards else chart_h
     note_h = max(0.0, body_h_in - note_y)
-    return {"chart_h": chart_h, "cards_h": cards_h, "cards_y": cards_y, "note_y": note_y, "note_h": note_h, "cards": cards}
+    return {"chart_h": chart_h, "cards_h": cards_h, "cards_y": cards_y, "note_y": note_y,
+            "note_h": note_h, "cards": cards, "tile": tile_dipakai, "n_gabung": n_gabung,
+            "chart_dilewati": has_chart is False and tile is not None}
+
+
+def kolom_yang_digambar(cols: list, total_w_in: float, gap_in: float, body_h_in: float) -> list:
+    """Buang kolom yang tile-nya DILEWATI seluruhnya - bukan cuma chart-nya.
+
+    PERMINTAAN USER: melewati metric_mix meninggalkan "kolom yatim" - header & kartu KPI
+    tetap digambar padahal isinya tinggal dua kartu tanpa chart. Kalau tile-nya dilewati,
+    seluruh kolomnya tidak digambar; ruang kosong yang jujur lebih baik daripada kolom
+    setengah isi. Kolom TANPA tile (mis. peringkat entitas) tidak terpengaruh."""
+    if not cols:
+        return cols
+    n = max(1, len(cols))
+    col_w = (total_w_in - gap_in * (n - 1)) / n
+    simpan = []
+    for c in cols:
+        tile = c.get("main_chart_tile")
+        if not tile:
+            simpan.append(c)
+            continue
+        rencana = _layout_dashboard_column_content(
+            body_h_in, col_w, True, c.get("category_details"), bool(c.get("notes")), tile)
+        if rencana.get("chart_dilewati"):
+            logger.info("kolom %r tidak digambar: tile-nya dilewati, sisanya tidak cukup "
+                        "berdiri sendiri", str(c.get("title"))[:40])
+            continue
+        simpan.append(c)
+    return simpan or cols
 
 
 def dashboard_column_bboxes(block: dict, legacy_chart_fraction: float | None = None) -> list[dict]:
@@ -549,7 +1069,8 @@ def dashboard_column_bboxes(block: dict, legacy_chart_fraction: float | None = N
         x = index * (col_w + gap)
         has_chart = bool(col.get("main_chart_tile"))
         cards = (col.get("category_details") or [])[:6]
-        planned = _layout_dashboard_column_content(body_h, col_w, has_chart, cards, bool(col.get("notes")))
+        planned = _layout_dashboard_column_content(
+            body_h, col_w, has_chart, cards, bool(col.get("notes")), col.get("main_chart_tile"))
         chart_h = planned["chart_h"]
         if legacy_chart_fraction is not None and has_chart and cards:
             chart_h = body_h * legacy_chart_fraction
@@ -1614,18 +2135,20 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
                 ))
             second_item = tile.get("second_item")
             if second_item and total:
-                second_pct = round(second_item["count"] / total * 100)
+                second_pct = fmt_persen(second_item["count"], total)
                 notes.append(_L(
                     report,
-                    f"Di posisi kedua, {second_item['value']} mencatat {_fmt_count(second_item['count'], _ien)} data ({second_pct}%).",
-                    f"In second place, {second_item['value']} recorded {_fmt_count(second_item['count'], _ien)} records ({second_pct}%).",
+                    f"Di posisi kedua, {second_item['value']} mencatat {_fmt_count(second_item['count'], _ien)} data ({second_pct}).",
+                    f"In second place, {second_item['value']} recorded {_fmt_count(second_item['count'], _ien)} records ({second_pct}).",
                 ))
             return {
                 "kind": "management_insight_page",
                 "title": headline,
                 "kpi_summary": [
-                    {"label": _L(report, "PENCAPAIAN", "ACHIEVEMENT"), "value": f"{pct}%"},
-                    {"label": _L(report, "SISA", "REMAINING"), "value": f"{max(0, 100 - pct)}%"},
+                    # lewat fmt_persen: "100%"/"0%" hanya kalau memang persis, selain itu
+                    # desimalnya ditambah - bukan dari `pct` yang SUDAH dibulatkan.
+                    {"label": _L(report, "PENCAPAIAN", "ACHIEVEMENT"), "value": fmt_persen(top_count, total)},
+                    {"label": _L(report, "SISA", "REMAINING"), "value": fmt_persen(max(0, (total or 0) - (top_count or 0)), total)},
                 ],
                 "category_details": [],
                 "main_chart_tile": tile,  # gauge: lihat catatan di return utama fungsi ini
@@ -1649,7 +2172,7 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
         headline = _synth_insight_title(report, _dim_label, items, total)
     kpi_summary = [
         {"label": _L(report, "TOTAL", "TOTAL"), "value": _fmt_count(total, _ien)},
-        {"label": _L(report, "TERATAS", "TOP"), "value": f"{items[0][0]} ({round(items[0][1] / total * 100)}%)"},
+        {"label": _L(report, "TERATAS", "TOP"), "value": f"{items[0][0]} ({fmt_persen(items[0][1], total)})"},
         {"label": _L(report, "KATEGORI", "CATEGORIES"), "value": str(len(items))},
     ]
 
@@ -1696,8 +2219,8 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
     notes = [
         _L(
             report,
-            f"{name} mencatat {_fmt_count(val, _ien)} {unit} ({round(val / total * 100)}% dari total).",
-            f"{name} recorded {_fmt_count(val, _ien)} {unit} ({round(val / total * 100)}% of the total).",
+            f"{name} mencatat {_fmt_count(val, _ien)} {unit} ({fmt_persen(val, total)} dari total).",
+            f"{name} recorded {_fmt_count(val, _ien)} {unit} ({fmt_persen(val, total)} of the total).",
         )
         for name, val in rest
     ]
@@ -1738,7 +2261,7 @@ def _build_chart_insight_page(tile: dict, report) -> dict | None:
         top_i = max(range(len(values)), key=lambda i: values[i])
         low_i = min(range(len(values)), key=lambda i: values[i])
         kpi_summary = [
-            {"label": _L(report, "RATA-RATA", "AVERAGE"), "value": f"{avg:.1f}"},
+            {"label": _L(report, "RATA-RATA", "AVERAGE"), "value": fmt_desimal(avg, 1, _ien)},
             {"label": _L(report, "TERTINGGI", "HIGHEST"), "value": f"{axes[top_i]} ({values[top_i]:.0f})"},
             {"label": _L(report, "INDIKATOR", "INDICATORS"), "value": str(len(axes))},
         ]
@@ -1790,7 +2313,12 @@ def _build_chart_insight_page(tile: dict, report) -> dict | None:
         kpi_summary = [
             {"label": tile.get("label_a", "A").upper(), "value": _fmt_count(total_a, _ien)},
             {"label": tile.get("label_b", "B").upper(), "value": _fmt_count(total_b, _ien)},
-            {"label": _L(report, "PERUBAHAN", "CHANGE"), "value": f"{pct_change:+.1f}%"},
+            # SATU-SATUNYA persentase di luar fmt_persen: ini PERUBAHAN (bisa negatif, perlu
+            # tanda +/-), bukan pangsa dari suatu total. Separator desimalnya tetap harus
+            # ikut bahasa laporan - sebelumnya selalu titik & tampil "0.0%" di laporan
+            # Indonesia yang persentase lainnya sudah memakai koma.
+            {"label": _L(report, "PERUBAHAN", "CHANGE"),
+             "value": (f"{pct_change:+.1f}%" if _ien else f"{pct_change:+.1f}%".replace(".", ","))},
         ]
         notes = [_L(
             report,
@@ -1827,8 +2355,8 @@ def _build_chart_insight_page(tile: dict, report) -> dict | None:
         peak_val = grid[peak_r][peak_c]
         notes = [_L(
             report,
-            f"Kombinasi {day_labels[peak_r]} pukul {hour_labels[peak_c]} paling padat, {_fmt_count(peak_val, _ien)} dari {_fmt_count(total, _ien)} data ({round(peak_val / total * 100)}%).",
-            f"{day_labels[peak_r]} at {hour_labels[peak_c]} is the busiest combination, {_fmt_count(peak_val, _ien)} of {_fmt_count(total, _ien)} records ({round(peak_val / total * 100)}%).",
+            f"Kombinasi {day_labels[peak_r]} pukul {hour_labels[peak_c]} paling padat, {_fmt_count(peak_val, _ien)} dari {_fmt_count(total, _ien)} data ({fmt_persen(peak_val, total)}).",
+            f"{day_labels[peak_r]} at {hour_labels[peak_c]} is the busiest combination, {_fmt_count(peak_val, _ien)} of {_fmt_count(total, _ien)} records ({fmt_persen(peak_val, total)}).",
         )]
         # PERMINTAAN USER (density): sebut total tiap HARI scr eksplisit (bukan cuma 1 sel
         # terpadat) - angka ASLI yang sama dgn baris grid yang digambar heatmap-nya.
@@ -1838,8 +2366,8 @@ def _build_chart_insight_page(tile: dict, report) -> dict | None:
                 continue
             notes.append(_L(
                 report,
-                f"{day_label} mencatat {_fmt_count(day_total, _ien)} data ({round(day_total / total * 100)}% dari total).",
-                f"{day_label} recorded {_fmt_count(day_total, _ien)} records ({round(day_total / total * 100)}% of the total).",
+                f"{day_label} mencatat {_fmt_count(day_total, _ien)} data ({fmt_persen(day_total, total)} dari total).",
+                f"{day_label} recorded {_fmt_count(day_total, _ien)} records ({fmt_persen(day_total, total)} of the total).",
             ))
     else:
         return None
@@ -1930,8 +2458,8 @@ def _compute_merged_page_extra_notes(category_details: list, report) -> list:
         top_name, num_label, den_label, top_ratio = max(ratios, key=lambda r: r[3])
         notes.append(_L(
             report,
-            f"{top_name} mencatat rasio {num_label}:{den_label} tertinggi ({top_ratio:.2f}) di antara seluruh entitas yang ditampilkan.",
-            f"{top_name} recorded the highest {num_label}:{den_label} ratio ({top_ratio:.2f}) among all entities shown.",
+            f"{top_name} mencatat rasio {num_label}:{den_label} tertinggi ({fmt_desimal(top_ratio, 2, False)}) di antara seluruh entitas yang ditampilkan.",
+            f"{top_name} recorded the highest {num_label}:{den_label} ratio ({fmt_desimal(top_ratio, 2, True)}) among all entities shown.",
         ))
 
     # (2) Penyimpangan terbesar dari garis rata-rata (target_frac) utk metrik UTAMA kartu
@@ -2125,13 +2653,21 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
         # sampai dasar kartu). Diisi satu sub-item yang datanya SUDAH ADA di kartu itu -
         # nilainya sendiri, dgn penanda RATA-RATA seluruh kartu di kolom itu sbg pembanding.
         # Tidak ada angka baru yang dikarang: nilai & rata-rata dua-duanya turunan langsung.
+        # KOREKSI USER (item 3 & 4 ternyata SATU cacat): syaratnya dulu "TIDAK ADA kartu yang
+        # punya sub-item" - jadi kalau SEBAGIAN kartu punya & sebagian tidak, pengisi ini
+        # diam. Terukur: 5 kartu di laporan 184/187 berdiri tanpa badan, SEKOLOM dgn kartu
+        # yang punya tiga baris sub-item - itulah "kotak yatim berisi hanya judul" sekaligus
+        # "kartu diregangkan hampa". Sekarang kartu yang KOSONG saja yang diisi, tanpa
+        # menyentuh kartu yang sudah punya isi.
         _cards = col.get("category_details") or []
-        if _cards and not any(c.get("sub_items") for c in _cards):
+        if _cards and any(not c.get("sub_items") for c in _cards):
             _vals = [c.get("value") for c in _cards if isinstance(c.get("value"), (int, float))]
             if len(_vals) >= 2:
                 _top = max(_vals) or 1
                 _avg = sum(_vals) / len(_vals)
                 for c in _cards:
+                    if c.get("sub_items"):
+                        continue
                     if not isinstance(c.get("value"), (int, float)):
                         continue
                     c["sub_items"] = [{
@@ -3753,12 +4289,14 @@ def build_report_blocks(report) -> list[dict]:
             ))
 
     if total_sev > 0 and is_included("severity_analysis"):
-        crit_pct = round(severity.get("critical", 0) / total_sev * 100, 1)
-        high_pct = round(severity.get("high", 0) / total_sev * 100, 1)
+        # lewat fmt_persen juga (satu jalur utk SEMUA persentase laporan) - nilainya sudah
+        # membawa tanda "%" sendiri, jadi pemakainya tidak menambahkan lagi.
+        crit_pct = fmt_persen(severity.get("critical", 0), total_sev)
+        high_pct = fmt_persen(severity.get("high", 0), total_sev)
         intro = sanitize_text(_L(
             report,
-            f"{high_pct}% event berkategori High dan {crit_pct}% Critical. Kombinasi keduanya memerlukan perhatian dan eskalasi serius.",
-            f"{high_pct}% of events are High and {crit_pct}% are Critical. This combination requires serious attention and escalation.",
+            f"{high_pct} event berkategori High dan {crit_pct} Critical. Kombinasi keduanya memerlukan perhatian dan eskalasi serius.",
+            f"{high_pct} of events are High and {crit_pct} are Critical. This combination requires serious attention and escalation.",
         ))
         detail_text = None
         if category_pick:
@@ -3770,9 +4308,9 @@ def build_report_blocks(report) -> list[dict]:
             ))
         sev_caption = sanitize_text(_L(
             report,
-            f"Critical mencapai {crit_pct}% dan High {high_pct}% dari seluruh {total_sev} event. "
+            f"Critical mencapai {crit_pct} dan High {high_pct} dari seluruh {total_sev} event. "
             f"Gabungan proporsi setinggi ini perlu diprioritaskan penanganannya agar tidak berdampak lebih luas ke operasional.",
-            f"Critical accounts for {crit_pct}% and High {high_pct}% of all {total_sev} events. "
+            f"Critical accounts for {crit_pct} and High {high_pct} of all {total_sev} events. "
             f"This combined high proportion should be prioritized to avoid broader operational impact.",
         ))
         prior_texts += [intro, sev_caption]
@@ -4368,8 +4906,8 @@ def build_management_report_blocks(report) -> list[dict]:
             "values": [it["count"] for it in order],
             "cat_col_name": status_col,
             "caption": L(
-                f"{top_status['value']} mendominasi alur ini ({top_status['count']} dari {status_total} data, {round(top_status['count']/status_total*100)}%).",
-                f"{top_status['value']} dominates this flow ({top_status['count']} of {status_total} records, {round(top_status['count']/status_total*100)}%).",
+                f"{top_status['value']} mendominasi alur ini ({top_status['count']} dari {status_total} data, {fmt_persen(top_status['count'], status_total)}).",
+                f"{top_status['value']} dominates this flow ({top_status['count']} of {status_total} records, {fmt_persen(top_status['count'], status_total)}).",
             ),
         })
 

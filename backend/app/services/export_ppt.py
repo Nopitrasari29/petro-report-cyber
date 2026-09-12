@@ -43,7 +43,7 @@ from app.services.report_render_logic import (
     build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style,
     resolve_theme_color, best_grid_cols, _hard_truncate, _dedupe_truncated_labels, _layout_dashboard_column,
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN, _DASH_TITLE_MAX_H_IN,
-    _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content, _kpi_card_widths, _NESTED_CARD_GAP_IN,
+    _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content, wrap_line_count, kolom_yang_digambar, _kpi_card_widths, _NESTED_CARD_GAP_IN,
     _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -2710,7 +2710,7 @@ def _build_severity_distribution_slide(block: dict, ctx: _PptBlockContext):
 
     add_critical_highlight_panel(
         sev_slide, sev_panel_x, Inches(sev_body_y), Inches(4.3), sev_body_h,
-        f'{block["crit_pct"]}%', block["panel_text"], block["detail_text"], theme=ctx.theme,
+        f'{block["crit_pct"]}', block["panel_text"], block["detail_text"], theme=ctx.theme,
     )
     if sev_has_caption:
         add_note_box(sev_slide, MARGIN_X, Inches(sev_body_y) + sev_body_h + Inches(0.12), CONTENT_W, block["ai_caption"], theme=ctx.theme)
@@ -3641,18 +3641,33 @@ def _insight_kpi_row(slide, cards: list, x_in: float, total_w_in: float, h_in: f
         x += w + gap_in
 
 
+# PER ENGINE (permintaan user): angka ini DISAMAKAN dgn sisi PDF utk sementara krn belum
+# ada pecahan baris nyata dari PPT utk dikalibrasi. Kalau tes tumpang tindih menemukan
+# tabrakan yang HANYA muncul di PPT, angka inilah yang pertama harus diperiksa - jangan
+# diasumsikan sama selamanya.
+_NAMA_KARTU_FAKTOR_LEBAR = 0.80
+
+
 def _muat_nama_kartu(nama: str, w_in: float, maks_baris: int = 2):
-    """Kembaran fungsi bernama sama di export_pdf.py - lihat catatan di sana."""
+    """(ukuran font pt, jumlah baris SEBENARNYA) - nama tidak pernah dipotong.
+
+    ITEM 3 (permintaan user): jumlah baris kini DIHITUNG lewat wrap_line_count - simulasi
+    pembungkusan dgn titik pecah yang sungguhan dipakai perender (spasi, "/", "-", dan "."
+    bila diikuti huruf) - BUKAN diperkirakan dari len(nama)/kapasitas. Perkiraan lama
+    mengasumsikan baris terisi penuh; nyatanya "/Common/vs.ams.petrokimia-gresik.com" jadi
+    TIGA baris, lalu skor & sub-item kartu tertabrak (terukur di laporan 187).
+
+    FAKTOR LEBAR _NAMA_KARTU_FAKTOR_LEBAR DIKALIBRASI dari render sungguhan: pada kotak 173px/9pt, baris
+    terpanjang yang benar-benar dihasilkan perender berisi 18 karakter - faktor 0.80 yang
+    menghasilkan kapasitas itu (0.55 menghasilkan 26, meleset jauh & itu sumber cacatnya)."""
     if not nama:
         return 9.0, 1
     lebar_px = max(20.0, w_in * 96 - 27)
     for pt in (9.0, 8.0, 7.0, 6.5):
-        per_baris = max(1, int(lebar_px / (pt * 0.55 * 96 / 72)))
-        baris = -(-len(nama) // per_baris)
+        baris = wrap_line_count(nama, lebar_px, pt, _NAMA_KARTU_FAKTOR_LEBAR)
         if baris <= maks_baris:
             return pt, baris
-    per_baris = max(1, int(lebar_px / (6.5 * 0.55 * 96 / 72)))
-    return 6.5, -(-len(nama) // per_baris)
+    return 6.5, wrap_line_count(nama, lebar_px, 6.5, _NAMA_KARTU_FAKTOR_LEBAR)
 
 
 def _nested_category_card(slide, card: dict, x_in: float, y_in: float, w_in: float, h_in: float, theme: dict | None = None) -> None:
@@ -3933,9 +3948,28 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
         # palet DIPUTAR, bukan dipotong - lihat catatan kembarannya di export_pdf.py
         _tv = tile.get("values") or []
         _tbase = [t["main"], t["chart"], t["light"], t["soft"], GRAY_TEXT]
-        add_treemap_shapes(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
+        _tm_h = cy_in - (0.20 if tile.get("catatan_lainnya") else 0.0)
+        add_treemap_shapes(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(max(0.4, _tm_h)),
                            tile.get("labels") or [], _tv,
                            colors=[_tbase[i % len(_tbase)] for i in range(max(1, len(_tv)))])
+        # kembaran keterangan "Lainnya" di export_pdf.py - ruangnya DIPESAN dari tinggi chart
+        # (bukan digambar di bawahnya begitu saja), supaya tidak menembus kotak.
+        if tile.get("catatan_lainnya"):
+            _cb = slide.shapes.add_textbox(Inches(x0_in), Inches(y0_in + _tm_h + 0.02),
+                                           Inches(cx_in), Inches(0.18))
+            _cp = _cb.text_frame.paragraphs[0]
+            _cp.text = tile["catatan_lainnya"]
+            _cp.alignment = PP_ALIGN.CENTER
+            _set_font(_cp, BODY_FONT, Pt(7), color=GRAY_TEXT)
+            # petak warna cocok dgn segmen terakhir - kembaran di export_pdf.py
+            _ramp_tm = [_tbase[i % len(_tbase)] for i in range(max(1, len(_tv)))]
+            _swp = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(x0_in + cx_in / 2 - 0.62),
+                Inches(y0_in + _tm_h + 0.06), Inches(0.08), Inches(0.08))
+            _swp.fill.solid()
+            _swp.fill.fore_color.rgb = _as_rgb(_ramp_tm[(len(_tv) - 1) % len(_ramp_tm)], t["main"])
+            _swp.line.fill.background()
+            _no_shadow(_swp)
     elif kind == "metric_mix":
         add_stacked_proportion_bar(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in),
                                    tile.get("values") or [], labels=tile.get("labels") or [],
@@ -4006,6 +4040,11 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     topik dikemas jadi KOLOM SEJAJAR di satu slide, memakai ulang helper yang sama persis
     dgn slide insight 1-topik (semuanya sudah menerima x/lebar/tinggi eksplisit)."""
     cols = [c for c in (block.get("columns") or []) if c]
+    # kolom yang tile-nya DILEWATI dibuang seluruhnya, sebelum lebar kolom dihitung - supaya
+    # sisanya melebar mengisi halaman, bukan menyisakan kolom yatim berisi header + 2 kartu.
+    cols = kolom_yang_digambar(cols, 13.333 - 2 * _DASH_MARGIN_X_IN, _DASH_COLS_GAP_IN,
+                               _DASH_CONTENT_BOTTOM_IN - _DASH_COLS_TITLE_H_IN
+                               - _DASH_COLS_KPI_H_IN - 0.10)
     slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_logo(slide, ctx.logo_path)
     total_w_in = 13.333 - 2 * _DASH_MARGIN_X_IN
@@ -4048,12 +4087,20 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         _tile = col.get("main_chart_tile")
         _has_cards = bool(col.get("category_details"))
         _column_layout = _layout_dashboard_column_content(
-            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes)
+            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes), _tile
         )
         _chart_h = _column_layout["chart_h"]
+        # tile yang SUDAH disesuaikan perencana: barisnya dikurangi kalau ruang kurang, ekor
+        # segmennya digabung ke "Lainnya", atau None kalau tile-nya DILEWATI (segmen yang
+        # lolos ambang label < 2). None berarti chart TIDAK digambar - bukan jatuh kembali ke
+        # tile asli; kolomnya dibiarkan tanpa chart, tidak diisi penambal.
+        _tile = _column_layout.get("tile")
+        if _tile is None:
+            _has_cards = bool(col.get("category_details"))
+            _chart_h = 0.0
         if _tile:
             notes_consumed = _insight_main_chart(
-                slide, col["main_chart_tile"], x, y, col_w, _chart_h,
+                slide, _tile, x, y, col_w, _chart_h,
                 theme=ctx.theme, notes=(None if _has_cards else notes), is_en=is_en,
             )
             if _has_cards:
