@@ -27,6 +27,7 @@ from app.services.report_render_logic import (
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MAIN_VISUAL_RANGE_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN,
     _DASH_TITLE_MAX_H_IN, _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content,
     tinggi_kartu_in, wrap_line_count, muat_catatan, kolom_yang_digambar, _kpi_card_widths,
+    metrik_judul_dashboard,
     _NESTED_CARD_GAP_IN, _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -2979,7 +2980,7 @@ def _mgmt_tile_chart_html(tile: dict, ctx: "_PdfBlockContext", compact: bool = F
     return ""
 
 
-def _dashboard_title_html(text: str, w_in: float, size_pt: float = 22,
+def _dashboard_title_html(text: str, w_in: float, size_pt: float | None = None,
                           judul_topik: str | None = None) -> tuple:
     """Judul halaman dashboard Management BARU (permintaan user A2): y=0 (lihat negative-
     margin escape-hatch di _build_management_visual_dashboard_block), lebar penuh, TANPA
@@ -2996,76 +2997,15 @@ def _dashboard_title_html(text: str, w_in: float, size_pt: float = 22,
     # wrap ke 2 baris terlihat menabrak logo. w_in dipersempit ~2.6in dari kanan (perkiraan
     # lebar zona 3 logo) KHUSUS utk estimasi wrap & lebar div judul, bukan mengubah lebar
     # kolom di bawahnya (yang tetap lebar penuh, mulai di bawah logo).
-    logo_clear_in = 2.6
-    text_w_in = max(4.0, w_in - logo_clear_in)
-    max_h_in = _DASH_TITLE_MAX_H_IN
-    chars_per_line = max(20, int(text_w_in * 96 / (size_pt * 0.55)))
-    line_h_in = size_pt * 1.25 / 72
-    # BUG NYATA DITEMUKAN (dibuktikan lewat bisection render langsung — tukar HANYA judul,
-    # sisa konten identik, hasil rendernya beda total): judul yang PANJANG (mis. kalimat AI
-    # yang menyebut path aset lengkap, 170+ karakter) tadinya HANYA dibatasi scr VISUAL lewat
-    # CSS "max-height + overflow:hidden" — teks aslinya TETAP dikirim UTUH ke WeasyPrint, yang
-    # scr internal tetap menghitung wrap sampai 3+ baris (jauh lewat 2 baris yang muat) SEBELUM
-    # baru dipotong scr visual. WeasyPrint TERBUKTI (bukan dugaan) salah menghitung posisi alir
-    # dokumen SETELAH div overflow itu kalau kontennya jauh melebihi max-height - seluruh
-    # halaman SETELAH judul (KPI+kartu detail) hilang total tanpa exception, PERSIS pola bug
-    # yang sama dgn _hard_truncate (lihat docstring-nya, report_render_logic.py) - solusi yang
-    # sama juga: potong teksnya SENDIRI di sisi Python ke batas karakter yang genuinely muat
-    # (bukan cuma andalkan CSS clip scr visual), supaya WeasyPrint tidak pernah diberi konten
-    # yang jauh melebihi kotaknya sama sekali.
-    #
-    # Batas dipakai `chars_per_line` (1 baris), BUKAN `chars_per_line * 2` (perkiraan pas utk
-    # 2 baris) - dibuktikan lewat bisection empiris langsung thd kasus nyata (judul berisi 2
-    # path/URL panjang tanpa spasi): batas 2-baris (~162 char) TETAP memicu bug (kedua URL
-    # panjang itu masih lolos utuh), sedangkan ambang aman sebenarnya jauh lebih ketat & sulit
-    # diprediksi persis (tergantung SEBERAPA BANYAK token panjang tanpa spasi ikut di dalamnya,
-    # bukan cuma total karakter) - lebih baik konsisten memotong ke ~1 baris (margin aman jauh
-    # di bawah ambang bug manapun yang teramati) drpd mencoba menebak ambang pas 2-baris yang
-    # ternyata rapuh.
-    # REGRESI DIPERBAIKI (dilaporkan user dari pemeriksaan cetak, laporan 180 hal.01 & 03):
-    # tinggi kotak judul dipatok 1 BARIS sementara teksnya TERNYATA membungkus jadi 2 baris -
-    # baris kedua terpotong separuh oleh baris kartu KPI di bawahnya, TANPA penanda apa pun
-    # (bukan "…", benar-benar terpotong di tengah huruf). Contoh nyata: "E-Katalog memimpin
-    # Metode Pengadaan dengan 38% dari 42 data" (59 karakter) tetap wrap 2 baris.
-    #
-    # Akarnya SEKELUARGA dgn akar Prioritas 1: tinggi elemen yang TIDAK dihitung sesuai
-    # kenyataan. Batas karakter di prompt (≤60) TIDAK BOLEH jadi satu-satunya pengaman - ia
-    # cuma mengurangi peluang wrap, tidak menjamin. Sekarang jumlah baris DIHITUNG dari
-    # perkiraan pembungkusan, lalu tinggi kotak mengikuti hasilnya (tetap TETAP/fixed, jadi
-    # aritmetika tata letak di bawahnya tetap pasti - lihat catatan height vs max-height).
-    # Faktor lebar karakter DIKALIBRASI dari render sungguhan (bukan ditebak): pada lebar &
-    # font yang sama, judul 55 karakter TERBUKTI muat 1 baris sementara 59 karakter TERBUKTI
-    # wrap jadi 2 - jadi kapasitas nyatanya ~56 karakter, bukan 81 spt perkiraan lama (faktor
-    # 0.55). Faktor 0.80 menghasilkan kapasitas ~56 itu. Sengaja dipilih di sisi KONSERVATIF:
-    # salah menghitung KELEBIHAN baris cuma menyisakan sedikit ruang kosong, sedangkan salah
-    # menghitung KEKURANGAN baris MEMOTONG teks di tengah huruf tanpa penanda apa pun.
-    # BATASAN USER ("tidak ada teks yang boleh berakhir '…' atau terpotong, di mana pun"):
-    # teks yang tidak muat dulu DIPOTONG KERAS (terukur 20 caption berakhir elipsis). Sekarang
-    # ukuran font-nya DIKECILKAN bertahap sampai teksnya muat utuh di jatah baris yang ada -
-    # kalau di ukuran terkecil pun tidak muat, jumlah barisnya yang ditambah (kotak ikut lebih
-    # tinggi), bukan teksnya yang dibuang. Faktor 0.80 dipertahankan (dikalibrasi dari render).
-    _base_pt = size_pt
-    max_lines = max(1, int(max_h_in // line_h_in))
-    for _try_pt in (_base_pt, _base_pt * 0.9, _base_pt * 0.8, _base_pt * 0.72):
-        _cpl = max(20, int(text_w_in * 96 / (_try_pt * 0.80)))
-        _lh = _try_pt * 1.25 / 72
-        _ml = max(1, int(max_h_in // _lh))
-        if len(text) <= _cpl * _ml:
-            size_pt, chars_per_line, line_h_in, max_lines = _try_pt, _cpl, _lh, _ml
-            break
-    else:
-        # bahkan di ukuran terkecil teksnya tetap lebih panjang: barisnya yang ditambah
-        # (kotak ikut lebih tinggi), teksnya TIDAK dibuang.
-        size_pt = _base_pt * 0.72
-        chars_per_line = max(20, int(text_w_in * 96 / (size_pt * 0.80)))
-        line_h_in = size_pt * 1.25 / 72
-        max_lines = -(-len(text) // chars_per_line)
-    n_lines = max(1, min(max_lines, -(-len(text) // chars_per_line)))
-    # BUG DIPERBAIKI: tinggi minimum SEKARANG juga menjamin cukup utk melewati tinggi logo
-    # (top 0.22in + ~0.375in tinggi = ~0.6in) — 1 baris judul pendek pada font 22pt SAJA
-    # (~0.46in) sebelumnya lebih pendek dari itu, jadi konten kolom PERTAMA (kolom kanan,
-    # sejajar posisi logo) bisa mulai SEBELUM logo selesai, tumpang tindih tipis.
-    height_in = max(0.62, min(max_h_in, n_lines * line_h_in + 0.08))
+    # SATU SUMBER: metrik judul (lebar teks, ukuran font final, tinggi kotak) dihitung di
+    # report_render_logic.metrik_judul_dashboard supaya sisi PPT memakai angka yang SAMA.
+    # Sebelumnya sisi PDF & PPT menghitung sendiri-sendiri dgn font, zona logo, faktor lebar
+    # dan minimum yang berbeda - selisih 0.23in mengalir ke tinggi chart & membuat kedua
+    # format menggambar JUMLAH ENTITAS yang berbeda (lihat catatan panjang di sumber itu).
+    _mj = metrik_judul_dashboard(text, w_in, size_pt)
+    text_w_in = _mj["text_w_in"]
+    size_pt = _mj["size_pt"]
+    height_in = _mj["tinggi_in"]
     # A6: nama topik BOLD warna gelap di depan, sisa kalimat ukuran SAMA tapi TIDAK bold -
     # persis pembagian di slide acuan. Tanpa judul_topik, seluruh teks bold seperti dulu.
     if judul_topik and text.startswith(judul_topik):

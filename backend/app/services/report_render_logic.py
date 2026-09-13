@@ -851,6 +851,61 @@ def wrap_line_count(teks: str, lebar_px: float, font_pt: float, faktor_lebar: fl
     return baris
 
 
+# ---- JUDUL HALAMAN DASHBOARD: SATU SUMBER METRIK ---------------------------------------
+# AKAR MASALAH YANG DIPERBAIKI (terukur, bukan dugaan): tinggi judul halaman dashboard dulu
+# dihitung DUA KALI dengan aturan berbeda - export_pdf._dashboard_title_html (font 22pt,
+# zona logo 2.6in, faktor lebar 0.80 hasil kalibrasi render, tinggi minimum 0.62in, padding
+# 0.08in) dan export_ppt.add_dashboard_title (font 28pt, zona logo 2.9in, faktor 0.6 yang
+# docstring-nya sendiri menyebut "estimasi kasar", minimum 0.6in, padding 0.1in, plus
+# _hard_truncate yang MEMOTONG teks - melanggar batasan user "tidak ada teks yang boleh
+# terpotong").
+#
+# Akibatnya untuk judul yang SAMA: PDF 0.844in, PPTX 1.072in. Selisih 0.23in itu mengalir ke
+# avail_h_in -> body_h -> chart_h, sehingga _potong_isi_chart memutuskan jumlah baris chart
+# yang BERBEDA di tiap format: laporan 188 PDF menggambar 4 entitas ("Aggregated" + "Others
+# (2)"), PPTX hanya 3 ("Others (3)"). DUA DOKUMEN MENCERITAKAN ISI YANG BERBEDA untuk laporan
+# yang sama, dan uji label menangkapnya sbg label yang tidak sampai ke keluaran.
+#
+# Pembungkusan dihitung dgn wrap_line_count (peluang pecah SEBENARNYA), bukan len/kapasitas -
+# kedua versi lama memakai pembagian karakter yang mengasumsikan baris terisi penuh.
+_DASH_TITLE_SIZE_PT = 22.0          # ukuran dasar; dikecilkan bertahap kalau tidak muat
+_DASH_TITLE_LOGO_CLEAR_IN = 2.6     # zona logo pojok kanan-atas yang tidak boleh ditembus
+_DASH_TITLE_MIN_H_IN = 0.62         # menjamin kolom pertama mulai SETELAH logo selesai
+_DASH_TITLE_PAD_IN = 0.08
+_DASH_TITLE_FAKTOR_LEBAR = 0.80     # dikalibrasi dari render PDF sungguhan, lihat catatan
+                                    # di _dashboard_title_html (55 kar muat, 59 kar wrap)
+
+
+def metrik_judul_dashboard(teks: str, total_w_in: float, size_pt: float | None = None) -> dict:
+    """Metrik judul halaman dashboard - SATU SUMBER untuk perencana DAN kedua exporter.
+
+    Aturan tetap proyek: tinggi yang bergantung isi harus bisa dihitung SEBELUM digambar,
+    dan dihitung SEKALI - bukan sekali per format. Judul A6 adalah kalimat temuan yang
+    panjangnya bervariasi per halaman, jadi tingginya tidak boleh dipatok.
+
+    Ukuran font dikecilkan bertahap supaya teks muat UTUH - tidak ada pemotongan teks."""
+    base_pt = float(size_pt or _DASH_TITLE_SIZE_PT)
+    text_w_in = max(4.0, float(total_w_in) - _DASH_TITLE_LOGO_CLEAR_IN)
+    lebar_px = text_w_in * 96.0
+    teks = str(teks or "")
+    pt = base_pt
+    for _try in (base_pt, base_pt * 0.9, base_pt * 0.8, base_pt * 0.72):
+        lh = _try * 1.25 / 72.0
+        maks_baris = max(1, int(_DASH_TITLE_MAX_H_IN // lh))
+        if wrap_line_count(teks, lebar_px, _try, _DASH_TITLE_FAKTOR_LEBAR) <= maks_baris:
+            pt = _try
+            break
+    else:
+        # Di ukuran terkecil pun tidak muat: barisnya yang bertambah, teksnya TIDAK dibuang.
+        pt = base_pt * 0.72
+    line_h_in = pt * 1.25 / 72.0
+    n_baris = max(1, wrap_line_count(teks, lebar_px, pt, _DASH_TITLE_FAKTOR_LEBAR))
+    tinggi_in = max(_DASH_TITLE_MIN_H_IN,
+                    min(_DASH_TITLE_MAX_H_IN, n_baris * line_h_in + _DASH_TITLE_PAD_IN))
+    return {"text_w_in": text_w_in, "size_pt": pt, "line_h_in": line_h_in,
+            "n_baris": n_baris, "tinggi_in": tinggi_in}
+
+
 def chart_label_count(tile: dict) -> int:
     """Berapa label yang HARUS digambar chart ini (dipakai utk hitung tinggi minimumnya)."""
     k = tile.get("tile_kind")
@@ -2545,7 +2600,13 @@ def maks_baris_chart(labels: list, kolom_w_in: float, tile_kind: str = "risk_hea
     _kartu_min = _NESTED_CARD_HEADER_H_IN + 0.20 + (
         _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN
         + _NESTED_CARD_SUBITEM_GAP_IN)
-    anggaran = (_DASH_CONTENT_BOTTOM_IN - 0.62 - _DASH_COLS_TITLE_H_IN
+    # JUDUL DIPESAN SETINGGI MUNGKIN, bukan setinggi MINIMUM. Perencana memotong entitas
+    # SEBELUM judul halaman disusun (judul A6 dirakit di _pack_insight_pages_into_columns,
+    # jauh setelah ini), jadi ia tidak bisa tahu tinggi judul halamannya sendiri. Memakai
+    # 0.62in (minimum) membuat anggaran terlalu longgar: perencana bilang 5 baris, sementara
+    # judul nyata 0.905-1.111in menyisakan ruang utk 3 - dan _potong_isi_chart memangkas 2
+    # baris lagi saat render. Angka yang dipakai HARUS yang pasti muat di kasus terburuk.
+    anggaran = (_DASH_CONTENT_BOTTOM_IN - _DASH_TITLE_MAX_H_IN - _DASH_COLS_TITLE_H_IN
                 - _DASH_COLS_CARA_BACA_H_IN - _DASH_COLS_KPI_H_IN - _DASH_COLS_NOTE_H_IN
                 - _kartu_min - 0.20)
     return max(3, int(max(0.0, anggaran - 0.16) / max(rh, 0.05)))

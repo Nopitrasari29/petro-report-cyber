@@ -45,6 +45,7 @@ from app.services.report_render_logic import (
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN, _DASH_TITLE_MAX_H_IN,
     _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content,
     tinggi_kartu_in, wrap_line_count, kolom_yang_digambar, _kpi_card_widths, _NESTED_CARD_GAP_IN,
+    metrik_judul_dashboard,
     muat_catatan,
     _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
@@ -3452,30 +3453,28 @@ def _build_management_kpi_grid_slide(block: dict, ctx: _PptBlockContext):
     return slide
 
 
-def add_dashboard_title(slide, text: str, x_in: float, w_in: float, color=TEXT_DARK, size_pt: float = 28) -> float:
+def add_dashboard_title(slide, text: str, x_in: float, w_in: float, color=TEXT_DARK, size_pt: float | None = None) -> float:
     """Judul halaman dashboard Management BARU (permintaan user A2): mulai di y=0, lebar
     penuh, TANPA kicker terpisah di atasnya (dulu kicker "SOROTAN VISUAL" berulang IDENTIK di
     4+ halaman dashboard berturut-turut tanpa memberi info apa pun — dihapus total, lihat
-    report_render_logic.py::build_management_report_blocks). Tinggi maksimal 1.12in / 2
-    baris — judul yang secara wajar cuma 1 baris dapat box LEBIH PENDEK dari itu (dinamis,
-    sama spt add_title, supaya kolom di bawahnya dapat ruang lebih lapang), judul yang
-    ternyata butuh >2 baris pada ukuran ini DIPOTONG (_hard_truncate) drpd dibiarkan meluber
-    keluar batas yang diminta.
+    report_render_logic.py::build_management_report_blocks). Tinggi kotak, ukuran font dan
+    zona bebas logo TIDAK lagi dihitung di sini - semuanya datang dari
+    report_render_logic.metrik_judul_dashboard supaya sisi PDF & PPT memakai angka yang SAMA.
 
-    BUG DIPERBAIKI (ditemukan lewat verifikasi render langsung): judul "lebar penuh"
-    SEBELUMNYA menembus zona logo pojok kanan-atas (add_logo default width=2.63in) — judul
-    yang wrap ke 2 baris terlihat menabrak logo. Lebar dipakai utk estimasi wrap/box
-    dipersempit ~2.9in dari kanan (zona logo), TIDAK mengubah lebar kolom di bawahnya."""
-    text_w_in = max(4.0, w_in - 2.9)
+    Judul yang tidak muat DIKECILKAN ukurannya, tidak dipotong (batasan user: tidak ada teks
+    yang boleh terpotong). Versi sebelumnya memakai _hard_truncate di sini."""
+    # SATU SUMBER (report_render_logic.metrik_judul_dashboard): lebar teks, ukuran font dan
+    # tinggi kotak dihitung di tempat yang SAMA dgn sisi PDF. Sebelumnya fungsi ini memakai
+    # font 28pt, zona logo 2.9in, faktor lebar 0.6 ("estimasi kasar" menurut docstring-nya
+    # sendiri) dan _hard_truncate - hasilnya 1.072in untuk judul yang sisi PDF hitung 0.844in,
+    # dan selisih itu membuat kedua format menggambar jumlah entitas chart yang BERBEDA.
+    # _hard_truncate DIHAPUS dari jalur ini: teks tidak boleh terpotong (batasan user), yang
+    # dikecilkan ukuran fontnya - persis aturan yang sudah dipakai sisi PDF.
+    _mj = metrik_judul_dashboard(text, w_in, size_pt)
+    text_w_in = _mj["text_w_in"]
+    size_pt = _mj["size_pt"]
+    box_h_in = _mj["tinggi_in"]
     fit_text = text
-    max_chars = len(text)
-    while _estimate_wrapped_height_in(fit_text, size_pt, text_w_in) > _DASH_TITLE_MAX_H_IN and max_chars > 20:
-        max_chars -= 10
-        fit_text = _hard_truncate(text, max_chars)
-    # Tinggi minimum SEKARANG juga menjamin cukup melewati tinggi logo (y=0.18in +
-    # ~0.375in tinggi = ~0.56in) — judul 1 baris pendek sebelumnya bisa lebih pendek dari
-    # itu, membuat kolom pertama (sejajar posisi logo) mulai sebelum logo selesai.
-    box_h_in = max(0.6, min(_DASH_TITLE_MAX_H_IN, _estimate_wrapped_height_in(fit_text, size_pt, text_w_in) + 0.1))
     box = slide.shapes.add_textbox(Inches(x_in), Inches(0), Inches(text_w_in), Inches(box_h_in))
     tf = box.text_frame
     tf.word_wrap = True
