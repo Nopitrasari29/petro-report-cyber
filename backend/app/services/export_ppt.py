@@ -4187,30 +4187,43 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         # MEMBACA chart. Sekat di acuan GARIS TEPI, bukan bayangan (141/141 shape bergaris).
         y = title_bottom_in
         _cara = str(col.get("cara_baca") or "")
+        _judul_w = col_w if not _cara else col_w * 0.52
+        # Kembaran export_pdf.py: font mengecil sampai judul muat, pita ditinggikan kalau
+        # pada 5.5pt pun masih lebih dari satu baris. Judul TIDAK dipotong.
+        # TINGGI PITA DIHITUNG DULU, sebelum shape-nya dibuat - aturan tetap: tinggi yang
+        # bergantung isi harus bisa dihitung sebelum digambar.
+        _w_judul_px = max(40.0, (_judul_w - 0.10) * 96)
+        _judul_teks = str(col.get("title") or "")
+        _jp, _jbaris = 8.5, 1
+        for _pt in (8.5, 8.0, 7.5, 7.0, 6.5, 6.0, 5.5):
+            _jp = _pt
+            _jbaris = wrap_line_count(_judul_teks, _w_judul_px, _pt, 0.80)
+            if _jbaris <= 1:
+                break
+        _pita_h = max(_DASH_COLS_TITLE_H_IN, _jbaris * (_jp * 1.25 / 72.0) + 0.06)
         _pita = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y),
-                                       Inches(col_w), Inches(_DASH_COLS_TITLE_H_IN))
+                                       Inches(col_w), Inches(_pita_h))
         _pita.fill.solid()
         _pita.fill.fore_color.rgb = ctx.theme["main"]
         _pita.line.color.rgb = ctx.theme["main"]
         _pita.line.width = Pt(0.5)
         _no_shadow(_pita)
-        _judul_w = col_w if not _cara else col_w * 0.52
         t_box = slide.shapes.add_textbox(
-            Inches(x + 0.05), Inches(y), Inches(_judul_w - 0.10), Inches(_DASH_COLS_TITLE_H_IN)
+            Inches(x + 0.05), Inches(y), Inches(_judul_w - 0.10), Inches(_pita_h)
         )
         t_tf = t_box.text_frame
         t_tf.word_wrap = True
         t_tf.margin_top = t_tf.margin_bottom = 0
         t_p = t_tf.paragraphs[0]
         t_p.text = str(col.get("title") or "")
-        t_p.font.size = Pt(8.5)
+        t_p.font.size = Pt(_jp)
         t_p.font.bold = True
         t_p.font.color.rgb = WHITE
         t_p.font.name = TITLE_FONT
         if _cara:
             c_box = slide.shapes.add_textbox(
                 Inches(x + _judul_w), Inches(y), Inches(col_w - _judul_w - 0.05),
-                Inches(_DASH_COLS_TITLE_H_IN))
+                Inches(_pita_h))
             c_tf = c_box.text_frame
             c_tf.word_wrap = True
             c_tf.margin_top = c_tf.margin_bottom = 0
@@ -4218,7 +4231,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
             c_p.text = _cara
             c_p.alignment = PP_ALIGN.RIGHT
             _set_font(c_p, BODY_FONT, Pt(6), color=WHITE)
-        y += _DASH_COLS_TITLE_H_IN + 0.04
+        y += _pita_h + 0.04
 
         kpi = (col.get("kpi_summary") or [])[:2]
         if kpi:

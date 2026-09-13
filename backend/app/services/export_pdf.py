@@ -3718,23 +3718,35 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # panel di bawah ini dibungkus kartu bergaris.
         _cara_baca = str(col.get("cara_baca") or "")
         _judul_w = col_w if not _cara_baca else col_w * 0.52
+        # BATASAN TETAP: judul TIDAK dipotong. Fontnya yang mengecil sampai muat, dan kalau
+        # pada batas bawah acuan (5.5pt) masih belum muat satu baris, PITANYA yang ditinggikan.
+        # overflow:hidden di sini SEMPAT memotong judul panjang diam-diam - tertangkap uji
+        # paritas ("PDF tidak menemukan [checked_topic] 'Analysis of Blocked Spam by Section'").
+        _w_judul_px = max(40.0, (_judul_w - 0.12) * 96)
+        _jp, _jbaris = 8.5, 1
+        for _p in (8.5, 8.0, 7.5, 7.0, 6.5, 6.0, 5.5):
+            _jp = _p
+            _jbaris = wrap_line_count(col_title, _w_judul_px, _p, 0.80)
+            if _jbaris <= 1:
+                break
+        _pita_h = max(_DASH_COLS_TITLE_H_IN, _jbaris * (_jp * 1.25 / 72.0) + 0.06)
         col_parts.append(
             f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
-            f'height:{_DASH_COLS_TITLE_H_IN}in;background:{ctx.accent_main};'
+            f'height:{_pita_h}in;background:{ctx.accent_main};'
             f'border:0.5pt solid {ctx.accent_main};border-radius:2px;"></div>'
             f'<div style="position:absolute;left:{x + 0.06}in;top:{y + 0.02}in;'
-            f'width:{_judul_w - 0.12}in;height:{_DASH_COLS_TITLE_H_IN - 0.04}in;'
-            f'overflow:hidden;font-family:{TITLE_FONT};font-size:{min(_ct_pt, 8.5)}pt;'
-            f'font-weight:700;color:{WHITE};line-height:1.15;">{_esc(col_title)}</div>'
+            f'width:{_judul_w - 0.12}in;'
+            f'font-family:{TITLE_FONT};font-size:{_jp}pt;'
+            f'font-weight:700;color:{WHITE};line-height:1.25;">{_esc(col_title)}</div>'
         )
         if _cara_baca:
             col_parts.append(
                 f'<div style="position:absolute;left:{x + _judul_w}in;top:{y + 0.03}in;'
-                f'width:{col_w - _judul_w - 0.06}in;height:{_DASH_COLS_TITLE_H_IN - 0.06}in;'
-                f'overflow:hidden;text-align:right;font-size:6pt;color:{WHITE};'
+                f'width:{col_w - _judul_w - 0.06}in;'
+                f'text-align:right;font-size:6pt;color:{WHITE};'
                 f'line-height:1.1;">{_esc(_cara_baca)}</div>'
             )
-        y += _DASH_COLS_TITLE_H_IN + 0.04
+        y += _pita_h + 0.04
 
         kpi = (col.get("kpi_summary") or [])[:2]
         if kpi:
@@ -3968,8 +3980,12 @@ def _build_management_ai_narrative_block(block: dict, ctx: _PdfBlockContext) -> 
     # padding dinaikkan JAUH lebih agresif drpd font (sama prinsipnya dgn pad_scale di
     # _build_management_kpi_grid_block) supaya kartu benar2 lebih TINGGI, bukan cuma teksnya
     # sedikit lebih besar, saat topiknya sedikit.
-    scale = 1.8 if n <= 1 else (1.3 if n == 2 else (1.15 if n == 3 else 1.0))
-    pad_scale = 3.0 if n <= 1 else (1.6 if n == 2 else (1.3 if n == 3 else 1.0))
+    # A2/A6: kartu narasi dulu 10pt isi & padding 14pt - di ATAS seluruh tangga font yang
+    # baru diturunkan (baris data 7pt, nilai 7.5pt). Basisnya diturunkan supaya lebih banyak
+    # butir muat per halaman (A6: ruang kosong diisi baris, bukan dibiarkan). Pembesaran saat
+    # kartunya sedikit TETAP - halaman berisi 1-2 kartu memang harus mengisi halaman.
+    scale = 1.8 if n <= 1 else (1.3 if n == 2 else (1.15 if n == 3 else 0.82))
+    pad_scale = 3.0 if n <= 1 else (1.6 if n == 2 else (1.3 if n == 3 else 0.62))
     cell_htmls = []
     for idx, it in enumerate(items):
         badge_html = _badge(str(idx + 1), TEXT_DARK, size=f"{round(20*scale)}px", font_size=f"{9*scale:.1f}pt")

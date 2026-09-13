@@ -351,6 +351,80 @@ def fmt_persen(bagian, total) -> str:
     return (_t if render_is_en() else _t.replace(".", ",")) + "%"
 
 
+# Tinggi kartu narasi — DIKALIBRASI DARI RENDER NYATA (laporan 184, 3 kartu 1 kolom):
+#   judul kartu 1 di y=2.64, kartu 2 di y=3.97, kartu 3 di y=5.10
+#   -> jarak 1.33in (isi 2 baris) & 1.13in (isi 1 baris)
+#   -> dasar 0.94in + 0.19in per baris isi
+# Model pertama saya (judul 0.22 + baris 0.175 + padding 0.30 = 0.87in untuk 2 baris)
+# MEREMEHKAN ~50%: pengepakan bilang 5 kartu muat, halaman meluber, lalu pembungkus halaman
+# memotongnya - tiga judul seksi hilang dari PDF (tertangkap uji paritas).
+_NARASI_KARTU_DASAR_IN = 0.94
+_NARASI_BARIS_H_IN = 0.19
+_NARASI_GAP_IN = 0.14
+_NARASI_ISI_PT = 9.0
+# Kartu pertama mulai di ~2.60in (di bawah kicker + judul halaman), bukan 0.95in.
+_NARASI_ATAS_IN = 2.60
+
+
+def butir_narasi_per_halaman(items: list, lebar_total_in: float, tinggi_in: float) -> list:
+    """Bagi butir narasi jadi halaman menurut TINGGI ISINYA, bukan hitungan tetap.
+
+    KOREKSI USER (A6): jumlahnya dulu dipatok `mgmt_narrative_per_page = 4`. Dengan 5 butir
+    hasilnya 4+1, dan butir tunggal itu jadi halaman 11-12 elemen. Ketika Bagian E menurunkan
+    butir 6->5, jumlah halaman tetap 2 - yang berubah cuma halaman kedua makin tipis.
+
+    Butir dimasukkan sampai halaman PENUH. Butir yang tidak muat pindah ke halaman berikutnya
+    SEUTUHNYA - tidak pernah dipotong. Kalau semuanya muat di satu halaman, tidak ada halaman
+    kedua. Tinggi teks dihitung dgn wrap_line_count, simulator yang sama dipakai di tempat
+    lain - bukan taksiran karakter."""
+    if not items:
+        return []
+
+    # Kartu di halaman padat (>=4 butir) digambar pada skala 0.82/0.62 (lihat
+    # _build_management_ai_narrative_block) - lebih ringkas drpd kartu yang diperbesar saat
+    # jumlahnya sedikit, jadi tinggi dasarnya ikut turun.
+    def _skala(n: int) -> float:
+        """HANYA skala yang MEMPERKECIL yang dipakai saat mengepak.
+
+        Renderer memperbesar kartu (1.15-1.8x) ketika jumlahnya sedikit - itu untuk MENGISI
+        sisa ruang, bukan kebutuhan ruang. Memakainya saat mengepak membuat perhitungan
+        melingkar: 3 kartu tidak muat karena diperbesar, lalu turun ke 2 yang diperbesar
+        lebih lagi (terukur: 184 memburuk dari 1 halaman jadi 2)."""
+        return 0.82 if n >= 4 else 1.0
+
+    def _tinggi(it, kolom: int, skala: float = 1.0) -> float:
+        lebar_kartu = (lebar_total_in - _NARASI_GAP_IN * (kolom - 1)) / kolom
+        lebar_px = max(60.0, (lebar_kartu - 0.45) * 96)
+        baris = wrap_line_count(str(it.get("content") or ""), lebar_px, _NARASI_ISI_PT, 0.80)
+        return (_NARASI_KARTU_DASAR_IN + baris * _NARASI_BARIS_H_IN) * skala
+
+    def _tinggi_grid(calon: list) -> float:
+        """Tinggi grid untuk `calon` kartu. Jumlah KOLOM sifat HALAMAN, bukan sifat butir:
+        renderer memakai 1 kolom untuk 1 & 3 kartu, 2 kolom selain itu (lihat
+        _build_management_ai_narrative_block). Tinggi tiap BARIS = kartu tertinggi di baris
+        itu, karena sel segrid sama tinggi."""
+        n = len(calon)
+        kolom = 1 if n in (1, 3) else 2
+        total = 0.0
+        for i in range(0, n, kolom):
+            baris = calon[i:i + kolom]
+            total += max(_tinggi(it, kolom, _skala(n)) for it in baris)
+            if i:
+                total += _NARASI_GAP_IN
+        return total
+
+    halaman, sisa = [], list(items)
+    while sisa:
+        muat = 1
+        for n in range(len(sisa), 0, -1):
+            if _tinggi_grid(sisa[:n]) <= tinggi_in:
+                muat = n
+                break
+        halaman.append(sisa[:muat])
+        sisa = sisa[muat:]
+    return halaman
+
+
 def cara_baca_kolom(tile: dict, report) -> str:
     """Satu baris CARA MEMBACA chart, menempel di pita kepala panel (bukan di bawah chart).
 
@@ -7221,9 +7295,12 @@ def build_management_report_blocks(report) -> list[dict]:
             target_insight_page["notes"] = [*(target_insight_page.get("notes") or []), *extra_notes]
             narrative_items = []
 
-    mgmt_narrative_per_page = 4
-    for chunk_index in range(0, len(narrative_items), mgmt_narrative_per_page):
-        chunk = narrative_items[chunk_index:chunk_index + mgmt_narrative_per_page]
+    # A6: jumlah butir per halaman DIHITUNG dari tinggi isinya (lihat butir_narasi_per_halaman),
+    # bukan dipatok 4.
+    _lebar_narasi = 13.333 - 2 * _DASH_MARGIN_X_IN
+    _tinggi_narasi = _DASH_CONTENT_BOTTOM_IN - _NARASI_ATAS_IN
+    for chunk_index, chunk in enumerate(
+            butir_narasi_per_halaman(narrative_items, _lebar_narasi, _tinggi_narasi)):
         continuation = chunk_index > 0
         blocks.append({
             "kind": "management_ai_narrative",
