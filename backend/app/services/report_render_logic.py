@@ -2520,7 +2520,35 @@ def _r_stacked(sig):
 # kolom tergambar adalah yang di exporter. Memakai yang salah membuat lebar acuan meleset
 # 0.09in. Nilai exporter dipakai di sini & diberi nama sendiri sampai duplikasinya
 # dibereskan; JANGAN pakai _DASH_COL_GAP_IN untuk perhitungan lebar kolom.
-_DASH_COLS_GAP_IN = 0.28
+_DASH_COLS_GAP_IN = 0.0   # A1: panel menempel - HARUS sama dgn kedua exporter.
+_DASH_COLS_TITLE_H_IN = 0.20      # pita kepala panel
+_DASH_COLS_CARA_BACA_H_IN = 0.18  # baris cara-baca italic di bawahnya
+_DASH_COLS_KPI_H_IN = 0.95        # baris kartu KPI
+_DASH_COLS_NOTE_H_IN = 1.02       # kotak catatan selebar halaman
+
+
+def maks_baris_chart(labels: list, kolom_w_in: float, tile_kind: str = "risk_heatmap") -> int:
+    """Berapa baris chart yang MUAT, dihitung dari tinggi kolom - bukan angka tetap.
+
+    KOREKSI USER: batas 6 entitas yang saya pasang adalah ANGKA TETAP KETIGA yang
+    menggantikan perhitungan dari isi (setelah mgmt_narrative_per_page = 4 dan konstanta
+    anggaran halaman narasi). Alasannya cuma "cukup" - tidak ada alasan keterbacaan di
+    baliknya - jadi diganti perhitungan.
+
+    Anggarannya: tinggi isi halaman dikurangi judul halaman, pita kepala, baris cara-baca,
+    kartu KPI, kotak catatan halaman, dan SATU baris kartu bersarang (kolom hampir selalu
+    punya kartu). Sisanya dibagi tinggi baris yang sudah DIKALIBRASI dari render nyata."""
+    _semu = {"tile_kind": tile_kind,
+             "bars": [{"label": str(x), "count": 1} for x in labels],
+             "labels": [str(x) for x in labels]}
+    rh = _tinggi_baris_bar(_semu, kolom_w_in)
+    _kartu_min = _NESTED_CARD_HEADER_H_IN + 0.20 + (
+        _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN
+        + _NESTED_CARD_SUBITEM_GAP_IN)
+    anggaran = (_DASH_CONTENT_BOTTOM_IN - 0.62 - _DASH_COLS_TITLE_H_IN
+                - _DASH_COLS_CARA_BACA_H_IN - _DASH_COLS_KPI_H_IN - _DASH_COLS_NOTE_H_IN
+                - _kartu_min - 0.20)
+    return max(3, int(max(0.0, anggaran - 0.16) / max(rh, 0.05)))
 
 # Kolom TERSEMPIT yang benar-benar terjadi: 3 topik/halaman.
 _KOLOM_ACUAN_W_IN = (13.333 - 2 * _DASH_MARGIN_X_IN - _DASH_COLS_GAP_IN * 2) / 3.0
@@ -3188,13 +3216,13 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None,
                 _pos = {str(v): i for i, v in enumerate(_urut_kat)}
                 g = g.reindex(sorted(g.index, key=lambda x: (_pos.get(str(x), 10**6), str(x))))[:12]
             else:
-                # ENTITAS DIBATASI 6, bukan 8. Sejak label pindah ke ATAS bar dgn nama UTUH,
-                # satu baris memakan 0.365in (terukur), jadi 8 baris butuh 3.08in - lebih
-                # besar drpd jatah chart di kebanyakan kolom, dan sisanya dipangkas saat
-                # render (terukur: 4 dari 8 baris hilang di laporan 183/188). Lebih baik
-                # dibatasi di SUMBER, di mana cakupannya sudah dinyatakan: pita cara-baca
-                # ("6 dari 18 entitas - sisanya 14% dari total") dan catatan agregat.
-                g = g.sort_values(ascending=False)[:6]
+                # JUMLAH ENTITAS DIHITUNG DARI TINGGI KOLOM, bukan angka tetap - lihat
+                # maks_baris_chart. Batas 6 sebelumnya adalah angka tetap KETIGA yang
+                # menggantikan perhitungan dari isi (setelah mgmt_narrative_per_page dan
+                # konstanta anggaran halaman narasi), dan alasannya cuma "cukup".
+                # Cakupannya tetap dinyatakan pita cara-baca & catatan agregat.
+                _maks = maks_baris_chart([str(x) for x in g.index], kolom_w_in)
+                g = g.sort_values(ascending=False)[:_maks]
             if len(g) < 2:
                 continue
             _terisi_frac = float(df[met].notna().mean())
@@ -4608,9 +4636,23 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
             c["notes"] = [n for n in (c.get("notes") or [])
                           if not _note_is_readable_from_visual(n, cols)]
         titles = [str(c.get("title") or "").strip() for c in cols if c.get("title")]
+        # ---- A6: JUDUL HALAMAN = KALIMAT TEMUAN, bukan label pendek --------------------
+        # Acuan tidak memakai judul pendek: yang dipakai kalimat temuan lengkap ("Availability
+        # Server & Cybersecurity: uptime ... tercapai 99,7% dari target 99%"). Kalimatnya
+        # disusun dari keterangan kolom yang SUDAH grounded (diagregasi pandas), bukan teks
+        # baru - nama topik di depan, temuan di belakang.
+        _judul_topik = titles[0] if titles else _L(report, "Sorotan Data", "Data Highlights")
+        _temuan = ""
+        for c in cols:
+            _cap = str((c.get("main_chart_tile") or {}).get("caption") or "").strip()
+            if _cap:
+                _temuan = _shorten_to_caption(_cap, max_sentences=1)
+                break
+        _judul_kalimat = f"{_judul_topik}: {_temuan}" if _temuan else _judul_topik
         packed.append((group[0], {
             "kind": "management_dashboard_columns",
-            "title": _L(report, "Sorotan Data", "Data Highlights") if len(titles) != 1 else titles[0],
+            "title": _judul_kalimat,
+            "judul_topik": _judul_topik,
             "columns": cols,
         }))
 

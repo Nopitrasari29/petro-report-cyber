@@ -75,6 +75,8 @@ KPI_BG_BAIK = "#DFF0E6"
 KPI_FG_NETRAL = "#1F3864"
 KPI_FG_BAIK = "#1E7A4D"
 KPI_LABEL = "#5A6472"
+# A6: warna nama topik di judul halaman (acuan #002060).
+TITLE_TOPIK = "#002060"
 
 
 def _kpi_nilai_baik(card: dict) -> bool:
@@ -2977,7 +2979,8 @@ def _mgmt_tile_chart_html(tile: dict, ctx: "_PdfBlockContext", compact: bool = F
     return ""
 
 
-def _dashboard_title_html(text: str, w_in: float, size_pt: float = 22) -> tuple:
+def _dashboard_title_html(text: str, w_in: float, size_pt: float = 22,
+                          judul_topik: str | None = None) -> tuple:
     """Judul halaman dashboard Management BARU (permintaan user A2): y=0 (lihat negative-
     margin escape-hatch di _build_management_visual_dashboard_block), lebar penuh, TANPA
     kicker terpisah di atasnya (dulu kicker "SOROTAN VISUAL" berulang IDENTIK di 4+ halaman
@@ -3063,6 +3066,14 @@ def _dashboard_title_html(text: str, w_in: float, size_pt: float = 22) -> tuple:
     # (~0.46in) sebelumnya lebih pendek dari itu, jadi konten kolom PERTAMA (kolom kanan,
     # sejajar posisi logo) bisa mulai SEBELUM logo selesai, tumpang tindih tipis.
     height_in = max(0.62, min(max_h_in, n_lines * line_h_in + 0.08))
+    # A6: nama topik BOLD warna gelap di depan, sisa kalimat ukuran SAMA tapi TIDAK bold -
+    # persis pembagian di slide acuan. Tanpa judul_topik, seluruh teks bold seperti dulu.
+    if judul_topik and text.startswith(judul_topik):
+        _sisa = text[len(judul_topik):]
+        _judul_isi = (f'<span style="font-weight:700;color:{TITLE_TOPIK};">{_esc(judul_topik)}</span>'
+                      f'<span style="font-weight:400;">{_esc(_sisa)}</span>')
+    else:
+        _judul_isi = f'<span style="font-weight:700;">{_esc(text)}</span>' 
     # AKAR MASALAH (dilaporkan user, dibuktikan dari artefak render sendiri): SEBELUM ini
     # kotak judul dipasang `max-height` — artinya tingginya di ALIRAN DOKUMEN masih BOLEH
     # TUMBUH sampai max_h_in kalau teksnya ternyata wrap lebih dari perkiraan, SEMENTARA
@@ -3082,9 +3093,9 @@ def _dashboard_title_html(text: str, w_in: float, size_pt: float = 22) -> tuple:
     # bergantung pada akurasi tebakan lebar teks. Kelebihan baris dipotong scr visual
     # (overflow:hidden) - jauh lebih baik daripada kehilangan SELURUH isi halaman.
     html = (
-        f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:{size_pt}pt;color:{TEXT_DARK};'
+        f'<div style="font-family:{TITLE_FONT};font-size:{size_pt}pt;color:{TEXT_DARK};'
         f'line-height:1.25;height:{height_in}in;max-height:{height_in}in;overflow:hidden;'
-        f'width:{text_w_in}in;">{_esc(text)}</div>'
+        f'width:{text_w_in}in;">{_judul_isi}</div>'
     )
     return html, height_in
 
