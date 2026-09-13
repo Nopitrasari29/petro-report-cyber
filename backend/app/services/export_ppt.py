@@ -45,6 +45,7 @@ from app.services.report_render_logic import (
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN, _DASH_TITLE_MAX_H_IN,
     _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content,
     tinggi_kartu_in, wrap_line_count, kolom_yang_digambar, _kpi_card_widths, _NESTED_CARD_GAP_IN,
+    muat_catatan,
     _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -1912,24 +1913,25 @@ def add_ranked_bar_ternorm(slide, x, y, cx, cy, labels, values, color=None, is_e
     maks = max(values) or 1
     x_in, y_in = Emu(x).inches, Emu(y).inches
     w_in, h_in = Emu(cx).inches, Emu(cy).inches
-    lbl_w, val_w, kaki = 1.45, 1.0, 0.22
+    lbl_w, val_w, kaki = 1.25, 0.85, 0.22
     track_w = max(0.5, w_in - lbl_w - val_w - 0.15)
     n = max(1, len(values))
-    row_h = max(0.18, (h_in - kaki) / n)
+    # DISAMAKAN DGN ACUAN (kembaran export_pdf.py): baris 0.35in, bar 0.10in.
+    row_h = max(0.16, min(0.35, (h_in - kaki) / n))
     for i, (lbl, val) in enumerate(zip(labels, values)):
         ty = y_in + i * row_h
         tb = slide.shapes.add_textbox(Inches(x_in), Inches(ty), Inches(lbl_w), Inches(row_h))
         tp = tb.text_frame.paragraphs[0]
         tp.text = str(lbl)
-        _set_font(tp, BODY_FONT, Pt(9.5), color=TEXT_DARK)
+        _set_font(tp, BODY_FONT, Pt(7), color=TEXT_DARK)
         trek = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in + lbl_w),
-                                      Inches(ty + row_h * 0.28), Inches(track_w), Inches(max(0.1, row_h * 0.42)))
+                                      Inches(ty + row_h * 0.30), Inches(track_w), Inches(min(0.10, max(0.07, row_h * 0.34))))
         trek.fill.solid(); trek.fill.fore_color.rgb = PANEL_BORDER
         trek.line.fill.background(); _no_shadow(trek)
         frac = max(0.012, float(val) / maks)
         isi = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in + lbl_w),
-                                     Inches(ty + row_h * 0.28), Inches(max(0.05, track_w * frac)),
-                                     Inches(max(0.1, row_h * 0.42)))
+                                     Inches(ty + row_h * 0.30), Inches(max(0.05, track_w * frac)),
+                                     Inches(min(0.10, max(0.07, row_h * 0.34))))
         isi.fill.solid(); isi.fill.fore_color.rgb = _as_rgb(warna, GREEN_MAIN)
         isi.line.fill.background(); _no_shadow(isi)
         vb = slide.shapes.add_textbox(Inches(x_in + lbl_w + track_w + 0.06), Inches(ty),
@@ -4149,7 +4151,8 @@ def _build_management_insight_page_slide(block: dict, ctx: _PptBlockContext):
 
 
 _DASH_COLS_GAP_IN = 0.28
-_DASH_COLS_TITLE_H_IN = 0.52
+# PITA kepala, bukan kotak judul (kembaran export_pdf.py): acuan 0.16in, dipakai 0.20in.
+_DASH_COLS_TITLE_H_IN = 0.20
 _DASH_COLS_KPI_H_IN = 0.95
 
 
@@ -4172,24 +4175,50 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     avail_h_in = _DASH_CONTENT_BOTTOM_IN - title_bottom_in
     is_en = is_english(ctx.report)
     note_title = "Notes" if is_en else "Catatan"
+    _catatan_halaman: list = []
+    _y_terendah = 0.0
 
     n = len(cols)
     col_w = (total_w_in - _DASH_COLS_GAP_IN * (n - 1)) / n
     for idx, col in enumerate(cols):
         x = _DASH_MARGIN_X_IN + idx * (col_w + _DASH_COLS_GAP_IN)
+        # ---- A1 + A4 (kembaran export_pdf.py): PITA KEPALA berwarna + cara-baca --------
+        # Acuan memakai pita ~0.20in berisi judul panel, dgn pita kedua sebaris berisi CARA
+        # MEMBACA chart. Sekat di acuan GARIS TEPI, bukan bayangan (141/141 shape bergaris).
         y = title_bottom_in
+        _cara = str(col.get("cara_baca") or "")
+        _pita = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y),
+                                       Inches(col_w), Inches(_DASH_COLS_TITLE_H_IN))
+        _pita.fill.solid()
+        _pita.fill.fore_color.rgb = ctx.theme["main"]
+        _pita.line.color.rgb = ctx.theme["main"]
+        _pita.line.width = Pt(0.5)
+        _no_shadow(_pita)
+        _judul_w = col_w if not _cara else col_w * 0.52
         t_box = slide.shapes.add_textbox(
-            Inches(x), Inches(y), Inches(col_w), Inches(_DASH_COLS_TITLE_H_IN)
+            Inches(x + 0.05), Inches(y), Inches(_judul_w - 0.10), Inches(_DASH_COLS_TITLE_H_IN)
         )
         t_tf = t_box.text_frame
         t_tf.word_wrap = True
+        t_tf.margin_top = t_tf.margin_bottom = 0
         t_p = t_tf.paragraphs[0]
         t_p.text = str(col.get("title") or "")
-        t_p.font.size = Pt(11)
+        t_p.font.size = Pt(8.5)
         t_p.font.bold = True
-        t_p.font.color.rgb = TEXT_DARK
+        t_p.font.color.rgb = WHITE
         t_p.font.name = TITLE_FONT
-        y += _DASH_COLS_TITLE_H_IN
+        if _cara:
+            c_box = slide.shapes.add_textbox(
+                Inches(x + _judul_w), Inches(y), Inches(col_w - _judul_w - 0.05),
+                Inches(_DASH_COLS_TITLE_H_IN))
+            c_tf = c_box.text_frame
+            c_tf.word_wrap = True
+            c_tf.margin_top = c_tf.margin_bottom = 0
+            c_p = c_tf.paragraphs[0]
+            c_p.text = _cara
+            c_p.alignment = PP_ALIGN.RIGHT
+            _set_font(c_p, BODY_FONT, Pt(6), color=WHITE)
+        y += _DASH_COLS_TITLE_H_IN + 0.04
 
         kpi = (col.get("kpi_summary") or [])[:2]
         if kpi:
@@ -4204,8 +4233,11 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         # BERSAMAAN dgn sisi PDF - jangan salah satu duluan.
         _tile = col.get("main_chart_tile")
         _has_cards = bool(col.get("category_details"))
+        # Catatan TIDAK lagi dipesan per kolom (A5: satu kotak selebar halaman), jadi
+        # perencana diberi has_notes=False & seluruh tinggi kolom dipakai isi.
+        _dasar_kolom = y
         _column_layout = _layout_dashboard_column_content(
-            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes), _tile,
+            body_h, col_w, bool(_tile), col.get("category_details"), False, _tile,
             is_english(ctx.report),
         )
         _chart_h = _column_layout["chart_h"]
@@ -4220,7 +4252,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         if _tile:
             notes_consumed = _insight_main_chart(
                 slide, _tile, x, y, col_w, _chart_h,
-                theme=ctx.theme, notes=(None if _has_cards else notes), is_en=is_en,
+                theme=ctx.theme, notes=None, is_en=is_en,
             )
             if _has_cards:
                 y += _chart_h + 0.10
@@ -4259,8 +4291,29 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         # Kembar dari export_pdf.py: menggambar catatan di `y` padahal kolom ini punya
         # chart/kartu berarti menumpuk TEPAT di atasnya - inilah bug yang menutup sel heatmap
         # Senin-Rabu. Kalau visualnya ada tapi catatan tetap tidak terpakai, catatan dilewati.
-        if notes and not notes_consumed and not col.get("main_chart_tile") and not (col.get("category_details") or []):
-            add_note_box(slide, Inches(x), Inches(y), Inches(col_w), notes, theme=ctx.theme, title=note_title)
+        # DASAR ISI kolom ini, bukan kursor `y`. Perencana sudah menghitungnya sbg
+        # note_y (= tepat di bawah chart + kartu); memakai `y` membuat kotak catatan
+        # halaman menimpa kartu yang digambar di bawahnya.
+        _y_terendah = max(_y_terendah, _dasar_kolom + (_column_layout.get("note_y") or 0.0))
+        if notes:
+            for _n in notes:
+                if _n not in _catatan_halaman:
+                    _catatan_halaman.append(_n)
+
+    # ---- A5 (kembaran export_pdf.py): SATU kotak catatan selebar area konten ----------
+    # Acuan memakai satu kotak 8.97 x 1.18in terisi penuh; sebelumnya kotak per kolom
+    # 6.28 x 0.88in berisi satu butir, dan di slide lain tidak ada sama sekali.
+    if _catatan_halaman:
+        _note_y = min(_y_terendah + 0.10, _DASH_CONTENT_BOTTOM_IN - 0.55)
+        _note_h = max(0.0, (title_bottom_in + avail_h_in) - _note_y)
+        if _note_h >= 0.40:
+            _cat, _dibuang = muat_catatan(total_w_in, _catatan_halaman[:4], _note_h)
+            if _dibuang:
+                logger.info("kotak catatan slide: %d butir tidak digambar (ruang %.2fin)",
+                            _dibuang, _note_h)
+            if _cat:
+                add_note_box(slide, Inches(_DASH_MARGIN_X_IN), Inches(_note_y),
+                             Inches(total_w_in), _cat, theme=ctx.theme, title=note_title)
     return slide
 
 

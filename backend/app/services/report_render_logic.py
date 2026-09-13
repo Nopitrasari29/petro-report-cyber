@@ -351,6 +351,36 @@ def fmt_persen(bagian, total) -> str:
     return (_t if render_is_en() else _t.replace(".", ",")) + "%"
 
 
+def cara_baca_kolom(tile: dict, report) -> str:
+    """Satu baris CARA MEMBACA chart, menempel di pita kepala panel (bukan di bawah chart).
+
+    Slide acuan meletakkan keterangan skala SEJAJAR judul seksi ("skala 0-5 | garis merah =
+    target 2,77") - pembaca tahu cara membacanya SEBELUM melihat chartnya. Teksnya sudah ada
+    di beberapa tempat (kaki legenda ternormalisasi, cakupan entitas), cuma letaknya di bawah
+    chart. Ini memindahkannya ke atas & menghitungnya dari data yang sama."""
+    if not tile:
+        return ""
+    _ien = is_english(report)
+    k = tile.get("tile_kind")
+    if k in ("ranked_bar_ternormalisasi", "grouped_bar_ternormalisasi"):
+        _v = [float(x or 0) for x in (tile.get("values") or tile.get("series_a") or [])]
+        if _v:
+            return (f"relative to highest - highest {_fmt_count(max(_v), _ien)}" if _ien
+                    else f"skala relatif thd tertinggi - tertinggi {_fmt_count(max(_v), _ien)}")
+    n_penuh = int(tile.get("n_entitas_penuh") or 0)
+    n_gambar = chart_label_count(tile)
+    if n_penuh and n_gambar and n_penuh > n_gambar:
+        _tp = float(tile.get("total_entitas_penuh") or 0)
+        _nv = sorted((float(x or 0) for x in (tile.get("nilai_penuh") or [])), reverse=True)
+        _sisa = max(0.0, _tp - sum(_nv[:n_gambar])) if _nv else 0.0
+        return (f"{n_gambar} of {n_penuh} entities - rest {fmt_persen(_sisa, _tp)} of total"
+                if _ien else
+                f"{n_gambar} dari {n_penuh} entitas - sisanya {fmt_persen(_sisa, _tp)} dari total")
+    if n_gambar:
+        return (f"{n_gambar} entities shown" if _ien else f"{n_gambar} entitas ditampilkan")
+    return ""
+
+
 def catatan_agregat(items: list, n_digambar: int, unit: str, report,
                     n_penuh: int | None = None, total_penuh: float | None = None,
                     nilai_penuh: list | None = None) -> list:
@@ -665,14 +695,19 @@ def _layout_dashboard_column(tile: dict, avail_h_in: float) -> dict:
 #   _TREEMAP_MIN_H_IN    : tinggi minimum supaya segmen masih lolos ambang label treemap
 #                          (rh > 24px = 0.25in) utk beberapa baris slice-and-dice
 #   _STACKED_MIN_H_IN    : batang 0.5in + baris label 0.32in
-_CHART_ROW_H_IN = 0.38
+# DISAMAKAN DGN SLIDE ACUAN: 0.35in per baris (teks 0.21 + bar 0.10 + jeda 0.04).
+# Sebelumnya 0.38in dan renderer menggambar 0.444in - keduanya diturunkan bersamaan dgn
+# tinggi bar (18px -> 10px) & font baris (9.5pt -> 7pt) di kedua exporter.
+_CHART_ROW_H_IN = 0.35
 _CHART_AXIS_MIN_H_IN = 1.30
 _TREEMAP_MIN_H_IN = 1.60
 _STACKED_MIN_H_IN = 0.82
 _CHART_SQUARE_MIN_H_IN = 1.45
 # Kolom label _bar_chart_html: lebar 150px, font 9.5pt (lihat _bar_chart_html di export_pdf).
-_BAR_LABEL_COL_W_PX = 150.0
-_BAR_LABEL_PT = 9.5
+_BAR_LABEL_COL_W_PX = 128.0
+# Font label baris chart: 7.0pt (acuan memakai 5.5-7.0pt untuk baris data). Batas bawah
+# 5.5pt adalah batas acuan yang sudah terbukti terbaca - JANGAN lebih kecil.
+_BAR_LABEL_PT = 7.0
 
 
 # Titik pecah baris yang BENAR-BENAR dipakai perender. Bukan hanya spasi: teks berbentuk
@@ -747,6 +782,10 @@ def chart_label_count(tile: dict) -> int:
         return len(tile.get("day_labels") or [])
     if k == "scatter_bubble":
         return len(tile.get("points") or [])
+    if k == "kpi_radar":
+        # Ditemukan oleh penjaga di bawah ini sendiri: radar tidak punya cabang, jadi tinggi
+        # minimumnya dihitung untuk NOL label. Sumbu radar adalah labelnya.
+        return len(tile.get("axes") or [])
     if k == "ranked_bar_ternormalisasi":
         return len(tile.get("labels") or [])
     if k == "grouped_bar_ternormalisasi":
@@ -800,7 +839,7 @@ def _tinggi_baris_bar(tile: dict) -> float:
     # label di atas, jadi `labels` kosong & fungsi ini mengembalikan _CHART_ROW_H_IN (0.38in)
     # apa adanya - chart_min_height_in melaporkan 1.10in untuk 8 baris yang nyatanya butuh
     # 2.88in, lalu chart-nya menggambar menembus grid kartu di bawahnya.
-    _satu_baris_in = 0.355 if k in ("ranked_bar_ternormalisasi", "grouped_bar_ternormalisasi") else 0.444
+    _satu_baris_in = _CHART_ROW_H_IN
     if baris <= 1:
         return max(_CHART_ROW_H_IN, _satu_baris_in)
     return max(_CHART_ROW_H_IN, _satu_baris_in + (baris - 1) * (_BAR_LABEL_PT * 1.18 / 72.0))
@@ -3881,6 +3920,7 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
         # dipanggil dari jalur Visual. Tile-nya dibawa utuh; exporter yang memutuskan bentuk
         # chart-nya - dan kartu TETAP ikut, chart & kartu tidak saling meniadakan.
         "main_chart_tile": tile,
+        "cara_baca": (tile or {}).get("cara_baca") or "",
         "source_topic_title": tile.get("source_topic_title"),
     }
 
@@ -4029,6 +4069,7 @@ def _build_chart_insight_page(tile: dict, report) -> dict | None:
         "kind": "management_insight_page", "title": headline,
         "kpi_summary": kpi_summary, "category_details": [], "notes": notes,
         "main_chart_tile": tile,
+        "cara_baca": (tile or {}).get("cara_baca") or "",
         # PERMINTAAN USER (pengecualian kepadatan berbasis DATA, bukan JENIS chart - "radar
         # dgn 8 kategori tetap harus penuh"): jumlah kategori/sumbu ASLI yang mendasari chart
         # ini, dipakai tes kepadatan menilai apakah halaman ini LAYAK jadi pengecualian
@@ -6851,6 +6892,7 @@ def build_management_report_blocks(report) -> list[dict]:
                 _t["source_topic_title"] = _k["seksi"]
                 _t["title"] = _k["seksi"]
                 _seksi_dapat_visual.add(_k["seksi"])
+            _t["cara_baca"] = cara_baca_kolom(_t, report)
             _tiles_baru.append(_t)
         _gagal = [k["bentuk"] for k, t in _dibangun if not t]
         for _j, _st, _alasan in _lap_seksi:

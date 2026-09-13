@@ -307,9 +307,14 @@ def _bar_chart_html(categories, values, colors=None, compact=False) -> str:
     # wrapper halaman. Baris dipadatkan (padding & tinggi bar dikecilkan) KHUSUS di konteks
     # ini — pemanggil lain (halaman penuh gaya SOC dst, yang memang punya ruang lapang)
     # TIDAK terpengaruh (default compact=False, tampilan lama persis).
-    pad = "3pt 10pt 3pt 0" if compact else "7pt 10pt 7pt 0"
-    bar_h = 11 if compact else 18
-    font_pt = 8.5 if compact else 9.5
+    # DISAMAKAN DGN SLIDE ACUAN (diukur dari berkas acuan, bukan selera):
+    #   jarak baris 0.35in = teks 0.21 + bar 0.10 + jeda 0.04  (188 sebelumnya 0.444in)
+    #   tinggi bar  0.10in = 9.6px                              (188 sebelumnya 18px)
+    #   font baris  7.0pt                                        (188 sebelumnya 9.5pt)
+    # Bar 0.20in tidak menyampaikan apa pun lebih banyak drpd 0.10in; yang hilang cuma ruang.
+    pad = "1.5pt 8pt 1.5pt 0" if compact else "2.5pt 8pt 2.5pt 0"
+    bar_h = 9 if compact else 10
+    font_pt = 6.5 if compact else 7.0
     if compact:
         # Batasi ke 5 item (sejalan dgn bars[:5] risk_heatmap di tile lain) — item ke-6 SAJA
         # (di atas padding+tinggi bar yang sudah dipadatkan) masih cukup utk mendorong caption
@@ -1051,13 +1056,13 @@ def _ranked_bar_ternorm_html(labels, values, color=None, is_en=False) -> str:
         pct = max(1.2, (float(val) / maks) * 100.0)
         baris.append(
             f'<tr>'
-            f'<td style="width:150px;padding:6pt 8pt 6pt 0;font-size:9.5pt;color:{TEXT_DARK};'
+            f'<td style="width:128px;padding:2pt 6pt 2pt 0;font-size:7pt;color:{TEXT_DARK};'
             f'vertical-align:middle;">{_esc(str(lbl))}</td>'
-            f'<td style="vertical-align:middle;padding:6pt 0;">'
+            f'<td style="vertical-align:middle;padding:2pt 0;">'
             f'<table style="width:100%;background:{PANEL_BORDER};border-radius:4px;" cellpadding="0" cellspacing="0"><tr>'
-            f'<td style="width:{pct:.2f}%;background:{warna};height:14px;border-radius:4px;font-size:1px;line-height:1px;">&nbsp;</td>'
+            f'<td style="width:{pct:.2f}%;background:{warna};height:10px;border-radius:3px;font-size:1px;line-height:1px;">&nbsp;</td>'
             f'<td></td></tr></table></td>'
-            f'<td style="width:96px;text-align:right;padding:6pt 0 6pt 8pt;font-size:9.5pt;'
+            f'<td style="width:82px;text-align:right;padding:2pt 0 2pt 6pt;font-size:7.5pt;'
             f'font-weight:700;color:{TEXT_DARK};vertical-align:middle;">{_fmt_num(val)}</td>'
             f'</tr>'
         )
@@ -1098,14 +1103,14 @@ def _grouped_bar_ternorm_html(labels, seri_a, seri_b, label_a="", label_b="",
         for pct, val, warna in ((pa, va, ca), (pb, vb, cb)):
             sel.append(
                 f'<table style="width:100%;background:{PANEL_BORDER};border-radius:3px;margin-bottom:2pt;" cellpadding="0" cellspacing="0"><tr>'
-                f'<td style="width:{pct:.2f}%;background:{warna};height:9px;border-radius:3px;font-size:1px;line-height:1px;">&nbsp;</td>'
+                f'<td style="width:{pct:.2f}%;background:{warna};height:8px;border-radius:3px;font-size:1px;line-height:1px;">&nbsp;</td>'
                 f'<td style="text-align:right;font-size:7.5pt;font-weight:700;color:{TEXT_DARK};'
                 f'padding-left:5px;white-space:nowrap;">{_fmt_num(val)}</td></tr></table>'
             )
         baris.append(
-            f'<tr><td style="width:130px;padding:5pt 8pt 5pt 0;font-size:9pt;color:{TEXT_DARK};'
+            f'<tr><td style="width:112px;padding:2pt 6pt 2pt 0;font-size:7pt;color:{TEXT_DARK};'
             f'vertical-align:middle;">{_esc(str(lbl))}</td>'
-            f'<td style="vertical-align:middle;padding:5pt 0;">{"".join(sel)}</td></tr>'
+            f'<td style="vertical-align:middle;padding:2pt 0;">{"".join(sel)}</td></tr>'
         )
     mk = "max" if is_en else "maks"
     legenda = (
@@ -3657,7 +3662,9 @@ def _build_management_insight_page_block(block: dict, ctx: _PdfBlockContext) -> 
 
 
 _DASH_COLS_GAP_IN = 0.28
-_DASH_COLS_TITLE_H_IN = 0.52
+# PITA kepala, bukan kotak judul: acuan 0.16in, dipakai 0.20in supaya judul 8.5pt tetap
+# muat satu baris. Sebelumnya 0.52in - tiga kali tinggi yang diperlukan.
+_DASH_COLS_TITLE_H_IN = 0.20
 _DASH_COLS_KPI_H_IN = 0.95
 
 
@@ -3687,6 +3694,8 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
     n = len(cols)
     col_w = (total_w_in - _DASH_COLS_GAP_IN * (n - 1)) / n
     parts = []
+    _catatan_halaman: list = []
+    _y_terendah = 0.0
     for idx, col in enumerate(cols):
         x = idx * (col_w + _DASH_COLS_GAP_IN)
         y = 0.0
@@ -3701,12 +3710,31 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                 break
         else:
             _ct_pt = 7.5
+        # ---- A1 + A4: PITA KEPALA, bukan kotak judul setinggi 0.52in ------------------
+        # Slide acuan memakai pita kepala berwarna ~0.20in yang memuat judul panel, DAN pita
+        # kedua sebaris berisi CARA MEMBACA chart di bawahnya. 188 memakai kotak 0.52in
+        # berisi nama saja - tiga kali tinggi yang perlu, tanpa penjelasan.
+        # Sekat di acuan adalah GARIS TEPI (141/141 shape bergaris, nol shadow), jadi seluruh
+        # panel di bawah ini dibungkus kartu bergaris.
+        _cara_baca = str(col.get("cara_baca") or "")
+        _judul_w = col_w if not _cara_baca else col_w * 0.52
         col_parts.append(
             f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
-            f'height:{_DASH_COLS_TITLE_H_IN}in;overflow:hidden;font-family:{TITLE_FONT};'
-            f'font-size:{_ct_pt}pt;font-weight:700;color:{TEXT_DARK};line-height:1.2;">{_esc(col_title)}</div>'
+            f'height:{_DASH_COLS_TITLE_H_IN}in;background:{ctx.accent_main};'
+            f'border:0.5pt solid {ctx.accent_main};border-radius:2px;"></div>'
+            f'<div style="position:absolute;left:{x + 0.06}in;top:{y + 0.02}in;'
+            f'width:{_judul_w - 0.12}in;height:{_DASH_COLS_TITLE_H_IN - 0.04}in;'
+            f'overflow:hidden;font-family:{TITLE_FONT};font-size:{min(_ct_pt, 8.5)}pt;'
+            f'font-weight:700;color:{WHITE};line-height:1.15;">{_esc(col_title)}</div>'
         )
-        y += _DASH_COLS_TITLE_H_IN
+        if _cara_baca:
+            col_parts.append(
+                f'<div style="position:absolute;left:{x + _judul_w}in;top:{y + 0.03}in;'
+                f'width:{col_w - _judul_w - 0.06}in;height:{_DASH_COLS_TITLE_H_IN - 0.06}in;'
+                f'overflow:hidden;text-align:right;font-size:6pt;color:{WHITE};'
+                f'line-height:1.1;">{_esc(_cara_baca)}</div>'
+            )
+        y += _DASH_COLS_TITLE_H_IN + 0.04
 
         kpi = (col.get("kpi_summary") or [])[:2]
         if kpi:
@@ -3733,8 +3761,11 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # tinggi kartu dihitung dari sisa yang benar-benar tersedia, bukan dari seluruh kolom.
         _tile = col.get("main_chart_tile")
         _has_cards = bool(col.get("category_details"))
+        # Catatan TIDAK lagi dipesan per kolom (A5: satu kotak selebar halaman), jadi
+        # perencana diberi has_notes=False & seluruh tinggi kolom dipakai isi.
+        _dasar_kolom = y
         _column_layout = _layout_dashboard_column_content(
-            body_h, col_w, bool(_tile), col.get("category_details"), bool(notes), _tile,
+            body_h, col_w, bool(_tile), col.get("category_details"), False, _tile,
             is_english(ctx.report),
         )
         _chart_h = _column_layout["chart_h"]
@@ -3747,11 +3778,13 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             _has_cards = bool(col.get("category_details"))
             _chart_h = 0.0
         if _tile:
+            # A5: catatan TIDAK lagi diserap chart per kolom - semuanya dikumpulkan ke SATU
+            # kotak selebar halaman di dasar (lihat akhir fungsi). Dua jalur menggambar
+            # catatan yang sama membuat kotaknya bertumpuk (terukur: uji tumpang-tindih
+            # menemukan dua "CATATAN:" persis bertindih di laporan 186/187/189).
             inner, _nc = _insight_main_chart_html(
-                _tile, ctx, col_w, _chart_h,
-                notes=(None if _has_cards else notes), report=ctx.report,
+                _tile, ctx, col_w, _chart_h, notes=None, report=ctx.report,
             )
-            notes_consumed = notes_consumed or _nc
             if inner:
         # PERMINTAAN USER: overflow:hidden DIBUANG dari pembungkus chart. Ia memotong TANPA
         # penanda apa pun - pembaca melihat treemap 2 label & mengira memang cuma ada 2
@@ -3788,7 +3821,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                     f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
                     f'height:{cards_h}in;overflow:hidden;"><div style="position:relative;height:{cards_h}in;">{inner}</div></div>'
                 )
-                if notes:
+                if False:  # catatan per kolom DIMATIKAN - lihat catatan A5 di atas
                     note_y = y + cards_h + 0.08
                     note_h = max(0.0, avail_h_in - note_y)
                     # Butir catatan dibuang dari BELAKANG sampai muat - sebelumnya kotaknya
@@ -3807,12 +3840,36 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # kotak catatan menutup total sel heatmap Senin-Rabu). Kalau visualnya ada tapi
         # catatannya tetap tidak terpakai, catatan DILEWATI - lebih baik hilang scr sadar
         # drpd menutupi isi yang pembaca tidak tahu ada di baliknya.
-        if notes and not notes_consumed and not col.get("main_chart_tile") and not (col.get("category_details") or []):
-            col_parts.append(
-                f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
-                f'height:{body_h}in;overflow:hidden;">{_note_box_html(notes, theme=ctx.theme)}</div>'
-            )
+
         parts.extend(col_parts)
+        # DASAR ISI kolom ini, bukan kursor `y`. Perencana sudah menghitungnya sbg
+        # note_y (= tepat di bawah chart + kartu); memakai `y` membuat kotak catatan
+        # halaman menimpa kartu yang digambar di bawahnya.
+        _y_terendah = max(_y_terendah, _dasar_kolom + (_column_layout.get("note_y") or 0.0))
+        if notes:
+            for _n in notes:
+                if _n not in _catatan_halaman:
+                    _catatan_halaman.append(_n)
+
+    # ---- A5: SATU kotak catatan selebar area konten, di dasar halaman ------------------
+    # Slide acuan memakai satu kotak 8.97 x 1.18in terisi penuh; 188 memakai kotak per kolom
+    # 6.28 x 0.88in berisi SATU butir, dan di halaman lain tidak ada sama sekali. Catatan
+    # dari SELURUH kolom dikumpulkan ke sini (tanpa duplikat) lalu dibuang dari belakang
+    # sampai muat - jadi kotaknya terisi, bukan hampir kosong.
+    if _catatan_halaman:
+        _note_y = min(_y_terendah + 0.10, _DASH_CONTENT_BOTTOM_IN - title_h_in - 0.40)
+        _note_h = max(0.0, avail_h_in - _note_y)
+        if _note_h >= 0.40:
+            _cat, _dibuang = muat_catatan(total_w_in, _catatan_halaman[:4], _note_h)
+            if _dibuang:
+                logger.info("kotak catatan halaman: %d butir tidak digambar (ruang %.2fin)",
+                            _dibuang, _note_h)
+            if _cat:
+                parts.append(
+                    f'<div style="position:absolute;left:0in;top:{_note_y}in;'
+                    f'width:{total_w_in}in;height:{_note_h}in;">'
+                    f'{_note_box_html(_cat, theme=ctx.theme)}</div>'
+                )
 
     inner_html = f'<div style="position:relative;height:{avail_h_in}in;">{"".join(parts)}</div>'
     return (f'<div style="margin:-0.5in -0.25in 0 -0.25in;">{title_html}{inner_html}</div>', False, None, False)
