@@ -29,7 +29,7 @@ from app.services.report_render_logic import (
     tinggi_kartu_in, wrap_line_count, muat_catatan, kolom_yang_digambar, _kpi_card_widths,
     metrik_judul_dashboard,
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
-    fakta_strip_kolom, _DASH_COLS_FACT_H_IN,
+    fakta_strip_kolom, _DASH_COLS_FACT_H_IN, kumpulkan_catatan_halaman,
     _NESTED_CARD_GAP_IN, _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -3731,7 +3731,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
     n = len(cols)
     col_w = (total_w_in - _DASH_COLS_GAP_IN * (n - 1)) / n
     parts = []
-    _catatan_halaman: list = []
+    _catatan_per_kolom: list = []   # satu entri per KOLOM, digabung bergiliran saat menggambar
     _y_terendah = 0.0
     # ---- A5: RUANG KOTAK CATATAN DIPESAN LEBIH DULU -------------------------------------
     # Aturan tetap: tinggi yang bergantung isi harus bisa dihitung SEBELUM penempatan.
@@ -3948,20 +3948,23 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # halaman menimpa kartu yang digambar di bawahnya.
         _y_terendah = max(_y_terendah, _dasar_kolom + (_column_layout.get("note_y") or 0.0))
         if notes:
-            for _n in notes:
-                if _n not in _catatan_halaman:
-                    _catatan_halaman.append(_n)
+            _catatan_per_kolom.append(list(notes))
 
     # ---- A5: SATU kotak catatan selebar area konten, di dasar halaman ------------------
     # Slide acuan memakai satu kotak 8.97 x 1.18in terisi penuh; 188 memakai kotak per kolom
     # 6.28 x 0.88in berisi SATU butir, dan di halaman lain tidak ada sama sekali. Catatan
     # dari SELURUH kolom dikumpulkan ke sini (tanpa duplikat) lalu dibuang dari belakang
     # sampai muat - jadi kotaknya terisi, bukan hampir kosong.
-    if _catatan_halaman and _NOTE_HAL_H_IN:
+    if _catatan_per_kolom and _NOTE_HAL_H_IN:
         _note_y = avail_h_in + 0.06
         _note_h = _NOTE_HAL_H_IN - 0.06
         if _note_h >= 0.40:
-            _cat, _dibuang = muat_catatan(total_w_in, _catatan_halaman[:4], _note_h)
+            # Catatan digabung BERGILIRAN antar kolom, dan berapa butir yang muat
+            # DIHITUNG dari tinggi kotak - bukan dipotong [:4]. Lihat catatan panjang di
+            # report_render_logic.kumpulkan_catatan_halaman: potongan tetap itu membuat
+            # catatan kolom kedua dst TIDAK PERNAH muncul.
+            _cat, _dibuang = muat_catatan(
+                total_w_in, kumpulkan_catatan_halaman(_catatan_per_kolom), _note_h)
             if _dibuang:
                 logger.info("kotak catatan halaman: %d butir tidak digambar (ruang %.2fin)",
                             _dibuang, _note_h)

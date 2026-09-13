@@ -1384,6 +1384,38 @@ def note_box_height_in(w_in: float, butir) -> float:
     return tinggi + 0.1
 
 
+def kumpulkan_catatan_halaman(catatan_per_kolom: list) -> list:
+    """Gabungkan catatan SELURUH kolom untuk satu kotak catatan halaman (A5).
+
+    BUG NYATA DIPERBAIKI (diselidiki atas permintaan user "catatan 8 butir, tergambar 2-3"):
+    kedua exporter dulu MENYAMBUNG catatan kolom demi kolom lalu memotong `[:4]`, dan kotaknya
+    cuma muat 2. Akibatnya keempat butir yang masuk SELALU milik kolom PERTAMA, dan catatan
+    kolom kedua & seterusnya TIDAK PERNAH muncul sama sekali - bukan "tidak muat", tapi tidak
+    pernah ikut dipertimbangkan. Terukur di laporan 182 & 188: 4 butir kolom1 + 4 butir kolom2
+    direncanakan, yang tergambar 2 butir dan dua-duanya dari kolom1.
+
+    Angka 4 itu sendiri angka tetap KEEMPAT yang menggantikan perhitungan dari isi (setelah
+    mgmt_narrative_per_page, konstanta anggaran narasi, dan batas 6 entitas) - dibuang. Berapa
+    butir yang muat DIHITUNG dari tinggi kotak oleh muat_catatan, bukan dipatok di sini.
+
+    Urutannya BERGILIRAN antar kolom (butir ke-1 semua kolom, lalu ke-2, dst), jadi kalau cuma
+    2 butir yang muat, keduanya datang dari kolom BERBEDA - tiap kolom terwakili. Dalam tiap
+    kolom urutan aslinya dipertahankan, krn catatan_agregat sudah menyusun dari yang paling
+    informatif."""
+    kolom = [list(k or []) for k in (catatan_per_kolom or [])]
+    hasil, terlihat = [], set()
+    for i in range(max((len(k) for k in kolom), default=0)):
+        for k in kolom:
+            if i >= len(k):
+                continue
+            butir = k[i]
+            kunci = str(butir).strip()
+            if kunci and kunci not in terlihat:
+                terlihat.add(kunci)
+                hasil.append(butir)
+    return hasil
+
+
 def muat_catatan(w_in: float, butir, tinggi_tersedia_in: float):
     """Buang butir catatan PALING BELAKANG sampai muat. Kembalikan (butir, n_dibuang)."""
     butir = list(butir or [])
