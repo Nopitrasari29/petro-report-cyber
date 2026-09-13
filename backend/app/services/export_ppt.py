@@ -4209,7 +4209,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         _badan.line.color.rgb = PANEL_BORDER
         _badan.line.width = Pt(0.75)
         _no_shadow(_badan)
-        _judul_w = col_w if not _cara else col_w * 0.52
+        _judul_w = col_w
         # Kembaran export_pdf.py: font mengecil sampai judul muat, pita ditinggikan kalau
         # pada 5.5pt pun masih lebih dari satu baris. Judul TIDAK dipotong.
         # TINGGI PITA DIHITUNG DULU, sebelum shape-nya dibuat - aturan tetap: tinggi yang
@@ -4242,18 +4242,20 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         t_p.font.bold = True
         t_p.font.color.rgb = WHITE
         t_p.font.name = TITLE_FONT
+        y += _pita_h
         if _cara:
+            # A3 (kembaran export_pdf.py): keterangan ITALIC ABU tanpa latar, di bawah pita.
             c_box = slide.shapes.add_textbox(
-                Inches(x + _judul_w), Inches(y), Inches(col_w - _judul_w - 0.05),
-                Inches(_pita_h))
+                Inches(x + 0.06), Inches(y), Inches(col_w - 0.12), Inches(0.17))
             c_tf = c_box.text_frame
             c_tf.word_wrap = True
             c_tf.margin_top = c_tf.margin_bottom = 0
             c_p = c_tf.paragraphs[0]
             c_p.text = _cara
-            c_p.alignment = PP_ALIGN.RIGHT
-            _set_font(c_p, BODY_FONT, Pt(6), color=WHITE)
-        y += _pita_h + 0.04
+            _set_font(c_p, BODY_FONT, Pt(6.5), color=GRAY_TEXT)
+            c_p.font.italic = True
+            y += 0.18
+        y += 0.04
 
         kpi = (col.get("kpi_summary") or [])[:2]
         if kpi:

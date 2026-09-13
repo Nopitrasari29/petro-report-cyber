@@ -69,6 +69,30 @@ RED_CRIT_BG = "#F8E2DE"
 # A2: garis tepi panel disamakan dgn acuan (#D6DBE3) - inilah yang membentuk sekat
 # antar panel yang bersentuhan, jadi nilainya menentukan tampilan, bukan dekoratif.
 PANEL_BORDER = "#D6DBE3"
+# A4: palet kotak KPI dari acuan - latar & angka berubah menurut nilainya.
+KPI_BG_NETRAL = "#F4F6F9"
+KPI_BG_BAIK = "#DFF0E6"
+KPI_FG_NETRAL = "#1F3864"
+KPI_FG_BAIK = "#1E7A4D"
+KPI_LABEL = "#5A6472"
+
+
+def _kpi_nilai_baik(card: dict) -> bool:
+    """Apakah KPI ini bernilai BAIK, dibaca dari nilainya sendiri - bukan dari nama kartunya.
+
+    Acuan memberi warna hijau pada capaian yang memenuhi target. Yang bisa dinilai tanpa
+    mengarang: persentase >= 75%, atau label yang menyebut pencapaian/target."""
+    try:
+        teks = str(card.get("value") or "")
+    except Exception:
+        return False
+    if "%" in teks:
+        angka = "".join(c for c in teks if c.isdigit() or c in ",.").replace(".", "").replace(",", ".")
+        try:
+            return float(angka) >= 75.0
+        except ValueError:
+            return False
+    return False
 # A5: warna label "Catatan:" di acuan.
 CATATAN_LABEL = "#00B050"
 # PERMINTAAN USER (C2): latar halaman ISI (terang) TIDAK boleh diberi rona warna tema apa
@@ -317,7 +341,7 @@ def _bar_chart_html(categories, values, colors=None, compact=False) -> str:
     #   font baris  7.0pt                                        (188 sebelumnya 9.5pt)
     # Bar 0.20in tidak menyampaikan apa pun lebih banyak drpd 0.10in; yang hilang cuma ruang.
     pad = "1.5pt 8pt 1.5pt 0" if compact else "2.5pt 8pt 2.5pt 0"
-    bar_h = 9 if compact else 10
+    bar_h = 6 if compact else 7
     font_pt = 6.5 if compact else 7.0
     if compact:
         # Batasi ke 5 item (sejalan dgn bars[:5] risk_heatmap di tile lain) — item ke-6 SAJA
@@ -350,14 +374,17 @@ def _bar_chart_html(categories, values, colors=None, compact=False) -> str:
             f'</tr></table>'
             if pct else ""
         )
+        # LABEL DI ATAS BAR (kembaran _ranked_bar_ternorm_html): nama entitas memakai
+        # LEBAR KOLOM PENUH, jadi nama utuh muat tanpa dipendekkan. Kolom label samping
+        # 150px itulah yang dulu memaksa pemendekan.
         rows.append(
-            f'<tr>'
-            f'<td style="width:150px;font-size:{font_pt}pt;color:{TEXT_DARK};vertical-align:middle;padding:{pad};">{_esc(cat)}</td>'
-            f'<td style="vertical-align:middle;padding:{pad};">'
-            f'<div style="background:#EEEEEE;border-radius:4px;">{fill_html}</div>'
-            f'</td>'
-            f'<td style="width:36px;text-align:right;font-weight:700;font-size:{font_pt}pt;color:{TEXT_DARK};vertical-align:middle;padding:{pad};">{_fmt_num(val)}</td>'
-            f'</tr>'
+            f'<tr><td style="padding:1pt 0 0 0;">'
+            f'<table style="width:100%;" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="font-size:{font_pt}pt;color:{TEXT_DARK};line-height:1.15;">{_esc(cat)}</td>'
+            f'<td style="width:70px;text-align:right;font-weight:700;font-size:{font_pt}pt;'
+            f'color:{TEXT_DARK};line-height:1.15;">{_fmt_num(val)}</td></tr></table>'
+            f'<div style="background:#EEEEEE;border-radius:3px;margin:1pt 0 2pt 0;">{fill_html}</div>'
+            f'</td></tr>'
         )
     return f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
 
@@ -1056,19 +1083,26 @@ def _ranked_bar_ternorm_html(labels, values, color=None, is_en=False) -> str:
     warna = color or GREEN_MAIN
     maks = max(values) or 1
     baris = []
+    # LABEL DI ATAS BAR, bukan di kolom samping. Terukur: nama entitas UTUH (rata-rata 38
+    # karakter) muat SATU baris pada 7pt di lebar kolom penuh, dan tinggi entrinya 0.26in -
+    # lebih pendek drpd 0.35in baris label-di-samping. Kolom label samping 1.33in itulah yang
+    # dulu memaksa pemendekan, bukan panjang namanya: 12 baris x 7 karakter (79) menjadi
+    # 16 baris x 37 karakter (595).
+    # Nama TIDAK dipendekkan, TIDAK dielipsis, TIDAK ada overflow:hidden - kalau ada nama yang
+    # tetap tidak muat satu baris, ia membungkus dan barisnya jadi lebih tinggi apa adanya.
     for lbl, val in zip(labels, values):
         pct = max(1.2, (float(val) / maks) * 100.0)
         baris.append(
-            f'<tr>'
-            f'<td style="width:128px;padding:2pt 6pt 2pt 0;font-size:7pt;color:{TEXT_DARK};'
-            f'vertical-align:middle;">{_esc(str(lbl))}</td>'
-            f'<td style="vertical-align:middle;padding:2pt 0;">'
-            f'<table style="width:100%;background:{PANEL_BORDER};border-radius:4px;" cellpadding="0" cellspacing="0"><tr>'
-            f'<td style="width:{pct:.2f}%;background:{warna};height:10px;border-radius:3px;font-size:1px;line-height:1px;">&nbsp;</td>'
-            f'<td></td></tr></table></td>'
-            f'<td style="width:82px;text-align:right;padding:2pt 0 2pt 6pt;font-size:7.5pt;'
-            f'font-weight:700;color:{TEXT_DARK};vertical-align:middle;">{_fmt_num(val)}</td>'
-            f'</tr>'
+            f'<tr><td style="padding:1pt 0 0 0;">'
+            f'<table style="width:100%;" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="font-size:7pt;color:{TEXT_DARK};line-height:1.15;">{_esc(str(lbl))}</td>'
+            f'<td style="width:74px;text-align:right;font-size:7pt;font-weight:700;'
+            f'color:{TEXT_DARK};line-height:1.15;">{_fmt_num(val)}</td></tr></table>'
+            f'<table style="width:100%;background:{PANEL_BORDER};border-radius:3px;'
+            f'margin:1pt 0 2pt 0;" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="width:{pct:.2f}%;background:{warna};height:7px;border-radius:3px;'
+            f'font-size:1px;line-height:1px;">&nbsp;</td><td></td></tr></table>'
+            f'</td></tr>'
         )
     sumbu = "relative to highest" if is_en else "relatif terhadap tertinggi"
     return (
@@ -3192,12 +3226,18 @@ def _insight_kpi_row_html(cards: list, total_w_in: float, h_in: float, y_in: flo
         # "Requests (50%)" membungkus ke baris kedua & TERPOTONG tepi bawah kartu
         # (kasus yang persis dicontohkan user: "(85%)" jatuh di luar rect kartu).
         _size_pt = min(20.0, max(9.5, _avail_pt / (len(_val) * 0.62) if _val else 20.0))
+        # A4: latar DAN warna angka berubah menurut NILAINYA - acuan memakai #F4F6F9 netral
+        # / #DFF0E6 kalau nilainya baik, dgn angka #1F3864 / #1E7A4D. "Baik" dibaca dari
+        # persentase yang tinggi atau kata kunci pencapaian; selain itu netral.
+        _kpi_baik = _kpi_nilai_baik(card)
+        _kpi_bg = KPI_BG_BAIK if _kpi_baik else KPI_BG_NETRAL
+        _kpi_fg = KPI_FG_BAIK if _kpi_baik else KPI_FG_NETRAL
         parts.append(
             f'<div style="position:absolute;left:{x}in;top:{y_in}in;width:{w}in;height:{h_in}in;'
-            f'background:{IVORY};border:0.75pt solid {PANEL_BORDER};border-radius:3px;padding:14pt 16pt;'
+            f'background:{_kpi_bg};border:0.9pt solid {PANEL_BORDER};border-radius:3px;padding:10pt 12pt;'
             f'box-sizing:border-box;overflow:hidden;">'
-            f'<div style="font-size:8pt;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:{GRAY_TEXT};margin-bottom:8pt;">{_esc(card["label"])}</div>'
-            f'<div style="font-family:{TITLE_FONT};font-size:{_size_pt:.1f}pt;font-weight:700;color:{TEXT_DARK};line-height:1.15;">{_esc(_val)}</div>'
+            f'<div style="font-size:8pt;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:{KPI_LABEL};margin-bottom:6pt;">{_esc(card["label"])}</div>'
+            f'<div style="font-family:{TITLE_FONT};font-size:{_size_pt:.1f}pt;font-weight:700;color:{_kpi_fg};line-height:1.15;">{_esc(_val)}</div>'
             f'</div>'
         )
         x += w + gap_in
@@ -3745,7 +3785,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # Sekat di acuan adalah GARIS TEPI (141/141 shape bergaris, nol shadow), jadi seluruh
         # panel di bawah ini dibungkus kartu bergaris.
         _cara_baca = str(col.get("cara_baca") or "")
-        _judul_w = col_w if not _cara_baca else col_w * 0.52
+        _judul_w = col_w
         # BATASAN TETAP: judul TIDAK dipotong. Fontnya yang mengecil sampai muat, dan kalau
         # pada batas bawah acuan (5.5pt) masih belum muat satu baris, PITANYA yang ditinggikan.
         # overflow:hidden di sini SEMPAT memotong judul panjang diam-diam - tertangkap uji
@@ -3767,14 +3807,19 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             f'font-family:{TITLE_FONT};font-size:{_jp}pt;'
             f'font-weight:700;color:{WHITE};line-height:1.25;">{_esc(col_title)}</div>'
         )
+        y += _pita_h
         if _cara_baca:
+            # A3: keterangan cara-baca ITALIC ABU di latar transparan, SEJAJAR di bawah pita
+            # judul - bukan teks putih di dalam pita berwarna. Pita berwarna itu KEPALA PANEL
+            # (A2); keterangan cara membaca di acuan justru italic abu tanpa latar.
             col_parts.append(
-                f'<div style="position:absolute;left:{x + _judul_w}in;top:{y + 0.03}in;'
-                f'width:{col_w - _judul_w - 0.06}in;'
-                f'text-align:right;font-size:6pt;color:{WHITE};'
-                f'line-height:1.1;">{_esc(_cara_baca)}</div>'
+                f'<div style="position:absolute;left:{x + 0.06}in;top:{y + 0.01}in;'
+                f'width:{col_w - 0.12}in;height:0.16in;'
+                f'font-size:6.5pt;font-style:italic;color:{GRAY_TEXT};'
+                f'line-height:1.15;">{_esc(_cara_baca)}</div>'
             )
-        y += _pita_h + 0.04
+            y += 0.18
+        y += 0.04
 
         kpi = (col.get("kpi_summary") or [])[:2]
         if kpi:

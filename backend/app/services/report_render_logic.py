@@ -786,7 +786,9 @@ _TREEMAP_MIN_H_IN = 1.60
 _STACKED_MIN_H_IN = 0.82
 _CHART_SQUARE_MIN_H_IN = 1.45
 # Kolom label _bar_chart_html: lebar 150px, font 9.5pt (lihat _bar_chart_html di export_pdf).
-_BAR_LABEL_COL_W_PX = 128.0
+# Label memakai LEBAR KOLOM PENUH (dikurangi kolom nilai 70px & margin), bukan kolom
+# samping sempit. Dihitung dari lebar kolom nyata di pemanggil.
+_BAR_LABEL_COL_W_PX = 300.0
 # Font label baris chart: 7.0pt (acuan memakai 5.5-7.0pt untuk baris data). Batas bawah
 # 5.5pt adalah batas acuan yang sudah terbukti terbaca - JANGAN lebih kecil.
 _BAR_LABEL_PT = 7.0
@@ -882,7 +884,7 @@ def chart_label_count(tile: dict) -> int:
     return 0
 
 
-def _tinggi_baris_bar(tile: dict) -> float:
+def _tinggi_baris_bar(tile: dict, col_w_in: float | None = None) -> float:
     """Tinggi SATU baris ranked-bar, dihitung dari pembungkusan label yang sebenarnya.
 
     ITEM 3, sisi chart: _CHART_ROW_H_IN mengasumsikan label muat SATU baris. Label seperti
@@ -905,7 +907,9 @@ def _tinggi_baris_bar(tile: dict) -> float:
         labels = [str(x) for x in (tile.get("categories") or [])]
     if not labels:
         return _CHART_ROW_H_IN
-    baris = max(wrap_line_count(l, _BAR_LABEL_COL_W_PX, _BAR_LABEL_PT, 0.80) for l in labels)
+    # Lebar yang tersedia untuk NAMA = lebar kolom - kolom nilai (70px) - margin renderer.
+    _w = ((col_w_in - 2 * _CHART_MARGIN_IN) * 96 - 78) if col_w_in else _BAR_LABEL_COL_W_PX
+    baris = max(wrap_line_count(l, max(60.0, _w), _BAR_LABEL_PT, 0.80) for l in labels)
     # DIKALIBRASI DARI RENDER NYATA, bukan diturunkan dari font-size. Jarak antar baris batang
     # diukur pada hasil PDF laporan 158 (label satu baris): 32.0pt = 0.444in, konsisten di
     # beberapa chart & halaman. Rumus lama menghasilkan 0.38in - meleset 0.064in per baris,
@@ -921,10 +925,17 @@ def _tinggi_baris_bar(tile: dict) -> float:
     # label di atas, jadi `labels` kosong & fungsi ini mengembalikan _CHART_ROW_H_IN (0.38in)
     # apa adanya - chart_min_height_in melaporkan 1.10in untuk 8 baris yang nyatanya butuh
     # 2.88in, lalu chart-nya menggambar menembus grid kartu di bawahnya.
-    _satu_baris_in = _CHART_ROW_H_IN
+    # LABEL DI ATAS BAR: tinggi entri = baris teks + bar + jeda, BUKAN max(teks, bar).
+    # DIKALIBRASI DARI RENDER NYATA (laporan 188, nama utuh 7pt): jarak antar nama entitas
+    # 26.3pt = 0.365in, konsisten. Model pertama saya menjumlah markup di atas kertas
+    # (teks 0.112 + bar 0.073 + margin 0.042 + padding 0.014 = 0.24in) dan MELESET 52% -
+    # WeasyPrint menambah tinggi baris tabel di luar yang dijumlah. Akibatnya chart meluber
+    # ke grid kartu di bawahnya: label bertindih nilai kartu, dan di 182/183 seluruh label
+    # risk_heatmap terdorong keluar.
+    _satu_baris_in = 0.365
     if baris <= 1:
-        return max(_CHART_ROW_H_IN, _satu_baris_in)
-    return max(_CHART_ROW_H_IN, _satu_baris_in + (baris - 1) * (_BAR_LABEL_PT * 1.18 / 72.0))
+        return _satu_baris_in
+    return _satu_baris_in + (baris - 1) * (_BAR_LABEL_PT * 1.15 / 72.0)
 
 
 # Teks kaki legenda kedua bentuk ternormalisasi - SATU sumber, dipakai perhitungan tinggi
@@ -982,10 +993,10 @@ def chart_min_height_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) 
             return _CHART_SQUARE_MIN_H_IN
         if gaya == "stacked":
             return _STACKED_MIN_H_IN
-        _rh = _tinggi_baris_bar(tile)
+        _rh = _tinggi_baris_bar(tile, col_w_in)
         return max(_rh * max(1, n) + 0.16, _rh * 2)
     if k == "status_funnel":
-        _rh = _tinggi_baris_bar(tile)
+        _rh = _tinggi_baris_bar(tile, col_w_in)
         return max(_rh * max(1, n) + 0.16, _rh * 2)
     if k == "metric_share":
         return _TREEMAP_MIN_H_IN
@@ -994,12 +1005,12 @@ def chart_min_height_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) 
     if k == "time_heatmap":
         return max(_CHART_ROW_H_IN * 0.62 * max(1, n) + 0.30, 1.2)
     if k == "ranked_bar_ternormalisasi":
-        _rh = _tinggi_baris_bar(tile)
+        _rh = _tinggi_baris_bar(tile, col_w_in)
         return (max(_rh * max(1, n), _rh * 2) + 0.16
                 + tinggi_kaki_legenda(tile, col_w_in, is_en))
     if k == "grouped_bar_ternormalisasi":
         # dua batang per baris -> tinggi baris ~1.6x ranked bar biasa
-        _rh = _tinggi_baris_bar(tile) * 1.6
+        _rh = _tinggi_baris_bar(tile, col_w_in) * 1.6
         return (max(_rh * max(1, n), _rh * 2) + 0.16
                 + tinggi_kaki_legenda(tile, col_w_in, is_en))
     if k in ("kpi_radar", "kpi_gauge"):
@@ -1130,7 +1141,7 @@ def gabung_ekor_ke_lainnya(labels: list, values: list, w_in: float, h_in: float,
     return kerja_l, kerja_v, total_gabung
 
 
-def _potong_isi_chart(tile: dict | None, tinggi_in: float):
+def _potong_isi_chart(tile: dict | None, tinggi_in: float, col_w_in: float | None = None):
     """Kurangi JUMLAH BARIS chart supaya muat di `tinggi_in`. Kembalikan (tile, n_dibuang).
 
     Bukan memotong gambar - datanya yang dikurangi, jadi renderer menggambar lebih sedikit
@@ -1144,7 +1155,10 @@ def _potong_isi_chart(tile: dict | None, tinggi_in: float):
     if not kunci:
         return tile, 0
     isi = tile.get(kunci) or []
-    rh = _tinggi_baris_bar(tile)
+    # LEBAR KOLOM WAJIB DIALIRKAN: tanpa itu tinggi baris dihitung dgn lebar label bawaan,
+    # berbeda dari yang dipakai perencana - dan pemangkasan jadi lebih agresif drpd perlu
+    # (terukur di 188: 3 baris dipangkas padahal dgn geometri yang benar cuma 1).
+    rh = _tinggi_baris_bar(tile, col_w_in)
     muat = max(2, int(max(0.0, tinggi_in - 0.16) / rh)) if rh else len(isi)
     if muat >= len(isi):
         return tile, 0
@@ -1157,6 +1171,18 @@ def _potong_isi_chart(tile: dict | None, tinggi_in: float):
         baru[kunci] = list(isi[:muat - 1]) + [label_lainnya()]
         baru["values"] = nilai[:muat - 1] + [sum(nilai[muat - 1:])]
         return baru, len(isi) - muat + 1
+    if k == "risk_heatmap" and muat >= 2:
+        # KOREKSI: risk_heatmap dulu MEMBUANG baris yang tidak muat - terukur di laporan 183,
+        # 4 dari 8 baris hilang tanpa penanda & uji label menangkapnya. Aturan yang sama dgn
+        # custom_topic berlaku: ekornya DIGABUNG jadi satu baris "Lainnya", bukan dihapus.
+        _ekor = isi[muat - 1:]
+        _jml = sum(float(b.get("count") or 0) for b in _ekor)
+        _tot = sum(float(b.get("count") or 0) for b in isi) or 1
+        baru[kunci] = list(isi[:muat - 1]) + [{
+            "label": "%s (%d)" % (label_lainnya(), len(_ekor)),
+            "count": _jml, "pct": round(100 * _jml / _tot), "color": "gray",
+        }]
+        return baru, len(_ekor) - 1
     baru[kunci] = isi[:muat]
     if nilai:
         baru["values"] = nilai[:muat]
@@ -1206,7 +1232,7 @@ def chart_min_mutlak_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) 
         gaya = (tile.get("chart_style") or "").lower() if k == "custom_topic" else ""
         if gaya in ("donut", "stacked"):
             return chart_min_height_in(tile, col_w_in, is_en)
-        return _tinggi_baris_bar(tile) * 2 + 0.16
+        return _tinggi_baris_bar(tile, col_w_in) * 2 + 0.16
     return chart_min_height_in(tile, col_w_in, is_en)
 
 
@@ -1344,7 +1370,7 @@ def _layout_dashboard_column_content(
             else:
                 _sebelum = chart_h
                 chart_h = _ruang_chart
-                tile_dipakai, _dibuang = _potong_isi_chart(tile_dipakai, chart_h)
+                tile_dipakai, _dibuang = _potong_isi_chart(tile_dipakai, chart_h, col_w_in)
                 logger.info("tile %r dipendekkan %.2fin -> %.2fin, %d baris chart digabung/"
                             "tidak digambar", (tile or {}).get("tile_kind"),
                             _sebelum, chart_h, _dibuang)
@@ -1356,14 +1382,31 @@ def _layout_dashboard_column_content(
         sisa_kartu = max(0.0, body_h_in - chart_h - note_h - gap - 0.08)
         rows_fit = int((sisa_kartu + _NESTED_CARD_ROW_GAP_IN) / (row_need + _NESTED_CARD_ROW_GAP_IN))
         if rows_fit < 1:
-            # Bahkan SATU baris kartu tidak muat di sisa ruang. Chart dipendekkan sebanyak
-            # yang dibutuhkan satu baris - dicatat, bukan didiamkan.
+            # KOREKSI (chart dulu, kartu dapat sisanya): cabang ini dulu MEMENDEKKAN CHART
+            # supaya satu baris kartu muat - dan pemendekan itu membuang baris chart. Terukur
+            # di laporan 183: 4 dari 8 baris chart hilang demi memuat satu baris kartu,
+            # tertangkap uji label. Sejak label pindah ke ATAS bar, satu baris chart membawa
+            # nama entitas UTUH (38 karakter) sementara satu baris kartu membawa jauh lebih
+            # sedikit - jadi menukar baris chart dengan baris kartu menukar isi banyak dgn
+            # isi sedikit. Sekarang KARTU yang dilepas, chart utuh.
+            logger.info("tata letak kolom: %d kartu dilepas - chart %r dipertahankan utuh "
+                        "(satu baris kartu butuh %.2fin, sisa %.2fin)",
+                        len(cards), (tile or {}).get("tile_kind"), row_need, sisa_kartu)
+            cards = []
+            rows = []
+            cards_h = 0.0
+            cards_y = chart_h + gap if has_chart else 0.0
+            note_y = cards_y
+            return {"chart_h": chart_h, "cards_h": 0.0, "cards_y": cards_y,
+                    "note_y": chart_h, "note_h": max(0.0, body_h_in - chart_h),
+                    "cards": [], "rows": [], "tile": tile_dipakai,
+                    "chart_dilewati": has_chart is False and tile is not None}
             kurang = row_need + _NESTED_CARD_ROW_GAP_IN - sisa_kartu
             chart_h = max(_DASH_COLUMN_CHART_MIN_H_IN * 0.6, chart_h - kurang)
             # ISI chart ikut dikurangi, bukan cuma jatah ruangnya. Kalau cuma ruangnya yang
             # dipotong, renderer tetap menggambar seukuran isinya & menembus kotak - terukur
             # di laporan 186: 8 baris dijejalkan ke 0.75in lalu menabrak grid kartu.
-            tile_dipakai, dibuang = _potong_isi_chart(tile, chart_h)
+            tile_dipakai, dibuang = _potong_isi_chart(tile, chart_h, col_w_in)
             if dibuang:
                 logger.info("tata letak kolom: chart %r dipendekkan %.2fin, %d baris chart "
                             "TIDAK digambar supaya kartu muat",
@@ -2208,9 +2251,16 @@ _SIG_LABEL_COL_W_PX = 150.0
 _SIG_LABEL_PT = 9.5
 
 
-def _nama_muat(labels: list) -> bool:
-    """Semua nama muat di kolom label ranked bar (maks 2 baris) - diukur, bukan ditebak."""
-    return all(wrap_line_count(str(x), _SIG_LABEL_COL_W_PX, _SIG_LABEL_PT, 0.80) <= 2
+def _nama_muat(labels: list, kolom_w_in: float | None = None) -> bool:
+    """Semua nama muat di baris ranked bar (maks 2 baris) - diukur, bukan ditebak.
+
+    GEOMETRI BERUBAH: label kini di ATAS bar dgn LEBAR KOLOM PENUH, bukan di kolom samping
+    selebar 1.33in. Aturan lama menolak nama utuh (`_nama_muat` False untuk
+    "/Common/vs.pekapg.petrokimia-gresik.com"), sehingga ranked_bar & ranked_bar_ternorm
+    berhenti menyala sama sekali: 5 dari 8 pasangan kehilangan bentuk dan laporan 188 tinggal
+    SATU chart. Lebarnya sekarang lebar kolom dikurangi kolom nilai & margin renderer."""
+    w = ((kolom_w_in - 2 * _CHART_MARGIN_IN) * 96 - 78) if kolom_w_in else _SIG_LABEL_COL_W_PX
+    return all(wrap_line_count(str(x), max(60.0, w), _SIG_LABEL_PT, 0.80) <= 2
                for x in labels)
 
 
@@ -2546,7 +2596,7 @@ def _r_ranked_bar(sig):
     if not v or not max(v):
         return None
     kecil = min(v) / max(v)
-    if kecil >= _SIG_BATANG_MIN_FRAC and _nama_muat(sig.get("labels") or []):
+    if kecil >= _SIG_BATANG_MIN_FRAC and _nama_muat(sig.get("labels") or [], sig.get("kolom_w_in")):
         return ("ranked_bar", "batang terkecil %.1f%%" % (kecil * 100), _kuat(kecil / 0.40))
 
 
@@ -2560,7 +2610,7 @@ def _r_ranked_bar_ternorm(sig):
     if not v or not max(v):
         return None
     kecil = min(v) / max(v)
-    if kecil < _SIG_BATANG_MIN_FRAC and _nama_muat(sig.get("labels") or []):
+    if kecil < _SIG_BATANG_MIN_FRAC and _nama_muat(sig.get("labels") or [], sig.get("kolom_w_in")):
         return ("ranked_bar_ternormalisasi", "batang terkecil %.2f%% < 2%%" % (kecil * 100), 0.45)
 
 
@@ -3138,14 +3188,28 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None,
                 _pos = {str(v): i for i, v in enumerate(_urut_kat)}
                 g = g.reindex(sorted(g.index, key=lambda x: (_pos.get(str(x), 10**6), str(x))))[:12]
             else:
-                g = g.sort_values(ascending=False)[:8]
+                # ENTITAS DIBATASI 6, bukan 8. Sejak label pindah ke ATAS bar dgn nama UTUH,
+                # satu baris memakan 0.365in (terukur), jadi 8 baris butuh 3.08in - lebih
+                # besar drpd jatah chart di kebanyakan kolom, dan sisanya dipangkas saat
+                # render (terukur: 4 dari 8 baris hilang di laporan 183/188). Lebih baik
+                # dibatasi di SUMBER, di mana cakupannya sudah dinyatakan: pita cara-baca
+                # ("6 dari 18 entitas - sisanya 14% dari total") dan catatan agregat.
+                g = g.sort_values(ascending=False)[:6]
             if len(g) < 2:
                 continue
             _terisi_frac = float(df[met].notna().mean())
             kand.append(((kat, met), {
                 "keterisian": _terisi_frac,
                 "n_baris": prof["n_baris"], "kategori": kat, "metrik": [met],
-                "labels": pendekkan_label([str(x) for x in g.index]),
+                # NAMA UTUH. Pemendekan dibuang dari jalur ini: terukur, nama entitas
+                # penuh (rata-rata 38 karakter) MUAT SATU BARIS pada 7pt di kolom 3.79in,
+                # dan tinggi entrinya (0.26in) justru LEBIH PENDEK drpd baris label-di-samping
+                # (0.35in). Penyebab pemendekan dulu bukan panjang nama, melainkan kolom label
+                # di samping bar yang cuma 1.33in. Setelah label pindah ke ATAS bar, kolom
+                # sempit itu tidak ada lagi.
+                # Pemendekan TETAP dipakai untuk treemap & stacked - segmennya memang sempit
+                # secara fisik, bukan karena tata letak.
+                "labels": [str(x) for x in g.index],
                 "values": [float(v) for v in g.tolist()],
                 "urut_bermakna": bool(_urut_kat),
                 "n_entitas_penuh": _n_penuh, "total_entitas_penuh": _tot_penuh,
@@ -3249,7 +3313,9 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
                                         sum(values))}
     if bentuk == "treemap":
-        return {"tile_kind": "metric_share", "labels": labels, "values": values,
+        # Segmen treemap sempit scr FISIK (luas = besaran), jadi pemendekan tetap perlu -
+        # beda sebabnya dgn baris chart yang dulu dipendekkan karena kolom labelnya sempit.
+        return {"tile_kind": "metric_share", "labels": pendekkan_label(labels), "values": values,
                 "kicker": _judul("PANGSA PER ENTITAS", "SHARE PER ENTITY"),
                 "title": _judul(f"Pangsa {pasangan[-1]}", f"{pasangan[-1]} Share"),
                 "cat_col_name": pasangan[0] if pasangan else None,
@@ -3257,7 +3323,8 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                                         sum(values))}
     if bentuk in ("donut", "stacked"):
         return {"tile_kind": "metric_mix" if bentuk == "stacked" else "custom_topic",
-                "chart_style": "donut", "labels": labels, "values": values,
+                # Segmen donut/stacked juga sempit scr fisik - pemendekan dipertahankan.
+                "chart_style": "donut", "labels": pendekkan_label(labels), "values": values,
                 "kicker": _judul("KOMPOSISI", "COMPOSITION"),
                 "title": _judul(f"Komposisi {pasangan[-1]}", f"{pasangan[-1]} Composition"),
                 "cat_col_name": pasangan[0] if pasangan else None,
