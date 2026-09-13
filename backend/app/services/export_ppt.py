@@ -46,6 +46,8 @@ from app.services.report_render_logic import (
     _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content,
     tinggi_kartu_in, wrap_line_count, kolom_yang_digambar, _kpi_card_widths, _NESTED_CARD_GAP_IN,
     metrik_judul_dashboard,
+    gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
+    fakta_strip_kolom, _DASH_COLS_FACT_H_IN,
     muat_catatan,
     _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
@@ -3375,12 +3377,10 @@ def _light_safe(color: RGBColor, max_luminance: float = 0.68) -> RGBColor:
     pucatnya jauh lebih ekstrem drpd tema lain, nyaris tak kelihatan kalau dipakai ulang apa
     adanya sbg warna bar/kartu di atas latar terang. RGBColor (subclass bytes) diindeks
     langsung [0]/[1]/[2], bukan lstrip/int seperti versi hex di export_pdf.py."""
-    r, g, b = color[0], color[1], color[2]
-    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-    if luminance <= max_luminance or luminance == 0:
-        return color
-    frac = max_luminance / luminance
-    return RGBColor(round(r * frac), round(g * frac), round(b * frac))
+    # ATURANNYA SATU, di report_render_logic.gelapkan_untuk_latar_terang - fungsi ini tinggal
+    # pembungkus tipe (RGBColor). Dulu rumusnya disalin di sini DAN di export_pdf._light_safe.
+    r, g, b = gelapkan_untuk_latar_terang(color[0], color[1], color[2], max_luminance)
+    return RGBColor(r, g, b)
 
 
 def _build_management_kpi_grid_slide(block: dict, ctx: _PptBlockContext):
@@ -3451,6 +3451,34 @@ def _build_management_kpi_grid_slide(block: dict, ctx: _PptBlockContext):
             _set_font(p3, BODY_FONT, Pt(9.5), color=GRAY_TEXT)
 
     return slide
+
+
+def _draw_fact_strip_kolom(slide, pasangan: list, x_in: float, y_in: float, w_in: float):
+    """A8 sisi PPT - kembaran _fact_strip_kolom_html di export_pdf.py. Isi & penyaringnya
+    datang dari report_render_logic.fakta_strip_kolom yang SAMA, jadi kedua format menampilkan
+    pasangan yang identik; fungsi ini cuma menggambar. Bentuk ikut jumlah pasangan: satu ->
+    strip lebar penuh, dua -> dua kotak bersebelahan. Label ITALIC, nilai BOLD."""
+    if not pasangan:
+        return
+    n = len(pasangan)
+    kotak_w = (w_in - 0.08) / n if n > 1 else w_in
+    for i, (label, nilai) in enumerate(pasangan):
+        bx = x_in + i * (kotak_w + 0.08)
+        kotak = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(bx), Inches(y_in),
+                                       Inches(kotak_w), Inches(_DASH_COLS_FACT_H_IN))
+        kotak.fill.solid(); kotak.fill.fore_color.rgb = RGBColor(0xF2, 0xF4, 0xF7)
+        kotak.line.fill.background(); _no_shadow(kotak)
+        tb = slide.shapes.add_textbox(Inches(bx + 0.07), Inches(y_in + 0.06),
+                                      Inches(max(0.3, kotak_w - 0.14)),
+                                      Inches(_DASH_COLS_FACT_H_IN - 0.12))
+        tf = tb.text_frame
+        tf.word_wrap = True
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+        p0 = tf.paragraphs[0]
+        r1 = p0.add_run(); r1.text = str(label) + " "
+        _set_font(r1, BODY_FONT, Pt(6.5), color=GRAY_TEXT); r1.font.italic = True
+        r2 = p0.add_run(); r2.text = str(nilai)
+        _set_font(r2, BODY_FONT, Pt(8.5), bold=True, color=TEXT_DARK)
 
 
 def add_dashboard_title(slide, text: str, x_in: float, w_in: float, color=TEXT_DARK, size_pt: float | None = None) -> float:
@@ -4053,6 +4081,21 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
         else:
             _cmap = {"blue": t["main"], "green": t["chart"], "amber": t["light"],
                      "orange": t["soft"], "gray": GRAY_TEXT, "red": t["main"]}
+        # A7 TIDAK BISA DITERAPKAN DI JALUR INI - alasannya ditulis, bukan didiamkan.
+        # Aturan warna label sudah satu (report_render_logic.warna_teks_label) & sisi PDF
+        # memakainya. Di sini bar digambar sbg CHART NATIVE PowerPoint: nama entitas muncul
+        # sbg label sumbu kategori, dan OOXML cuma menyediakan satu format utk SELURUH label
+        # sumbu (chart.category_axis.tick_labels.font) - tidak ada format per-kategori. Yang
+        # bisa diwarnai per titik cuma data label (ANGKA), dan angka justru HARUS tetap gelap.
+        #
+        # Menyetel semua label jadi satu warna akan BERBOHONG: ia menyambungkan tiap nama ke
+        # warna yang belum tentu warna batangnya.
+        #
+        # Jalan keluarnya menggambar bar sbg shape sendiri (spt add_ranked_bar_ternorm) supaya
+        # labelnya jadi textbox kita. Itu juga menutup divergensi tata letak yang sudah ada:
+        # sisi PDF menaruh label DI ATAS batang (sejak A3/A4), chart native menaruhnya di
+        # sumbu kiri. Perubahan itu di luar lingkup A7 dan belum disetujui - dilaporkan ke
+        # user sbg keputusan, bukan dikerjakan diam-diam.
         add_native_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
                              [b.get("label") for b in _bars], [b.get("count") for b in _bars],
                              colors=[_as_rgb(_cmap.get(b.get("color", "gray")), t["main"]) for b in _bars])
@@ -4261,6 +4304,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
             _insight_kpi_row(slide, kpi, x, col_w, _DASH_COLS_KPI_H_IN, y, theme=ctx.theme)
             y += _DASH_COLS_KPI_H_IN + 0.10
 
+
         body_h = max(1.2, (title_bottom_in + avail_h_in) - y - 0.10)
         notes = [str(v) for v in (col.get("notes") or []) if str(v).strip()]
         notes_consumed = False
@@ -4330,6 +4374,22 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         # DASAR ISI kolom ini, bukan kursor `y`. Perencana sudah menghitungnya sbg
         # note_y (= tepat di bawah chart + kartu); memakai `y` membuat kotak catatan
         # halaman menimpa kartu yang digambar di bawahnya.
+        # ---- A8 OPPORTUNISTIK (kembaran export_pdf.py, aturan SAMA) -------------------
+        # Strip tidak memesan ruang di depan; digambar cuma kalau SISA tinggi setelah chart &
+        # kartu masih cukup. Tidak dikecilkan supaya muat. Lihat catatan lengkap di sisi PDF.
+        _fakta, _ = fakta_strip_kolom(col, is_english(ctx.report))
+        _dasar_isi = _dasar_kolom + float(_column_layout.get("note_y") or 0.0)
+        if _fakta:
+            _sisa_in = (title_bottom_in + avail_h_in) - _dasar_isi - 0.10
+            if _sisa_in >= _DASH_COLS_FACT_H_IN:
+                _draw_fact_strip_kolom(slide, _fakta, x, _dasar_isi + 0.06, col_w)
+                _y_terendah = max(_y_terendah, _dasar_isi + 0.06 + _DASH_COLS_FACT_H_IN)
+            else:
+                logger.info("A8 strip fakta DILEWATI di kolom %d: sisa tinggi %.3fin, "
+                            "strip butuh %.2fin (%s)", idx + 1, _sisa_in,
+                            _DASH_COLS_FACT_H_IN,
+                            ", ".join("%s=%s" % (l, v) for l, v in _fakta))
+
         _y_terendah = max(_y_terendah, _dasar_kolom + (_column_layout.get("note_y") or 0.0))
         if notes:
             for _n in notes:

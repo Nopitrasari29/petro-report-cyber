@@ -28,6 +28,8 @@ from app.services.report_render_logic import (
     _DASH_TITLE_MAX_H_IN, _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content,
     tinggi_kartu_in, wrap_line_count, muat_catatan, kolom_yang_digambar, _kpi_card_widths,
     metrik_judul_dashboard,
+    gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
+    fakta_strip_kolom, _DASH_COLS_FACT_H_IN,
     _NESTED_CARD_GAP_IN, _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -380,10 +382,16 @@ def _bar_chart_html(categories, values, colors=None, compact=False) -> str:
         # LABEL DI ATAS BAR (kembaran _ranked_bar_ternorm_html): nama entitas memakai
         # LEBAR KOLOM PENUH, jadi nama utuh muat tanpa dipendekkan. Kolom label samping
         # 150px itulah yang dulu memaksa pemendekan.
+        # A7: LABEL MENEMPEL PADA BENTUKNYA (tepat di atas batangnya) -> teksnya ikut
+        # berwarna, jadi mata menyambungkan nama ke batang tanpa penanda tambahan. Warna
+        # diambil lewat warna_teks_label: kalau warna batang terlalu terang, dipakai varian
+        # GELAPNYA - bukan warna persis batang - supaya tetap terbaca di atas putih.
+        # ANGKA tidak ikut berwarna: kolom angka harus terbaca sbg satu kolom.
+        _warna_label = warna_teks_label(color) if label_menempel_pada_bentuk("bar") else TEXT_DARK
         rows.append(
             f'<tr><td style="padding:1pt 0 0 0;">'
             f'<table style="width:100%;" cellpadding="0" cellspacing="0"><tr>'
-            f'<td style="font-size:{font_pt}pt;color:{TEXT_DARK};line-height:1.15;">{_esc(cat)}</td>'
+            f'<td style="font-size:{font_pt}pt;color:{_warna_label};line-height:1.15;">{_esc(cat)}</td>'
             f'<td style="width:70px;text-align:right;font-weight:700;font-size:{font_pt}pt;'
             f'color:{TEXT_DARK};line-height:1.15;">{_fmt_num(val)}</td></tr></table>'
             f'<div style="background:#EEEEEE;border-radius:3px;margin:1pt 0 2pt 0;">{fill_html}</div>'
@@ -622,13 +630,14 @@ def _light_safe(hex_color: str, max_luminance: float = 0.68) -> str:
     nyaris tak kelihatan (2 warna pucat berdempetan). Cuma menggelapkan PROPORSIONAL (hue
     tetap sama) kalau luminance-nya di atas ambang — TIDAK mengubah apa pun utk warna yang
     sudah cukup gelap (green/navy/dark tetap identik seperti sebelumnya)."""
+    # ATURANNYA SATU, di report_render_logic.gelapkan_untuk_latar_terang - fungsi ini tinggal
+    # pembungkus tipe (hex). Dulu rumusnya disalin di sini DAN di export_ppt._light_safe.
     h = hex_color.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-    if luminance <= max_luminance or luminance == 0:
+    if len(h) != 6:
         return hex_color
-    frac = max_luminance / luminance
-    return f"#{round(r * frac):02x}{round(g * frac):02x}{round(b * frac):02x}"
+    r, g, b = gelapkan_untuk_latar_terang(
+        int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), max_luminance)
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def _bar_line_chart_html_fallback(categories, values, cumulative, color) -> str:
@@ -2980,6 +2989,33 @@ def _mgmt_tile_chart_html(tile: dict, ctx: "_PdfBlockContext", compact: bool = F
     return ""
 
 
+def _fact_strip_kolom_html(pasangan: list, w_in: float) -> str:
+    """A8: strip fakta di kolom dashboard - bentuknya IKUT ACUAN & IKUT JUMLAH PASANGAN.
+
+    Satu pasangan -> strip lebar penuh berlatar abu muda. Dua pasangan -> dua kotak kecil
+    bersebelahan. Label ITALIC, nilai BOLD. Isi & penyaringnya diputuskan di
+    report_render_logic.fakta_strip_kolom (satu aturan, dipakai sisi PPT juga); fungsi ini
+    cuma menggambar. Kalau `pasangan` kosong strip TIDAK digambar sama sekali - ruang kosong
+    yang jujur lebih baik daripada strip yang mengulang KPI/catatan."""
+    if not pasangan:
+        return ""
+    sel = []
+    n = len(pasangan)
+    kotak_w = (w_in - 0.08) / n if n > 1 else w_in
+    for label, nilai in pasangan:
+        sel.append(
+            f'<td style="width:{kotak_w}in;background:#F2F4F7;border-radius:3px;'
+            f'padding:4pt 7pt;vertical-align:middle;">'
+            f'<span style="font-style:italic;font-size:6.5pt;color:{GRAY_TEXT};">{_esc(label)}</span>'
+            f'<span style="font-weight:700;font-size:8.5pt;color:{TEXT_DARK};">&nbsp;{_esc(nilai)}</span>'
+            f'</td>'
+        )
+    pemisah = '<td style="width:0.08in;"></td>' if n > 1 else ""
+    isi = pemisah.join(sel) if n > 1 else sel[0]
+    return (f'<table style="width:100%;border-collapse:separate;" cellpadding="0" '
+            f'cellspacing="0"><tr>{isi}</tr></table>')
+
+
 def _dashboard_title_html(text: str, w_in: float, size_pt: float | None = None,
                           judul_topik: str | None = None) -> tuple:
     """Judul halaman dashboard Management BARU (permintaan user A2): y=0 (lihat negative-
@@ -3787,6 +3823,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             )
             y += _DASH_COLS_KPI_H_IN + 0.10
 
+
         body_h = max(1.2, avail_h_in - y - 0.10)
         notes = [str(x_) for x_ in (col.get("notes") or []) if str(x_).strip()]
         notes_consumed = False
@@ -3876,6 +3913,34 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # kotak catatan menutup total sel heatmap Senin-Rabu). Kalau visualnya ada tapi
         # catatannya tetap tidak terpakai, catatan DILEWATI - lebih baik hilang scr sadar
         # drpd menutupi isi yang pembaca tidak tahu ada di baliknya.
+
+        # ---- A8: STRIP FAKTA BERSIFAT OPPORTUNISTIK ---------------------------------
+        # KEPUTUSAN USER: strip TIDAK memesan ruang di depan. Memesan 0.46in TETAP terlepas
+        # dari apakah kolomnya punya ruang adalah bentuk lain dari angka tetap yang sudah tiga
+        # kali dibuang di proyek ini (mgmt_narrative_per_page = 4, konstanta anggaran narasi,
+        # batas 6 entitas).
+        #
+        # Strip itu PELENGKAP: chart & kartu yang membawa data, strip cuma menambah satu
+        # angka. Jadi strip yang mengalah saat sempit, bukan chart. Keputusannya diambil dari
+        # SISA TINGGI setelah chart & kartu dapat bagiannya - bukan ambang tetap "kalau kolom
+        # lebih dari X". Dan strip TIDAK dikecilkan supaya muat: kalau 0.46in tidak ada,
+        # tidak digambar.
+        _fakta, _ = fakta_strip_kolom(col, is_english(ctx.report))
+        if _fakta:
+            _dasar_isi = _dasar_kolom + float(_column_layout.get("note_y") or 0.0)
+            _sisa_in = avail_h_in - _dasar_isi - 0.10
+            if _sisa_in >= _DASH_COLS_FACT_H_IN:
+                col_parts.append(
+                    f'<div style="position:absolute;left:{x}in;top:{_dasar_isi + 0.06}in;'
+                    f'width:{col_w}in;height:{_DASH_COLS_FACT_H_IN}in;">'
+                    f'{_fact_strip_kolom_html(_fakta, col_w)}</div>'
+                )
+                _y_terendah = max(_y_terendah, _dasar_isi + 0.06 + _DASH_COLS_FACT_H_IN)
+            else:
+                logger.info("A8 strip fakta DILEWATI di kolom %d: sisa tinggi %.3fin, "
+                            "strip butuh %.2fin (%s)", idx + 1, _sisa_in,
+                            _DASH_COLS_FACT_H_IN,
+                            ", ".join("%s=%s" % (l, v) for l, v in _fakta))
 
         parts.extend(col_parts)
         # DASAR ISI kolom ini, bukan kursor `y`. Perencana sudah menghitungnya sbg

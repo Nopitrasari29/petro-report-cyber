@@ -912,6 +912,123 @@ def metrik_judul_dashboard(teks: str, total_w_in: float, size_pt: float | None =
             "n_baris": n_baris, "tinggi_in": tinggi_in}
 
 
+# ---- A7: WARNA PENYAMBUNG LABEL-BENTUK, SATU ATURAN UTK KEDUA EXPORTER ------------------
+# Syarat user: "Jangan dua fungsi yang memutuskan warna label secara terpisah - kita baru saja
+# membayar mahal untuk pelajaran itu di geometri judul." Karena itu aturan kontras & aturan
+# menempel/terpisah TINGGAL DI SINI, exporter cuma mengonversi tipe warnanya.
+# Warna teks gelap baku - nilainya SAMA dgn TEXT_DARK di kedua exporter ("#16241C" /
+# RGBColor(0x16,0x24,0x1C)); di sini dipakai sbg nilai aman kalau hex bentuk tidak valid.
+TEXT_DARK_HEX = "#16241C"
+_LUMINANCE_MAKS_ISI = 0.68    # warna ISI/bidang (bar, segmen) di atas latar terang
+_LUMINANCE_MAKS_TEKS = 0.50   # TEKS label 7pt butuh LEBIH gelap drpd bidang: bidang dinilai
+                              # dari luas, huruf tipis dinilai dari tepinya
+
+
+def gelapkan_untuk_latar_terang(r: int, g: int, b: int,
+                                max_luminance: float = _LUMINANCE_MAKS_ISI) -> tuple:
+    """Gelapkan PROPORSIONAL (hue tetap) sampai aman di atas latar terang. Satu aturan yang
+    dipakai _light_safe di KEDUA exporter - dulu ada dua salinan (hex di export_pdf, RGBColor
+    di export_ppt) dgn rumus identik; kelas duplikasi yang sama dgn geometri judul."""
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    if luminance <= max_luminance or luminance == 0:
+        return (r, g, b)
+    frac = max_luminance / luminance
+    return (round(r * frac), round(g * frac), round(b * frac))
+
+
+def warna_teks_label(hex_bentuk: str) -> str:
+    """A7: warna TEKS label yang MENEMPEL pada bentuknya.
+
+    Warna bentuk dipakai apa adanya kalau sudah cukup gelap; kalau terlalu terang (varian
+    "light"/"soft" palet, lihat _light_safe) dipakai varian GELAPNYA - bukan warna persis
+    bentuknya, supaya tetap terbaca di atas putih. ANGKA di sebelah label TIDAK ikut berwarna;
+    angka tetap gelap supaya kolom angka terbaca sbg satu kolom."""
+    h = str(hex_bentuk or "").lstrip("#")
+    if len(h) != 6:
+        return TEXT_DARK_HEX
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    r, g, b = gelapkan_untuk_latar_terang(r, g, b, _LUMINANCE_MAKS_TEKS)
+    return "#%02x%02x%02x" % (r, g, b)
+
+
+def label_menempel_pada_bentuk(chart_style: str | None) -> bool:
+    """A7: True = label MENEMPEL pada bentuknya -> teks ikut berwarna.
+    False = label TERPISAH dari bentuknya -> kotak/titik warna di depan label.
+
+    Dari acuan: di panel IKAS nama aspek menempel langsung di atas barnya - posisinya sudah
+    menyambungkan, tidak butuh penanda. Di slide Availability kotak label funnel terpisah dari
+    bentuknya, jadi butuh penyambung berwarna.
+
+    TREEMAP sengaja TIDAK masuk dua-duanya: labelnya digambar DI DALAM segmen, di atas warna
+    isinya. Mewarnai teks dgn warna bentuk di sana justru membuatnya lenyap - penyambungnya
+    sudah "berada di dalam", bukan warna."""
+    return str(chart_style or "bar") == "bar"
+
+
+# ---- A8: FACT STRIP - ANGKA YANG BELUM TAMPIL DI TEMPAT LAIN ---------------------------
+# Syarat user: (1) jangan mengulang KPI (TOTAL/TERATAS/KATEGORI), (2) jangan tabrakan dgn
+# kotak catatan, (3) kalau tidak ada yang lolos JANGAN GAMBAR - ruang kosong yang jujur lebih
+# baik daripada strip yang mengulang. Semua angka diambil dari agregat yang SUDAH dihitung
+# pandas di tile (n_entitas_penuh / total_entitas_penuh / nilai_penuh), bukan teks baru.
+_A8_KONSEP = {
+    "rata2":    ("rata-rata", "average", ("rata-rata", "average", "mean ", "rerata")),
+    "rentang":  ("rentang", "range", ("rentang", "ranging", "range ", " s/d ")),
+    "median":   ("median", "median", ("median",)),
+    "tak_gambar": ("tidak tergambar", "not charted", ("tidak tergambar", "not charted",
+                                                      "sisanya", "remaining", "menampilkan",
+                                                      "chart shows")),
+    "total":    ("total", "total", ("total",)),
+}
+
+
+def fakta_strip_kolom(col: dict, is_en: bool = False) -> tuple:
+    """A8: (dipakai, ditolak) - pasangan (label, nilai) utk fact strip, plus alasan tolak.
+
+    Mengembalikan alasan penolakan SEKALIAN supaya keputusannya bisa dilaporkan & diperiksa,
+    bukan cuma hasilnya. Kalau `dipakai` kosong, pemanggil TIDAK menggambar strip."""
+    tile = col.get("main_chart_tile") or {}
+    nilai = [float(v) for v in (tile.get("nilai_penuh") or []) if v is not None]
+    n_penuh = int(tile.get("n_entitas_penuh") or 0)
+    total = float(tile.get("total_entitas_penuh") or 0.0)
+    n_gambar = len(tile.get("bars") or tile.get("values") or [])
+    if not nilai or n_penuh <= 0:
+        return [], [("(tidak ada agregat)", "tile tidak membawa nilai_penuh/n_entitas_penuh")]
+
+    # Apa yang SUDAH tampil: teks KPI + teks catatan, dinormalkan utk pencocokan.
+    sudah_teks = " ".join(
+        [str(k.get("label") or "") + " " + str(k.get("value") or "")
+         for k in (col.get("kpi_summary") or [])]
+        + [str(n) for n in (col.get("notes") or [])]
+    ).lower()
+
+    _urut = sorted(nilai)
+    _med = _urut[len(_urut) // 2] if len(_urut) % 2 else (_urut[len(_urut) // 2 - 1]
+                                                         + _urut[len(_urut) // 2]) / 2
+    kandidat = [
+        ("rata2", _fmt_count(total / n_penuh)),
+        ("rentang", "%s-%s" % (_fmt_count(min(nilai)), _fmt_count(max(nilai)))),
+        ("tak_gambar", _fmt_count(max(0, n_penuh - n_gambar))),
+        ("median", _fmt_count(_med)),
+        ("total", _fmt_count(total)),
+    ]
+    dipakai, ditolak = [], []
+    for kunci, nilai_str in kandidat:
+        label_id, label_en, kata_kunci = _A8_KONSEP[kunci]
+        label = label_en if is_en else label_id
+        if any(k in sudah_teks for k in kata_kunci):
+            ditolak.append((label, "konsepnya sudah dipakai KPI/catatan"))
+            continue
+        if nilai_str.lower() in sudah_teks:
+            ditolak.append((label, "angkanya (%s) sudah tampil" % nilai_str))
+            continue
+        dipakai.append((label.upper(), nilai_str))
+    # Lebih dari dua: ambil DUA TERKUAT - urutan kandidat di atas sudah dari paling informatif.
+    if len(dipakai) > 2:
+        ditolak += [(l, "lebih dari dua yang lolos, diambil dua terkuat") for l, _ in dipakai[2:]]
+        dipakai = dipakai[:2]
+    return dipakai, ditolak
+
+
 def chart_label_count(tile: dict) -> int:
     """Berapa label yang HARUS digambar chart ini (dipakai utk hitung tinggi minimumnya)."""
     k = tile.get("tile_kind")
@@ -2586,6 +2703,9 @@ _DASH_COLS_TITLE_H_IN = 0.20      # pita kepala panel
 _DASH_COLS_CARA_BACA_H_IN = 0.18  # baris cara-baca italic di bawahnya
 _DASH_COLS_KPI_H_IN = 0.95        # baris kartu KPI
 _DASH_COLS_NOTE_H_IN = 1.02       # kotak catatan selebar halaman
+_DASH_COLS_FACT_H_IN = 0.46       # A8: strip fakta (dari acuan). Ruangnya DIPESAN
+                                  # sebelum body_h dihitung, spt kotak catatan di A5 -
+                                  # bukan diambil diam-diam dari jatah chart.
 
 
 def maks_baris_chart(labels: list, kolom_w_in: float, tile_kind: str = "risk_heatmap") -> int:
