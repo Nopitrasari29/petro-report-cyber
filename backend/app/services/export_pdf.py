@@ -66,7 +66,11 @@ TEXT_DARK = "#16241C"
 GRAY_TEXT = "#5C6B62"
 RED_CRIT = "#B23A2E"
 RED_CRIT_BG = "#F8E2DE"
-PANEL_BORDER = "#E2E5DE"
+# A2: garis tepi panel disamakan dgn acuan (#D6DBE3) - inilah yang membentuk sekat
+# antar panel yang bersentuhan, jadi nilainya menentukan tampilan, bukan dekoratif.
+PANEL_BORDER = "#D6DBE3"
+# A5: warna label "Catatan:" di acuan.
+CATATAN_LABEL = "#00B050"
 # PERMINTAAN USER (C2): latar halaman ISI (terang) TIDAK boleh diberi rona warna tema apa
 # pun — dulu pakai t["soft"] (utk tema kustom = tint dari warna pilihan user sendiri, mis.
 # #ecf4f0 dari hijau #60a481; utk tema bernama = GOLD_LIGHT) — kedua kasus menambah warna
@@ -1290,7 +1294,10 @@ def _note_box_html(text, theme: dict | None = None, title: str | None = None) ->
     label = title or ("Notes" if render_is_en() else "Catatan")
     return (
         f'<div style="background:{IVORY};border-left:3px solid {GRAY_TEXT};border-radius:3px;padding:9pt 12pt;margin-top:10pt;">'
-        f'<div style="font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:{GRAY_TEXT};margin-bottom:4pt;">{_esc(label)}:</div>'
+        # A5: label "Catatan:" HIJAU BOLD ITALIC seperti acuan (#00B050), bukan abu polos
+        # huruf-besar-semua. Ini salah satu dari dua hal yang acuan pakai untuk membuat
+        # kotak catatan terbaca sebagai catatan, bukan sebagai blok teks lain.
+        f'<div style="font-size:8.5pt;font-weight:700;font-style:italic;color:{CATATAN_LABEL};margin-bottom:4pt;">{_esc(label)}:</div>'
         f'{rows_html}'
         f'</div>'
     )
@@ -3661,7 +3668,10 @@ def _build_management_insight_page_block(block: dict, ctx: _PdfBlockContext) -> 
     return (inner, False, None, False)
 
 
-_DASH_COLS_GAP_IN = 0.28
+# A1: PANEL MENEMPEL. Di slide acuan keempat panel berbagi tepi persis (x=0.16/2.40/4.64/
+# 6.89, masing-masing w=2.24) - nol jarak. Yang membentuk sekat adalah GARIS TEPI #D6DBE3
+# yang bersentuhan, bukan ruang kosong. Sebelumnya 0.28in.
+_DASH_COLS_GAP_IN = 0.0
 # PITA kepala, bukan kotak judul: acuan 0.16in, dipakai 0.20in supaya judul 8.5pt tetap
 # muat satu baris. Sebelumnya 0.52in - tiga kali tinggi yang diperlukan.
 _DASH_COLS_TITLE_H_IN = 0.20
@@ -3696,6 +3706,14 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
     parts = []
     _catatan_halaman: list = []
     _y_terendah = 0.0
+    # ---- A5: RUANG KOTAK CATATAN DIPESAN LEBIH DULU -------------------------------------
+    # Aturan tetap: tinggi yang bergantung isi harus bisa dihitung SEBELUM penempatan.
+    # Sebelumnya kolom diberi SELURUH tinggi lalu kotak catatan dicari ruang sisa - hasilnya
+    # nol ruang & kotaknya tidak pernah tergambar (terukur: 188/hal2 0% catatan padahal
+    # kolomnya menghasilkan 4 & 2 butir).
+    _ada_catatan = any((c.get("notes") or []) for c in cols)
+    _NOTE_HAL_H_IN = 1.02 if _ada_catatan else 0.0
+    avail_h_in = avail_h_in - _NOTE_HAL_H_IN
     for idx, col in enumerate(cols):
         x = idx * (col_w + _DASH_COLS_GAP_IN)
         y = 0.0
@@ -3710,6 +3728,16 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                 break
         else:
             _ct_pt = 7.5
+        # ---- A2: BADAN PANEL putih bergaris, digambar lebih dulu sbg alas -------------
+        # Acuan: badan w=2.24 h=2.95 fill #FFFFFF line #D6DBE3 0.75pt, dgn pita kepala
+        # bertumpuk di posisi yang sama. Panel bersebelahan berbagi tepi (A1), jadi garis
+        # inilah yang membentuk sekat antar kolom.
+        col_parts.append(
+            f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
+            f'height:{avail_h_in - (y - title_h_in) - 0.02}in;background:{WHITE};'
+            f'border:0.75pt solid {PANEL_BORDER};border-radius:2px;"></div>'
+        )
+
         # ---- A1 + A4: PITA KEPALA, bukan kotak judul setinggi 0.52in ------------------
         # Slide acuan memakai pita kepala berwarna ~0.20in yang memuat judul panel, DAN pita
         # kedua sebaris berisi CARA MEMBACA chart di bawahnya. 188 memakai kotak 0.52in
@@ -3868,9 +3896,9 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
     # 6.28 x 0.88in berisi SATU butir, dan di halaman lain tidak ada sama sekali. Catatan
     # dari SELURUH kolom dikumpulkan ke sini (tanpa duplikat) lalu dibuang dari belakang
     # sampai muat - jadi kotaknya terisi, bukan hampir kosong.
-    if _catatan_halaman:
-        _note_y = min(_y_terendah + 0.10, _DASH_CONTENT_BOTTOM_IN - title_h_in - 0.40)
-        _note_h = max(0.0, avail_h_in - _note_y)
+    if _catatan_halaman and _NOTE_HAL_H_IN:
+        _note_y = avail_h_in + 0.06
+        _note_h = _NOTE_HAL_H_IN - 0.06
         if _note_h >= 0.40:
             _cat, _dibuang = muat_catatan(total_w_in, _catatan_halaman[:4], _note_h)
             if _dibuang:
@@ -3883,7 +3911,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                     f'{_note_box_html(_cat, theme=ctx.theme)}</div>'
                 )
 
-    inner_html = f'<div style="position:relative;height:{avail_h_in}in;">{"".join(parts)}</div>'
+    inner_html = f'<div style="position:relative;height:{avail_h_in + _NOTE_HAL_H_IN}in;">{"".join(parts)}</div>'
     return (f'<div style="margin:-0.5in -0.25in 0 -0.25in;">{title_html}{inner_html}</div>', False, None, False)
 
 

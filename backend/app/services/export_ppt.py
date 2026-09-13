@@ -64,7 +64,10 @@ TEXT_DARK = RGBColor(0x16, 0x24, 0x1C)
 GRAY_TEXT = RGBColor(0x5C, 0x6B, 0x62)
 RED_CRIT = RGBColor(0xB2, 0x3A, 0x2E)
 RED_CRIT_BG = RGBColor(0xF8, 0xE2, 0xDE)
-PANEL_BORDER = RGBColor(0xE2, 0xE5, 0xDE)
+# A2: garis tepi panel disamakan dgn acuan (#D6DBE3) - kembaran export_pdf.py.
+PANEL_BORDER = RGBColor(0xD6, 0xDB, 0xE3)
+# A5: warna label "Catatan:" di acuan.
+CATATAN_LABEL = RGBColor(0x00, 0xB0, 0x50)
 TITLE_FONT = "Bookman Old Style"
 BODY_FONT = "Calibri"
 
@@ -935,7 +938,9 @@ def add_note_box(slide, x, y, w, text, theme: dict | None = None, title: str | N
     tp = title_box.text_frame.paragraphs[0]
     tp.alignment = PP_ALIGN.LEFT
     tp.text = f"{title}:"
-    _set_font(tp, BODY_FONT, Pt(8.5), bold=True, color=GRAY_TEXT)
+    # A5 (kembaran export_pdf.py): label "Catatan:" HIJAU BOLD ITALIC seperti acuan.
+    _set_font(tp, BODY_FONT, Pt(8.5), bold=True, color=CATATAN_LABEL)
+    tp.font.italic = True
 
     add_bullet_lines(
         slide, x + Inches(pad_in), y + Inches(0.14 + 0.24), w - Inches(pad_in * 2), text,
@@ -4150,7 +4155,10 @@ def _build_management_insight_page_slide(block: dict, ctx: _PptBlockContext):
     return slide
 
 
-_DASH_COLS_GAP_IN = 0.28
+# A1: PANEL MENEMPEL. Di slide acuan keempat panel berbagi tepi persis (x=0.16/2.40/4.64/
+# 6.89, masing-masing w=2.24) - nol jarak. Yang membentuk sekat adalah GARIS TEPI #D6DBE3
+# yang bersentuhan, bukan ruang kosong. Sebelumnya 0.28in.
+_DASH_COLS_GAP_IN = 0.0
 # PITA kepala, bukan kotak judul (kembaran export_pdf.py): acuan 0.16in, dipakai 0.20in.
 _DASH_COLS_TITLE_H_IN = 0.20
 _DASH_COLS_KPI_H_IN = 0.95
@@ -4177,6 +4185,11 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     note_title = "Notes" if is_en else "Catatan"
     _catatan_halaman: list = []
     _y_terendah = 0.0
+    # A5 (kembaran export_pdf.py): ruang kotak catatan DIPESAN LEBIH DULU, bukan dicari dari
+    # sisa - kolom yang diberi seluruh tinggi menyisakan nol ruang & kotaknya tak pernah ada.
+    _ada_catatan = any((c.get("notes") or []) for c in cols)
+    _NOTE_HAL_H_IN = 1.02 if _ada_catatan else 0.0
+    avail_h_in = avail_h_in - _NOTE_HAL_H_IN
 
     n = len(cols)
     col_w = (total_w_in - _DASH_COLS_GAP_IN * (n - 1)) / n
@@ -4187,6 +4200,15 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         # MEMBACA chart. Sekat di acuan GARIS TEPI, bukan bayangan (141/141 shape bergaris).
         y = title_bottom_in
         _cara = str(col.get("cara_baca") or "")
+        # ---- A2 (kembaran export_pdf.py): BADAN PANEL putih bergaris sbg alas ---------
+        _badan = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(col_w),
+            Inches(max(0.5, (title_bottom_in + avail_h_in) - y - 0.02)))
+        _badan.fill.solid()
+        _badan.fill.fore_color.rgb = WHITE
+        _badan.line.color.rgb = PANEL_BORDER
+        _badan.line.width = Pt(0.75)
+        _no_shadow(_badan)
         _judul_w = col_w if not _cara else col_w * 0.52
         # Kembaran export_pdf.py: font mengecil sampai judul muat, pita ditinggikan kalau
         # pada 5.5pt pun masih lebih dari satu baris. Judul TIDAK dipotong.
@@ -4316,9 +4338,9 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     # ---- A5 (kembaran export_pdf.py): SATU kotak catatan selebar area konten ----------
     # Acuan memakai satu kotak 8.97 x 1.18in terisi penuh; sebelumnya kotak per kolom
     # 6.28 x 0.88in berisi satu butir, dan di slide lain tidak ada sama sekali.
-    if _catatan_halaman:
-        _note_y = min(_y_terendah + 0.10, _DASH_CONTENT_BOTTOM_IN - 0.55)
-        _note_h = max(0.0, (title_bottom_in + avail_h_in) - _note_y)
+    if _catatan_halaman and _NOTE_HAL_H_IN:
+        _note_y = title_bottom_in + avail_h_in + 0.06
+        _note_h = _NOTE_HAL_H_IN - 0.06
         if _note_h >= 0.40:
             _cat, _dibuang = muat_catatan(total_w_in, _catatan_halaman[:4], _note_h)
             if _dibuang:

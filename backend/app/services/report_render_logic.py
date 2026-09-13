@@ -362,8 +362,16 @@ _NARASI_KARTU_DASAR_IN = 0.94
 _NARASI_BARIS_H_IN = 0.19
 _NARASI_GAP_IN = 0.14
 _NARASI_ISI_PT = 9.0
-# Kartu pertama mulai di ~2.60in (di bawah kicker + judul halaman), bukan 0.95in.
-_NARASI_ATAS_IN = 2.60
+# TINGGI AREA ISI halaman narasi, BUKAN offset kartu pertama.
+# KOREKSI: konstanta pertama saya (2.60in) diambil dari posisi kartu pertama pada render
+# nyata - tapi halaman narasi dirender DITENGAHKAN VERTIKAL (center=True di _page()), jadi
+# 2.60in itu akibat pemusatan, bukan tinggi header. Mengunci offset satu kasus sebagai kalau
+# itu header tetap membuat anggaran mengecil 1.5in tanpa alasan; 5 kartu jadi "tidak muat"
+# padahal ruangnya ada.
+# Yang benar: tinggi halaman 7.5in - margin atas & bawah 0.5in = 6.5in area isi, dikurangi
+# kicker + judul halaman (diukur pada render: 1.71 -> 2.64in = 0.93in) + jeda.
+_NARASI_TINGGI_ISI_IN = 6.5
+_NARASI_HEADER_IN = 1.00
 
 
 def butir_narasi_per_halaman(items: list, lebar_total_in: float, tinggi_in: float) -> list:
@@ -7298,7 +7306,7 @@ def build_management_report_blocks(report) -> list[dict]:
     # A6: jumlah butir per halaman DIHITUNG dari tinggi isinya (lihat butir_narasi_per_halaman),
     # bukan dipatok 4.
     _lebar_narasi = 13.333 - 2 * _DASH_MARGIN_X_IN
-    _tinggi_narasi = _DASH_CONTENT_BOTTOM_IN - _NARASI_ATAS_IN
+    _tinggi_narasi = _NARASI_TINGGI_ISI_IN - _NARASI_HEADER_IN
     for chunk_index, chunk in enumerate(
             butir_narasi_per_halaman(narrative_items, _lebar_narasi, _tinggi_narasi)):
         continuation = chunk_index > 0
