@@ -900,8 +900,14 @@ def metrik_judul_dashboard(teks: str, total_w_in: float, size_pt: float | None =
         pt = base_pt * 0.72
     line_h_in = pt * 1.25 / 72.0
     n_baris = max(1, wrap_line_count(teks, lebar_px, pt, _DASH_TITLE_FAKTOR_LEBAR))
-    tinggi_in = max(_DASH_TITLE_MIN_H_IN,
-                    min(_DASH_TITLE_MAX_H_IN, n_baris * line_h_in + _DASH_TITLE_PAD_IN))
+    # KOTAK BOLEH MENINGGI - TEKS TIDAK DIPOTONG. _DASH_TITLE_MAX_H_IN dipakai sbg ambang
+    # KAPAN font dikecilkan (loop di atas), BUKAN sbg langit-langit tinggi kotak. Dulu ada
+    # min(_DASH_TITLE_MAX_H_IN, ...) di sini: judul yang butuh 1.180in diberi kotak 1.120in
+    # lalu sisanya dipotong overflow:hidden - terukur di 3 halaman (182 dua halaman, 183
+    # satu). Batasan user berlaku tanpa pengecualian: tidak ada teks yang boleh terpotong.
+    # Kalau kotak lebih tinggi berarti ruang chart berkurang, ruang chart yang mengalah -
+    # judul terpotong lebih buruk daripada satu baris chart yang hilang.
+    tinggi_in = max(_DASH_TITLE_MIN_H_IN, n_baris * line_h_in + _DASH_TITLE_PAD_IN)
     return {"text_w_in": text_w_in, "size_pt": pt, "line_h_in": line_h_in,
             "n_baris": n_baris, "tinggi_in": tinggi_in}
 
@@ -2597,6 +2603,23 @@ def maks_baris_chart(labels: list, kolom_w_in: float, tile_kind: str = "risk_hea
              "bars": [{"label": str(x), "count": 1} for x in labels],
              "labels": [str(x) for x in labels]}
     rh = _tinggi_baris_bar(_semu, kolom_w_in)
+    # BATASAN YANG DISADARI, BUKAN KELALAIAN (diselidiki atas permintaan user utk kasus 183):
+    # angka ini memesan kartu PALING DANGKAL (header + 1 sub-item = 1.25in). Kartu nyata
+    # sering 2-3 sub-item: terukur 1.95in di 188 dan 2.30in di 183 - selisih +0.70 s/d
+    # +1.05in, kira-kira 3 baris chart. Itulah sebabnya 183 masih dipangkas 2-4 baris saat
+    # render, BUKAN karena tinggi judulnya (hipotesis itu diuji & gugur: 183 blok1 judulnya
+    # 0.844in, termasuk pendek, tapi tetap dipangkas 4 baris).
+    #
+    # TIDAK dipesan sedalam kartu terdalam, dgn alasan: fungsi ini dipanggil saat kandidat
+    # dibangun, SEBELUM kolom & kartunya dirakit - kedalaman kartu belum ada. Memesan kasus
+    # terdalam yang pernah terjadi (13 sub-item di 186 = 5.45in) akan memangkas chart di
+    # SEMUA laporan demi kasus ekstrem yang jarang.
+    #
+    # Aman ditinggalkan krn pemangkas render TIDAK membuang isi: ekornya digabung jadi baris
+    # "Lainnya (N)" (lihat _potong_isi_chart), dan sejak geometri judul disatukan angkanya
+    # IDENTIK di PDF & PPTX - jadi kedua dokumen tetap menceritakan isi yang sama.
+    # Perbaikan sebenarnya menuntut kedalaman kartu diketahui sebelum kandidat dipotong,
+    # yaitu penataan ulang urutan perencanaan - bukan menyetel konstanta ini.
     _kartu_min = _NESTED_CARD_HEADER_H_IN + 0.20 + (
         _NESTED_CARD_SUBITEM_LINE1_H_IN + _NESTED_CARD_SUBITEM_BAR_H_IN
         + _NESTED_CARD_SUBITEM_GAP_IN)
@@ -4702,14 +4725,45 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
         # Server & Cybersecurity: uptime ... tercapai 99,7% dari target 99%"). Kalimatnya
         # disusun dari keterangan kolom yang SUDAH grounded (diagregasi pandas), bukan teks
         # baru - nama topik di depan, temuan di belakang.
+        # BUG DIPERBAIKI (terukur, bukan dugaan): versi pertama A6 SELALU menyambung
+        # "topik: temuan". Itu benar HANYA kalau judul kolom memang label pendek
+        # ("Overview Summary"). Di laporan 182/183 judul kolomnya SUDAH kalimat temuan
+        # lengkap ("CV Karya Teknik Mandiri tertinggi dengan 1.615.000.000 dari total
+        # 6.595.000.000 (24%)."), jadi hasilnya kalimat itu DIULANG dua kali dipisah titik
+        # dua - 170-174 karakter, dan justru judul-judul itulah yang meluber melewati batas
+        # kotak. Dua cacat dari satu asumsi: judul kolom TIDAK selalu label pendek.
         _judul_topik = titles[0] if titles else _L(report, "Sorotan Data", "Data Highlights")
+        # Glyph hias di depan judul kolom bukan bagian nama topik.
+        # Blok Geometric Shapes (U+25A0-U+25FF) mencakup semua varian kotak/lingkaran hias
+        # yang dipakai penanda butir - termasuk U+25A3 yang terpakai di laporan 182. Daftar
+        # glyph satu per satu terbukti meleset, jadi rentangnya yang dipakai.
+        _judul_topik = re.sub(r"^[\s•·–—\-■-◿]+", "", _judul_topik).strip()
         _temuan = ""
         for c in cols:
             _cap = str((c.get("main_chart_tile") or {}).get("caption") or "").strip()
             if _cap:
                 _temuan = _shorten_to_caption(_cap, max_sentences=1)
                 break
-        _judul_kalimat = f"{_judul_topik}: {_temuan}" if _temuan else _judul_topik
+
+        def _sudah_kalimat_temuan(t: str) -> bool:
+            """Judul kolom yang SUDAH berisi temuan: ada angka DAN diakhiri titik."""
+            return bool(re.search(r"\d", t)) and t.rstrip().endswith(".")
+
+        def _mengulang(a: str, b: str) -> bool:
+            """b mengulang a (atau sebaliknya) - dibandingkan dari 24 karakter pertama
+            yang sudah dinormalkan, cukup panjang utk tidak salah tangkap judul pendek."""
+            na = re.sub(r"\s+", " ", a).strip().lower()
+            nb = re.sub(r"\s+", " ", b).strip().lower()
+            if not na or not nb:
+                return False
+            k = min(24, len(na), len(nb))
+            return na[:k] == nb[:k] or na in nb or nb in na
+
+        if not _temuan or _sudah_kalimat_temuan(_judul_topik) or _mengulang(_judul_topik, _temuan):
+            # Topiknya sendiri sudah kalimat temuan - dipakai apa adanya, tidak disambung.
+            _judul_kalimat = _judul_topik
+        else:
+            _judul_kalimat = f"{_judul_topik}: {_temuan}"
         packed.append((group[0], {
             "kind": "management_dashboard_columns",
             "title": _judul_kalimat,
