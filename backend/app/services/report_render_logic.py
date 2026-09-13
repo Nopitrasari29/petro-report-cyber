@@ -1416,6 +1416,58 @@ def kumpulkan_catatan_halaman(catatan_per_kolom: list) -> list:
     return hasil
 
 
+_NOTE_HAL_MIN_H_IN = 1.02   # dasar lama; kotak TIDAK pernah lebih pendek dari ini
+
+
+def tinggi_kotak_catatan_halaman(w_in: float, catatan_per_kolom: list,
+                                 tinggi_maks_in: float) -> tuple:
+    """Tinggi kotak catatan halaman DIHITUNG dari butir yang lolos + pembungkusannya.
+
+    KEPUTUSAN USER: catatan berisi agregat yang TIDAK BISA dibaca dari chart mana pun
+    (median, rentang, cakupan yang tidak tergambar) - isi paling tidak tergantikan di
+    halaman, jadi ia yang menang saat berebut ruang dgn chart. Tapi tingginya DIHITUNG,
+    bukan dipatok: kalau butirnya pendek dan 1.02in sudah cukup, kotak tidak ditinggikan.
+
+    `tinggi_maks_in` adalah batas atas dari pemanggil - tinggi yang masih menyisakan chart
+    di atas tinggi MINIMUM-nya. Kalau butir berikutnya menuntut melewati batas itu, butir
+    itu yang mengalah; chart tidak boleh jatuh di bawah ambang keterbacaan.
+
+    Kembalikan (tinggi_in, butir_dipakai, n_tidak_muat)."""
+    butir = kumpulkan_catatan_halaman(catatan_per_kolom)
+    if not butir:
+        return 0.0, [], 0
+    batas = max(_NOTE_HAL_MIN_H_IN, float(tinggi_maks_in or 0.0))
+    dipakai = []
+    tinggi = 0.0
+    for b in butir:
+        _coba = note_box_height_in(w_in, dipakai + [b]) + 0.06
+        if _coba > batas and dipakai:
+            break
+        if _coba > batas and not dipakai:
+            # satu butir pun tidak muat di batas: tetap ambil satu - kotak kosong lebih
+            # buruk drpd kotak yang sedikit melewati perkiraan pembungkusan.
+            dipakai = [b]
+            tinggi = _coba
+            break
+        dipakai.append(b)
+        tinggi = _coba
+    return max(_NOTE_HAL_MIN_H_IN, tinggi), dipakai, len(butir) - len(dipakai)
+
+
+def tinggi_maks_kotak_catatan(cols: list, col_w_in: float, avail_isi_in: float,
+                              is_en: bool = False) -> float:
+    """Batas atas kotak catatan: sisa setelah tiap kolom dijamin dapat chart pada tinggi
+    MINIMUM-nya plus satu baris kartu. Bukan ambang tetap - dihitung dari isi kolom."""
+    butuh = 0.0
+    for c in (cols or []):
+        tile = c.get("main_chart_tile")
+        _c = chart_min_mutlak_in(tile, col_w_in, is_en) if tile else 0.0
+        _kartu = c.get("category_details") or []
+        _k = max((tinggi_kartu_in(x) for x in _kartu), default=0.0)
+        butuh = max(butuh, _c + (_k + 0.08 if _kartu else 0.0))
+    return max(0.0, float(avail_isi_in) - butuh)
+
+
 def muat_catatan(w_in: float, butir, tinggi_tersedia_in: float):
     """Buang butir catatan PALING BELAKANG sampai muat. Kembalikan (butir, n_dibuang)."""
     butir = list(butir or [])
@@ -2735,6 +2787,12 @@ _DASH_COLS_TITLE_H_IN = 0.20      # pita kepala panel
 _DASH_COLS_CARA_BACA_H_IN = 0.18  # baris cara-baca italic di bawahnya
 _DASH_COLS_KPI_H_IN = 0.95        # baris kartu KPI
 _DASH_COLS_NOTE_H_IN = 1.02       # kotak catatan selebar halaman
+# Tumpukan kepala kolom yang TETAP sebelum badan isi: pita kepala + baris cara-baca +
+# baris KPI, plus jeda antar-bagian. Dipakai utk menaksir tinggi isi kolom SEBELUM
+# perulangan kolom berjalan (mis. saat menghitung batas atas kotak catatan). Terukur
+# dari render: y badan isi mulai di ~1.47in dari puncak area konten.
+_DASH_COLS_KEPALA_H_IN = (_DASH_COLS_TITLE_H_IN + _DASH_COLS_CARA_BACA_H_IN
+                          + _DASH_COLS_KPI_H_IN + 0.14)
 _DASH_COLS_FACT_H_IN = 0.46       # A8: strip fakta (dari acuan). Ruangnya DIPESAN
                                   # sebelum body_h dihitung, spt kotak catatan di A5 -
                                   # bukan diambil diam-diam dari jatah chart.
