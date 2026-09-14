@@ -3374,6 +3374,11 @@ def _insight_detail_row_html(cards: list, total_w_in: float, h_in: float, y_in: 
 _CHART_SIDE_PANEL_MIN_W_IN = 2.5
 
 
+# Padding-top pembungkus chart (10pt di dua cabang, 6pt di cabang catatan-di-bawah).
+# Dipotong dari tinggi SEBELUM SVG diskalakan - lihat catatan di _insight_main_chart_html.
+_CHART_WRAP_PAD_IN = 10.0 / 72.0
+
+
 def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h_in: float, notes: list | None = None, report=None) -> tuple:
     """PERMINTAAN USER ("hapus jalur management_visual_dashboard, semua lewat insight"): tile
     "space-hungry" (kpi_radar/period_compare/time_heatmap, lihat _build_chart_insight_page di
@@ -3592,7 +3597,13 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
             return "", False
         return chart_html, chart_w_in
 
-    chart_html, chart_w_in = _gambar_chart(w_in * 96, h_in * 96)
+    # SVG DIUKUR DARI (TINGGI KOTAK - PADDING PEMBUNGKUS), bukan dari tinggi kotak penuh.
+    # Ketiga pembungkus di bawah memasang padding-top (10pt/10pt/6pt); kalau SVG diskalakan
+    # dari h_in penuh, ia digambar setinggi ~0.92*h_in lalu DIDORONG TURUN oleh padding
+    # sehingga tepi bawahnya melewati kotak. Itulah sebabnya luberannya tidak pernah hilang
+    # meski tinggi minimum dinaikkan: 1.45->1.59->1.70->1.80 tanpa henti. Sekarang padding
+    # dipotong DULU, jadi kebutuhan <= jatah dan angkanya konvergen.
+    chart_html, chart_w_in = _gambar_chart(w_in * 96, max(0.2, h_in - _CHART_WRAP_PAD_IN) * 96)
     if not chart_html:
         return "", False
     avail_w_px, avail_h_px = w_in * 96, h_in * 96
@@ -3602,7 +3613,8 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
         note_html = _note_box_html(notes, theme=ctx.theme, title=note_title)
         html = (
             f'<div style="position:relative;height:{h_in}in;">'
-            f'<div style="position:absolute;left:0;top:0;width:{chart_w_in + 0.3}in;height:{h_in}in;text-align:center;padding-top:10pt;">{chart_html}</div>'
+            f'<div style="position:absolute;left:0;top:0;width:{chart_w_in + 0.3}in;height:{h_in}in;'
+            f'box-sizing:border-box;text-align:center;padding-top:10pt;">{chart_html}</div>'
             f'<div style="position:absolute;left:{chart_w_in + 0.3}in;top:0;width:{side_panel_w}in;height:{h_in}in;overflow:hidden;">{note_html}</div>'
             f'</div>'
         )
@@ -3614,7 +3626,7 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
     if notes:
         reserve_notes_below = True
         chart_h_in = max(1.0, h_in - notes_h_in)
-        inner_h_px = chart_h_in * 96
+        inner_h_px = max(0.2, chart_h_in - _CHART_WRAP_PAD_IN) * 96
         # digambar ULANG lebih pendek lewat fungsi yang SAMA - bukan salinan rantai cabang
         chart_html, _ = _gambar_chart(avail_w_px, inner_h_px)
         note_title = "Notes" if is_english(report) else "Catatan"
@@ -3626,15 +3638,21 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
             # tinggi chart_h_in di atas, jadi kalau ia masih meluber itu cacat perhitungan yang
             # HARUS kelihatan di uji tumpang-tindih & uji elemen-di-luar-slide, bukan disembunyikan.
             f'<div style="position:absolute;left:0;top:0;width:{w_in}in;height:{chart_h_in}in;'
-            f'text-align:center;padding-top:6pt;">{chart_html}</div>'
+            f'box-sizing:border-box;text-align:center;padding-top:6pt;">{chart_html}</div>'
             f'<div style="position:absolute;left:0;top:{chart_h_in}in;width:{w_in}in;'
             f'height:{h_in - chart_h_in}in;overflow:hidden;">{note_html}</div>'
             f'</div>'
         )
         return html, True
     return (
-        f'<div style="position:relative;height:{h_in}in;text-align:center;'
-        f'padding-top:10pt;">{chart_html}</div>'
+        # AKAR NON-KONVERGENSI (terukur, bukan dugaan): tanpa box-sizing:border-box,
+        # `padding-top` DITAMBAHKAN DI LUAR `height`, jadi tinggi nyata elemen selalu
+        # h_in + 10pt (0.139in) berapa pun h_in-nya. Itulah sebabnya menaikkan tinggi
+        # minimum tidak pernah menyelesaikan luberan: 1.45->1.59->1.70->1.80 tanpa henti.
+        # Bukan rumus SVG yang salah & bukan konstanta yang kurang - padding yang jatuh di
+        # luar kotak. border-box memasukkannya ke dalam tinggi yang sudah dipesan.
+        f'<div style="position:relative;height:{h_in}in;box-sizing:border-box;'
+        f'text-align:center;padding-top:10pt;">{chart_html}</div>'
     ), False
 
 

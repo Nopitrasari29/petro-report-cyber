@@ -781,10 +781,31 @@ def _layout_dashboard_column(tile: dict, avail_h_in: float) -> dict:
 # Sebelumnya 0.38in dan renderer menggambar 0.444in - keduanya diturunkan bersamaan dgn
 # tinggi bar (18px -> 10px) & font baris (9.5pt -> 7pt) di kedua exporter.
 _CHART_ROW_H_IN = 0.35
-_CHART_AXIS_MIN_H_IN = 1.30
-_TREEMAP_MIN_H_IN = 1.60
-_STACKED_MIN_H_IN = 0.82
-_CHART_SQUARE_MIN_H_IN = 1.45
+# ---- TINGGI MINIMUM PER BENTUK: DARI PENGUKURAN RENDER, 14 September 2026 --------------
+# CARANYA (scratchpad/ukur_2b3.py): tile sungguhan dari korpus dirender sendirian lewat
+# WeasyPrint pada tinggi = jatah minimumnya, lalu tepi bawah isi yang tergambar dibaca dari
+# PDF hasilnya. Diiterasi sbg TITIK TETAP krn bentuk berukuran tetap menskalakan dirinya dari
+# tinggi kotak: beri tinggi X, kebutuhannya harus <= X.
+#
+# Bentuk bar dibandingkan SETARA: chart_min_mutlak_in utk bar adalah lantai 2 BARIS (tile
+# boleh dipangkas sampai 2), jadi kebutuhannya diukur pada 2 baris juga - bukan pada jumlah
+# baris aslinya. Kesalahan itu sempat membuat risk_heatmap terbaca "meluber +0.32in" padahal
+# sebenarnya longgar -0.05in.
+#
+# KALAU PERENDER BERUBAH, ANGKA-ANGKA INI BASI. Ukur ulang dgn skrip yang sama.
+#
+# Satu konstanta bersama dipecah krn bentuk yang memakainya ternyata butuh tinggi berbeda:
+# _CHART_AXIS_MIN_H_IN dulu melayani metric_compare (butuh 1.45) DAN scatter_bubble (1.12).
+_CHART_AXIS_MIN_H_IN = 1.30          # sisa bentuk bersumbu yang belum diukur satu per satu
+_MIN_H_METRIC_COMPARE_IN = 1.45      # terukur: titik tetap 1.33->1.36->1.41->1.45
+_MIN_H_SCATTER_IN = 1.12             # terukur (sebelumnya 1.30 - longgar 0.18in)
+_MIN_H_RADAR_IN = 1.35               # terukur (sebelumnya ikut 1.45 - longgar 0.10in)
+_TREEMAP_MIN_H_IN = 1.60             # BELUM diukur - metric_share tidak muncul di korpus uji
+_STACKED_MIN_H_IN = 1.13             # terukur (sebelumnya 0.82 - MELUBER 0.31in), konvergen
+_CHART_SQUARE_MIN_H_IN = 1.45        # donat: terukur pas 1.46 setelah padding pembungkus
+                                     # dipotong sebelum penskalaan SVG
+_CHART_BAR_PAD_IN = 0.11             # konstanta baris bar, terukur dari kalibrasi
+                                     # (tinggi = 0.365/baris + 0.111); sebelumnya ditebak 0.16
 # Kolom label _bar_chart_html: lebar 150px, font 9.5pt (lihat _bar_chart_html di export_pdf).
 # Label memakai LEBAR KOLOM PENUH (dikurangi kolom nilai 70px & margin), bukan kolom
 # samping sempit. Dihitung dari lebar kolom nyata di pemanggil.
@@ -1172,10 +1193,10 @@ def chart_min_height_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) 
         if gaya == "stacked":
             return _STACKED_MIN_H_IN
         _rh = _tinggi_baris_bar(tile, col_w_in)
-        return max(_rh * max(1, n) + 0.16, _rh * 2)
+        return max(_rh * max(1, n) + _CHART_BAR_PAD_IN, _rh * 2)
     if k == "status_funnel":
         _rh = _tinggi_baris_bar(tile, col_w_in)
-        return max(_rh * max(1, n) + 0.16, _rh * 2)
+        return max(_rh * max(1, n) + _CHART_BAR_PAD_IN, _rh * 2)
     if k == "metric_share":
         return _TREEMAP_MIN_H_IN
     if k == "metric_mix":
@@ -1184,15 +1205,21 @@ def chart_min_height_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) 
         return max(_CHART_ROW_H_IN * 0.62 * max(1, n) + 0.30, 1.2)
     if k == "ranked_bar_ternormalisasi":
         _rh = _tinggi_baris_bar(tile, col_w_in)
-        return (max(_rh * max(1, n), _rh * 2) + 0.16
+        return (max(_rh * max(1, n), _rh * 2) + _CHART_BAR_PAD_IN
                 + tinggi_kaki_legenda(tile, col_w_in, is_en))
     if k == "grouped_bar_ternormalisasi":
         # dua batang per baris -> tinggi baris ~1.6x ranked bar biasa
         _rh = _tinggi_baris_bar(tile, col_w_in) * 1.6
-        return (max(_rh * max(1, n), _rh * 2) + 0.16
+        return (max(_rh * max(1, n), _rh * 2) + _CHART_BAR_PAD_IN
                 + tinggi_kaki_legenda(tile, col_w_in, is_en))
-    if k in ("kpi_radar", "kpi_gauge"):
+    if k == "kpi_radar":
+        return _MIN_H_RADAR_IN
+    if k == "kpi_gauge":
         return _CHART_SQUARE_MIN_H_IN
+    if k == "metric_compare":
+        return _MIN_H_METRIC_COMPARE_IN
+    if k == "scatter_bubble":
+        return _MIN_H_SCATTER_IN
     return _CHART_AXIS_MIN_H_IN
 
 
@@ -1494,7 +1521,7 @@ def chart_min_mutlak_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) 
         gaya = (tile.get("chart_style") or "").lower() if k == "custom_topic" else ""
         if gaya in ("donut", "stacked"):
             return chart_min_height_in(tile, col_w_in, is_en)
-        return _tinggi_baris_bar(tile, col_w_in) * 2 + 0.16
+        return _tinggi_baris_bar(tile, col_w_in) * 2 + _CHART_BAR_PAD_IN
     return chart_min_height_in(tile, col_w_in, is_en)
 
 
@@ -1608,13 +1635,36 @@ def _layout_dashboard_column_content(
                             else _DASH_COLUMN_CHART_MIN_H_IN)
         _ruang_total = body_h_in - note_h - gap
         if cards and (_ruang_total - _kartu_baris_min - 0.08) < _min_mutlak_awal <= _ruang_total:
-            logger.info("tata letak kolom: baris kartu butuh %.2fin, tidak muat bersama chart "
-                        "%r (minimal %.2fin dari %.2fin) - KARTU dilepas, chart dipertahankan",
-                        _kartu_baris_min, (tile or {}).get("tile_kind"),
-                        _min_mutlak_awal, _ruang_total)
-            cards = []
-            _kartu_baris_min = 0.0
-            gap = 0.0
+            # KOREKSI USER - INI YANG MEMBUANG 2.05in DI HALAMAN DASBOR PERTAMA. Aturan lama
+            # SEMUA-ATAU-TIDAK: begitu baris kartu TERDALAM tidak muat bersama chart, SELURUH
+            # kartu dilepas. Terukur di 182/184/187/188: baris terdalam butuh 1.95in, sisa
+            # 1.37in vs minimum chart 1.45in - kurang 0.08in, dan keempat kartu dibuang.
+            # Lalu 1.95in yang dibebaskan tidak diambil siapa pun (chart tetap di minimumnya),
+            # jadi 2.05in dari 3.50in tinggi kolom berakhir KOSONG. Halaman itu 66% terisi
+            # sementara halaman lain 91-105%.
+            #
+            # Sekarang kartu mengambil SEBANYAK BARIS YANG MUAT: kartu yang terlalu dalam
+            # ditinggalkan, kartu yang muat tetap digambar. Kedalaman kartu tidak dipotong
+            # (aturan tetap) - yang dipilih kartu MANA yang ikut.
+            _ruang_kartu = _ruang_total - _min_mutlak_awal - 0.08
+            _muat_kartu = [c for c in cards if tinggi_kartu_in(c) <= _ruang_kartu]
+            if _muat_kartu:
+                logger.info("tata letak kolom: baris kartu terdalam %.2fin tidak muat bersama "
+                            "chart %r (min %.2fin dari %.2fin) - %d dari %d kartu dipakai "
+                            "(terdalam yang muat %.2fin)",
+                            _kartu_baris_min, (tile or {}).get("tile_kind"), _min_mutlak_awal,
+                            _ruang_total, len(_muat_kartu), len(cards),
+                            max(tinggi_kartu_in(c) for c in _muat_kartu))
+                cards = _muat_kartu
+                _kartu_baris_min = max(tinggi_kartu_in(c) for c in cards)
+            else:
+                logger.info("tata letak kolom: tidak ada kartu yang muat bersama chart %r "
+                            "(kartu terdangkal %.2fin, ruang %.2fin) - kartu dilepas",
+                            (tile or {}).get("tile_kind"),
+                            min(tinggi_kartu_in(c) for c in cards), _ruang_kartu)
+                cards = []
+                _kartu_baris_min = 0.0
+                gap = 0.0
         _ruang_chart = body_h_in - note_h - gap - (_kartu_baris_min + 0.08 if cards else 0.0)
         if chart_h > _ruang_chart:
             _min_mutlak = (chart_min_mutlak_in(tile, col_w_in, is_en) if tile
@@ -1706,6 +1756,20 @@ def _layout_dashboard_column_content(
             # dibutuhkan baris-baris ini, supaya pemanggil tahu kalau ada yang meluber -
             # bukan angka yang terlihat muat padahal tidak.
             cards_h = len(rows) * row_need + (len(rows) - 1) * _NESTED_CARD_ROW_GAP_IN
+
+    # ---- LANGKAH 3 (urutan pengambilan ruang, keputusan user): SISA DIAMBIL CHART -------
+    # Apa pun yang tidak diambil kartu, diambil chart - bukan dibiarkan kosong. Tanpa ini,
+    # melepas kartu di langkah 2 cuma memindahkan ruang kosong, tidak menghilangkannya:
+    # chart tetap duduk di tinggi minimumnya sementara sisa kolom menganga.
+    if has_chart and chart_h > 0:
+        _dipakai = chart_h + ((gap + cards_h + 0.08) if cards else 0.0)
+        _sisa_kolom = body_h_in - note_h - _dipakai
+        if _sisa_kolom > 0.02:
+            chart_h += _sisa_kolom
+    logger.info("tata letak kolom: chart %r %.2fin, kartu %d (%.2fin), sisa akhir %.2fin",
+                (tile or {}).get("tile_kind"), chart_h, len(cards), cards_h,
+                max(0.0, body_h_in - note_h - chart_h
+                    - ((gap + cards_h + 0.08) if cards else 0.0)))
 
     cards_y = chart_h + gap if (has_chart and cards) else 0.0
     note_y = cards_y + cards_h + 0.08 if cards else chart_h
