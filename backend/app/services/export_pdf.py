@@ -4407,12 +4407,18 @@ class PDFExporter:
         """
 
         if WEASYPRINT_AVAILABLE:
-            try:
-                return HTML(string=html_content).write_pdf()
-            except Exception as weasy_err:
-                logger.warning(f"WeasyPrint gagal merender: {weasy_err}. Menggunakan fallback xhtml2pdf.")
-                if not XHTML2PDF_AVAILABLE:
-                    raise weasy_err
+            # KEGAGALAN WEASYPRINT = GAGAL, BUKAN MUNDUR KE MESIN LAIN (keputusan user).
+            # Fallback xhtml2pdf dulu menangkap galat ini, mencatat logger.warning, lalu tetap
+            # MENGEMBALIKAN PDF - dirender mesin berbeda dgn tata letak berbeda dari yang
+            # direncanakan. Itu kelas kegagalan terburuk di proyek ini: keluaran terlihat
+            # normal, pembaca tidak punya cara tahu tata letaknya bukan yang dimaksud, dan
+            # tidak ada uji yang membedakan keduanya. logger.warning tidak sampai ke pembaca
+            # laporan. Laporan bertata-letak salah lebih berbahaya drpd tidak ada laporan.
+            #
+            # Diperiksa SEBELUM diubah (permintaan user): seluruh 135 laporan di basis data
+            # digenerate, WeasyPrint gagal NOL kali. Jadi perubahan ini tidak mematikan jalur
+            # yang sedang dipakai siapa pun - ia cuma menutup jalur diam yang belum terpakai.
+            return HTML(string=html_content).write_pdf()
 
         pdf_io = io.BytesIO()
         pisa_status = pisa.CreatePDF(html_content, dest=pdf_io)

@@ -1238,3 +1238,84 @@ def _chart_labels_of_tile(tile: dict) -> list:
     if k == "time_heatmap":
         return [str(x) for x in (tile.get("day_labels") or [])]
     return []
+
+
+def test_laporan_berhasil_wajib_punya_halaman_dasbor():
+    """Laporan yang BERHASIL digenerate wajib memuat minimal satu halaman dasbor.
+
+    PERMINTAAN USER, dan premisnya perlu dicatat jujur: tes ini lahir dari klaim saya bahwa
+    galat pembangun blok DITELAN sehingga PPTX terbentuk tanpa slide dasbor sama sekali.
+    Klaim itu SALAH (lihat test_galat_pembangun_blok_menggagalkan_generate) - saya
+    menyimpulkannya dari grep yang tidak cocok dgn teks traceback. Tesnya tetap dibuat atas
+    keputusan user: tes yang MENGUNCI perilaku benar lebih berharga drpd tes yang menambal
+    bug, krn ia mencegah orang berikutnya menambahkan try/except "supaya tidak crash" lalu
+    diam-diam mengembalikan kelas bug ini.
+
+    Yang dijaga: berkas yang ukurannya wajar & tanpa exception TETAP bisa kehilangan seluruh
+    isinya. Jumlah halaman saja tidak cukup sbg bukti - jenis halamannya yang diperiksa."""
+    db = SessionLocal()
+    gagal = []
+    try:
+        for rid in _sample_report_ids("management", None)[:6]:
+            report = db.get(Report, rid)
+            if report is None:
+                continue
+            kinds = [b.get("kind") for b in build_management_report_blocks(report)]
+            if "management_dashboard_columns" not in kinds:
+                continue          # laporan ini memang tidak berhalaman dasbor
+            n_pdf = len(fitz.open(stream=ep.PDFExporter.generate_pdf_report(report),
+                                  filetype="pdf"))
+            n_ppt = len(Presentation(
+                io.BytesIO(eppt.PPTXExporter.generate_ppt_report(report))).slides)
+            n_dasbor = kinds.count("management_dashboard_columns")
+            # halaman dasbor + sampul + penutup: totalnya tidak mungkin <= jumlah dasbor
+            if n_pdf <= n_dasbor:
+                gagal.append(f"report {rid}: PDF {n_pdf} halaman utk {n_dasbor} blok dasbor")
+            if n_ppt <= n_dasbor:
+                gagal.append(f"report {rid}: PPTX {n_ppt} slide utk {n_dasbor} blok dasbor")
+    finally:
+        db.rollback()
+        db.close()
+    assert not gagal, chr(10).join(["Laporan digenerate tanpa halaman dasbor:"] + gagal)
+
+
+def test_galat_pembangun_blok_menggagalkan_generate():
+    """Galat saat membangun SATU blok harus MENGGAGALKAN seluruh generate.
+
+    Uji-mutasi: satu pembangun blok diganti fungsi yang melempar, lalu dipastikan
+    generate_pdf_report DAN generate_ppt_report ikut melempar - bukan melewati blok itu lalu
+    mengembalikan berkas yang terlihat normal. Laporan tanpa halaman dasbor bukan laporan,
+    dan kegagalan yang menghasilkan keluaran terlihat normal adalah kelas bug terburuk di
+    proyek ini: tidak ada yang tahu isinya hilang.
+
+    Perilaku ini SUDAH benar saat tes ditulis; tesnya mengunci, bukan menambal."""
+    db = SessionLocal()
+    try:
+        rid = next((r for r in _sample_report_ids("management", None)
+                    if "management_dashboard_columns" in
+                    [b.get("kind") for b in build_management_report_blocks(db.get(Report, r))]),
+                   None)
+        assert rid is not None, "tidak ada laporan berhalaman dasbor utk diuji"
+        report = db.get(Report, rid)
+
+        def _meledak(block, ctx):
+            raise RuntimeError("mutasi uji: pembangun blok sengaja gagal")
+
+        for nama, tabel, generate in (
+            ("PDF", ep._PDF_BLOCK_BUILDERS, ep.PDFExporter.generate_pdf_report),
+            ("PPTX", eppt._PPT_BLOCK_BUILDERS, eppt.PPTXExporter.generate_ppt_report),
+        ):
+            asli = tabel["management_dashboard_columns"]
+            tabel["management_dashboard_columns"] = _meledak
+            try:
+                with pytest.raises(Exception) as galat:
+                    generate(report)
+                assert "mutasi uji" in str(galat.value), (
+                    f"{nama}: generate melempar galat LAIN ({galat.value!r}) - "
+                    f"galat pembangun blok tidak sampai ke pemanggil"
+                )
+            finally:
+                tabel["management_dashboard_columns"] = asli
+    finally:
+        db.rollback()
+        db.close()
