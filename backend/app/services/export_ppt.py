@@ -48,6 +48,7 @@ from app.services.report_render_logic import (
     metrik_judul_dashboard,
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
     fakta_strip_kolom, _DASH_COLS_FACT_H_IN, kumpulkan_catatan_halaman,
+    alokasi_kolom_bertumpuk, _kepala_seksi_h_in,
     tinggi_kotak_catatan_halaman, tinggi_maks_kotak_catatan, _DASH_COLS_KEPALA_H_IN,
     _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in,
     muat_catatan,
@@ -4282,17 +4283,21 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 len(_catatan_per_kolom))
     avail_h_in = avail_h_in - _NOTE_HAL_H_IN
 
-    _slot, _pos = [], 0
+    # ---- ALOKASI PROPORSIONAL, BUKAN RATA (kembaran export_pdf.py, aturan SAMA) ---------
+    _slot, _pos, _alokasi = [], 0, {}
     for _ki, _cnt in enumerate(_bentuk):
         _seksi = cols[_pos:_pos + _cnt]
         _pos += _cnt
         if not _seksi:
             continue
-        _bagi = (avail_h_in - _DASH_TILE_GAP_IN * (len(_seksi) - 1)) / len(_seksi)
+        _hasil_kol = alokasi_kolom_bertumpuk(_seksi, col_w, avail_h_in, is_english(ctx.report))
         _yy = 0.0
-        for _c in _seksi:
-            _slot.append((_ki, _c, _yy, _yy + _bagi))
-            _yy += _bagi + _DASH_TILE_GAP_IN
+        for _c, _h in zip(_seksi, _hasil_kol):
+            _kepala_c = _kepala_seksi_h_in(_c, col_w)
+            _footprint = _kepala_c + _h["chart_h"] + (0.10 + _h["cards_h"] if _h["cards"] else 0.0)
+            _slot.append((_ki, _c, _yy, _yy + _footprint))
+            _alokasi[id(_c)] = _h
+            _yy += _footprint + _DASH_TILE_GAP_IN
 
     for idx, (_kol_i, col, _y_awal, _bawah_rel) in enumerate(_slot):
         x = _DASH_MARGIN_X_IN + _kol_i * (col_w + _DASH_COLS_GAP_IN)
@@ -4376,7 +4381,8 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         # Catatan TIDAK lagi dipesan per kolom (A5: satu kotak selebar halaman), jadi
         # perencana diberi has_notes=False & seluruh tinggi kolom dipakai isi.
         _dasar_kolom = y
-        _column_layout = _layout_dashboard_column_content(
+        # SUDAH dihitung sekali oleh alokasi_kolom_bertumpuk di atas (kembaran export_pdf.py)
+        _column_layout = _alokasi.get(id(col)) or _layout_dashboard_column_content(
             body_h, col_w, bool(_tile), col.get("category_details"), False, _tile,
             is_english(ctx.report),
         )

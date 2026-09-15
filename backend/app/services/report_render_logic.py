@@ -802,6 +802,14 @@ _MIN_H_SCATTER_IN = 1.12             # terukur (sebelumnya 1.30 - longgar 0.18in
 _MIN_H_RADAR_IN = 1.35               # terukur (sebelumnya ikut 1.45 - longgar 0.10in)
 _TREEMAP_MIN_H_IN = 1.60             # BELUM diukur - metric_share tidak muncul di korpus uji
 _STACKED_MIN_H_IN = 1.13             # terukur (sebelumnya 0.82 - MELUBER 0.31in), konvergen
+_STACKED_CATATAN_RESERVASI_IN = 0.20  # ruang utk catatan_lainnya (kembaran metric_share)
+                                      # DIPESAN SELALU dari minimum, bukan ditambah belakangan:
+                                      # metric_mix TIDAK TAHU saat dijatah apakah "Lainnya" akan
+                                      # jatuh di bawah ambang label (itu ditentukan lewat lebar
+                                      # kolom nyata, dihitung SETELAH minimum ini dipakai utk
+                                      # packer/alokasi). Terukur: menambah teks tanpa menambah
+                                      # tinggi box membuat isi menembus box (overflow -> bertindih
+                                      # elemen sesudahnya, laporan 187/189/190/186).
 _CHART_SQUARE_MIN_H_IN = 1.45        # donat: terukur pas 1.46 setelah padding pembungkus
                                      # dipotong sebelum penskalaan SVG
 _CHART_BAR_PAD_IN = 0.11             # konstanta baris bar, terukur dari kalibrasi
@@ -1200,7 +1208,13 @@ def chart_min_height_in(tile: dict, col_w_in: float = 4.1, is_en: bool = False) 
     if k == "metric_share":
         return _TREEMAP_MIN_H_IN
     if k == "metric_mix":
-        return _STACKED_MIN_H_IN
+        # BUG NYATA DIPERBAIKI: metric_mix bisa membawa catatan_lainnya (segmen "Lainnya"
+        # sendiri terlalu tipis diberi label DI ATAS batang - lihat catatan panjang di
+        # _STACKED_CATATAN_RESERVASI_IN). Minimum ini dijatah SEBELUM lebar kolom nyata
+        # diketahui, jadi ruang catatan dipesan SELALU, bukan ditambah belakangan begitu
+        # ketahuan perlu - box yang sudah dijatah tidak bisa tiba2 diminta lebih tinggi
+        # tanpa menggeser seluruh tata letak kolom yang sudah dihitung.
+        return _STACKED_MIN_H_IN + _STACKED_CATATAN_RESERVASI_IN
     if k == "time_heatmap":
         return max(_CHART_ROW_H_IN * 0.62 * max(1, n) + 0.30, 1.2)
     if k == "ranked_bar_ternormalisasi":
@@ -1622,6 +1636,25 @@ def tinggi_kartu_in(card: dict) -> float:
     return _NESTED_CARD_HEADER_H_IN + 0.20 + n * item_h
 
 
+def _kartu_baris_muat(cards: list, tinggi_tersedia_in: float) -> tuple:
+    """Berapa BARIS kartu yang muat pada tinggi yang SUDAH dikurangi chart/gap/jeda tetap.
+
+    SATU rumus, DUA pemakai: _layout_dashboard_column_content (kartu bersaing dgn chart
+    dalam SATU seksi) dan alokasi_kolom_bertumpuk (kartu bersaing lintas seksi dalam
+    ANTREAN). Diekstrak setelah ditemukan dua rumus nyaris-sama tapi TIDAK IDENTIK
+    (orkestrator sempat menghitung "ambil" sendiri dgn +0.08 di tempat yg salah, membuat
+    chart tumbuh liar mengambil sisa yg SEHARUSNYA milik kartu - kelas duplikasi yg sama
+    dgn tinggi judul/ambang label treemap). Kembalikan (row_need, rows_fit)."""
+    if not cards:
+        return 0.0, 0
+    row_need = max((tinggi_kartu_in(c) for c in cards), default=0.0)
+    if row_need <= 0:
+        return 0.0, 0
+    rows_fit = int((max(0.0, tinggi_tersedia_in) + _NESTED_CARD_ROW_GAP_IN)
+                   / (row_need + _NESTED_CARD_ROW_GAP_IN))
+    return row_need, rows_fit
+
+
 def _layout_dashboard_column_content(
     body_h_in: float,
     col_w_in: float,
@@ -1792,9 +1825,9 @@ def _layout_dashboard_column_content(
     cards_h = 0.0
     rows = []
     if cards:
-        row_need = max((tinggi_kartu_in(c) for c in cards), default=_NESTED_CARD_HEADER_H_IN)
         sisa_kartu = max(0.0, body_h_in - chart_h - note_h - gap - 0.08)
-        rows_fit = int((sisa_kartu + _NESTED_CARD_ROW_GAP_IN) / (row_need + _NESTED_CARD_ROW_GAP_IN))
+        row_need, rows_fit = _kartu_baris_muat(cards, sisa_kartu)
+        row_need = row_need or _NESTED_CARD_HEADER_H_IN
         if rows_fit < 1:
             # KOREKSI (chart dulu, kartu dapat sisanya): cabang ini dulu MEMENDEKKAN CHART
             # supaya satu baris kartu muat - dan pemendekan itu membuang baris chart. Terukur
@@ -1896,16 +1929,24 @@ def tinggi_kolom_tersedia_in() -> float:
 def _kepala_seksi_h_in(col: dict, col_w_in: float | None = None) -> float:
     """Tinggi pita kepala + cara-baca + KPI SATU seksi - TANPA chart.
 
-    BUG NYATA DIPERBAIKI (terukur, diselidiki karena tinggi_seksi_min_in dulu memakai
-    _DASH_COLS_TITLE_H_IN TETAP utk pita judul, padahal kode penggambar menghitung pita_h
-    DINAMIS: max(_DASH_COLS_TITLE_H_IN, jumlah_baris*tinggi_baris+0.06) - judul yang wrap ke
-    2+ baris py pita LEBIH TINGGI dari konstanta. PLUS ada dua jeda tetap di kode penggambar
-    yang tidak pernah ikut dihitung: +0.04in sesudah title/cara-baca, dan +0.10in sesudah
-    KPI. Perencana (_pack_tiles_into_columns, lewat tinggi_seksi_min_in) jadi
-    UNDERESTIMATE kebutuhan seksi berjudul panjang - taksirannya lebih kecil dari yang
-    benar-benar digambar. `col_w_in` WAJIB dialirkan drpd tebakan lebar bawaan - tanpa itu
-    jumlah baris wrap dihitung dari lebar yang salah, kelas bug yang sama dgn
-    _potong_isi_chart tanpa lebar kolom dulu."""
+    Diekstrak dari tinggi_seksi_min_in supaya alokasi_kolom_bertumpuk bisa memisahkan
+    "kepala" (dikonsumsi terpisah oleh exporter sebelum memanggil
+    _layout_dashboard_column_content) dari "body_h_in" (jatah CHART+KARTU yang diharapkan
+    fungsi itu) - dua skala berbeda yang sempat tertukar (bug nyata: mencampur keduanya
+    membuat body_h_in kelebihan persis setinggi kepala, & langkah 3 fungsi itu menggembungkan
+    chart_h mengisi kelebihan itu - terukur chart custom_topic jadi 2.78in padahal
+    mutlak==penuh==1.45in, tidak ada alasan tumbuh).
+
+    BUG NYATA KEDUA DIPERBAIKI (uji tumpang tindih, laporan 186/187/189/190): versi pertama
+    memakai _DASH_COLS_TITLE_H_IN TETAP utk pita judul, padahal exporter menghitung pita_h
+    DINAMIS (max(_DASH_COLS_TITLE_H_IN, jumlah_baris*tinggi_baris+0.06) - judul yang wrap ke
+    2+ baris py pita LEBIH TINGGI dari konstanta), PLUS jeda +0.04in tetap setelah cara-baca
+    yang sebelumnya tidak ikut dihitung. Kolom bertumpuk dgn judul panjang jadi UNDERESTIMATE
+    footprint-nya sendiri - seksi kedua mulai TERLALU CEPAT, menabrak kotak KPI seksi pertama
+    yang sebenarnya belum selesai ("HIGHEST: Authentication Failure" bertindih kotak KPI
+    seksi lain, 100% tumpang tindih). `col_w_in` WAJIB dialirkan drpd tebakan lebar bawaan -
+    tanpa itu jumlah baris wrap dihitung dari lebar yang salah, persis kelas bug yang sudah
+    menggigit di _potong_isi_chart dulu."""
     judul = str(col.get("title") or "")
     if col_w_in and judul:
         _w_px = max(40.0, (col_w_in - 0.12) * 96)
@@ -1921,7 +1962,7 @@ def _kepala_seksi_h_in(col: dict, col_w_in: float | None = None) -> float:
     h = pita_h
     if str(col.get("cara_baca") or "").strip():
         h += _DASH_COLS_CARA_BACA_H_IN
-    h += 0.04  # jeda tetap setelah title/cara-baca - SELALU ada di kode penggambar
+    h += 0.04  # jeda tetap setelah title/cara-baca - SELALU ada, lihat catatan di atas
     if col.get("kpi_summary"):
         h += _DASH_COLS_KPI_H_IN + 0.10  # +0.10: jeda tetap sesudah KPI di kode penggambar
     return h
@@ -1938,6 +1979,118 @@ def tinggi_seksi_min_in(col: dict, col_w_in: float, is_en: bool = False) -> floa
     if tile:
         h += chart_min_mutlak_in(tile, col_w_in, is_en)
     return h
+
+
+def alokasi_kolom_bertumpuk(seksi_list: list, col_w_in: float, tinggi_kolom_in: float,
+                            is_en: bool = False) -> list:
+    """SATU alokasi ruang utk seluruh seksi dalam SATU kolom bertumpuk - dipakai PERENCANA
+    (memutuskan apakah kolom muat, lewat tinggi_seksi_min_in yang konsisten dgn fungsi ini)
+    DAN KEDUA EXPORTER (memutuskan tinggi tiap bagian saat digambar). Bukan dua tempat
+    yang menghitung sendiri-sendiri lalu diharap sama - pola itu sudah menggigit enam kali
+    di proyek ini (tinggi judul, ambang label treemap, _potong_isi_chart tanpa lebar kolom,
+    dst).
+
+    KOREKSI USER ATAS EQUAL-SPLIT: exporter dulu membagi tinggi kolom RATA antar tile
+    bertumpuk (_bagi = avail/n), padahal PERENCANA menjumlahkan kebutuhan tiap tile (bisa
+    tidak sama besar) utk memutuskan kolom "muat". Tile yang kebutuhannya di atas rata-rata
+    jatah dapat KURANG dari minimumnya sendiri & di-drop, walau totalnya muat dlm budget
+    kolom - terukur laporan 190: risk_heatmap 2.17in + kpi_radar 2.68in = 4.95in (muat dlm
+    5.26in), tapi dibagi rata 2.58in/2.58in - kpi_radar kurang 0.10in & didrop.
+
+    ATURAN (keputusan user, "kartu masuk antrean setara chart"):
+    1. Tiap seksi dijamin MINIMUM-nya dulu: kepala (judul+cara-baca+KPI) + chart pada
+       tinggi minimum MUTLAK (chart_min_mutlak_in). Kartu TIDAK dijamin apa pun di tahap
+       ini - ia baru bersaing di langkah 2, sama spt aturan lama per-seksi.
+    2. Sisa dibagikan lewat ANTREAN [chart_1, kartu_1, chart_2, kartu_2, ...], BUKAN rata:
+       chart seksi SENDIRI selalu didahulukan drpd kartunya sendiri, tapi kartu seksi
+       pertama boleh didahulukan drpd chart seksi ketiga (posisi antrean, bukan per-seksi).
+       Tiap item mengambil SEBANYAK yang bisa dimanfaatkan - chart sampai menampilkan
+       SELURUH barisnya (chart_min_height_in, yang utk bentuk tetap spt donat/radar SAMA
+       dgn minimumnya sendiri - otomatis tidak mengambil apa pun drpd antrean, tidak perlu
+       pengecualian terpisah), kartu sampai SELURUH kartu tergambar (maks 3 baris, aturan
+       lama _layout_nested_card_grid) - bukan lebih drpd itu, sisa tetap milik antrean
+       berikutnya.
+
+    Kembalikan list sepanjang seksi_list, tiap entri {"tile","chart_h","cards","cards_h",
+    "n_gabung","chart_dilewati","note_y","note_h"} - bentuk SAMA dgn keluaran
+    _layout_dashboard_column_content, supaya pemanggil lama tidak perlu berubah bentuk."""
+    n = len(seksi_list)
+    gap_total = _DASH_TILE_GAP_IN * max(0, n - 1)
+    sisa = max(0.0, tinggi_kolom_in - gap_total)
+
+    # TAHAP 1: floor - chart pada minimum mutlak, TANPA kartu.
+    # `body_h_in` yang diharapkan _layout_dashboard_column_content TIDAK termasuk kepala
+    # (exporter mengonsumsinya terpisah sblm memanggil fungsi ini) - "budget" di sini SELALU
+    # skala body_h_in (chart+kartu saja), kepala dilacak terpisah cuma utk pembukuan `sisa`.
+    hasil = []
+    for col in seksi_list:
+        tile = col.get("main_chart_tile")
+        kepala_i = _kepala_seksi_h_in(col, col_w_in)
+        chart_min_i = chart_min_mutlak_in(tile, col_w_in, is_en) if tile else 0.0
+        r = _layout_dashboard_column_content(
+            chart_min_i, col_w_in, bool(tile), cards=None, has_notes=False, tile=tile, is_en=is_en)
+        hasil.append({"col": col, "tile": tile, "kepala": kepala_i, "budget": chart_min_i, "r": r})
+        sisa -= kepala_i + chart_min_i
+    sisa = max(0.0, sisa)
+
+    # TAHAP 2: antrean lintas-seksi, chart lalu kartu MILIK SEKSI YANG SAMA, berurutan.
+    for i, col in enumerate(seksi_list):
+        if sisa <= 0.02:
+            break
+        h = hasil[i]
+        tile = h["tile"]
+        # --- chart seksi ini boleh tumbuh sampai menampilkan SELURUH barisnya ---
+        if tile and h["r"]["chart_h"] > 0:
+            penuh = chart_min_height_in(tile, col_w_in, is_en)
+            butuh = max(0.0, penuh - h["r"]["chart_h"])
+            ambil = min(butuh, sisa)
+            if ambil > 0.01:
+                h["budget"] += ambil
+                h["r"] = _layout_dashboard_column_content(
+                    h["budget"], col_w_in, True, cards=None, has_notes=False,
+                    tile=tile, is_en=is_en)
+                sisa -= ambil
+        if sisa <= 0.02:
+            continue
+        # --- kartu seksi ini boleh tumbuh sampai SELURUH kartu tergambar ---
+        # DIRAKIT LANGSUNG, BUKAN memanggil _layout_dashboard_column_content lagi dgn
+        # budget gabungan: dicoba sekali, dan langkah 3 fungsi itu ("sisa diambil chart")
+        # ikut terpicu memakai budget gabungan, MENGGEMBUNGKAN chart_h (bahkan bentuk tetap
+        # spt donat/radar yg mutlak==penuh) memakai ruang yg SEHARUSNYA milik kartu -
+        # terukur laporan 188: chart custom_topic jadi 2.68in (mutlak 1.45, penuh 1.45,
+        # tidak ada alasan tumbuh) krn sisa hasil taksiran kartu yg tidak presisi dikembalikan
+        # ke chart oleh langkah 3. `_kartu_baris_muat` dipakai (SAMA dgn yg dipakai layout
+        # per-seksi) supaya taksiran "berapa baris muat" identik, TIDAK ditaksir dua kali.
+        cards_all = col.get("category_details") or []
+        if cards_all:
+            row_need, rows_fit = _kartu_baris_muat(cards_all, sisa - 0.08)
+            if rows_fit >= 1 and row_need > 0:
+                grid = _layout_nested_card_grid(len(cards_all), col_w_in, max_rows=min(3, rows_fit))
+                rows = grid.get("rows") or []
+                muat = sum(rows)
+                if muat > 0:
+                    n_baris = len(rows)
+                    cards_h = n_baris * row_need + max(0, n_baris - 1) * _NESTED_CARD_ROW_GAP_IN
+                    ambil = cards_h + 0.08
+                    if ambil <= sisa + 0.01:
+                        r = h["r"]
+                        r["cards"] = cards_all[:muat]
+                        r["cards_h"] = cards_h
+                        _gap_ck = 0.10 if h["r"]["chart_h"] > 0 else 0.0
+                        r["cards_y"] = h["r"]["chart_h"] + _gap_ck
+                        r["note_y"] = r["cards_y"] + cards_h + 0.08
+                        sisa -= ambil
+
+    keluar = []
+    for h in hasil:
+        r = h["r"]
+        keluar.append({
+            "tile": r.get("tile"), "chart_h": r["chart_h"], "cards": r.get("cards") or [],
+            "cards_h": r["cards_h"], "n_gabung": r.get("n_gabung", 0),
+            "chart_dilewati": r.get("chart_dilewati", False),
+            "note_y": r["note_y"], "note_h": r["note_h"],
+        })
+    return keluar
 
 
 def _pack_tiles_into_columns(cols: list, col_w_in: float, n_kolom_per_hal: int,
