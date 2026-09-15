@@ -880,6 +880,58 @@ def wrap_line_count(teks: str, lebar_px: float, font_pt: float, faktor_lebar: fl
     return baris
 
 
+def label_box_does_not_overlap(box: tuple, placed: list[tuple]) -> bool:
+    """Return whether a candidate label box is disjoint from placed boxes."""
+    return not any(
+        not (box[2] <= other[0] or other[2] <= box[0]
+             or box[3] <= other[1] or other[3] <= box[1])
+        for other in placed
+    )
+
+
+def radar_label_layout(axes: list, size: float, label_margin: float) -> list | None:
+    """Place every radar label without clipping or overlap in pixel coordinates."""
+    n = len(axes)
+    if n < 3:
+        return []
+    cx = cy = size / 2
+    r_max = size / 2 - label_margin
+    if r_max <= 0:
+        return None
+
+    def angle(index):
+        return (-90 + index * 360 / n) * math.pi / 180
+
+    for font_size in (8.5, 7.5, 6.5, 5.5, 4.8):
+        placed = []
+        layout = []
+        for i, axis in enumerate(axes):
+            text = str(axis)
+            theta = angle(i)
+            cos_theta, sin_theta = math.cos(theta), math.sin(theta)
+            anchor = "start" if cos_theta > 0.3 else ("end" if cos_theta < -0.3 else "middle")
+            text_w = max(font_size * 0.52, len(text) * font_size * 0.52)
+            text_h = font_size * 1.2
+            base_x = cx + (r_max + 20) * cos_theta
+            base_y = cy + (r_max + 20) * sin_theta
+            found = None
+            for dx, dy in ((0, 0), (0, -8), (0, 8), (-8, 0), (8, 0), (24, 0), (40, 0), (-24, 0), (-40, 0), (-6, -6), (6, -6), (-6, 6), (6, 6)):
+                x, y = base_x + dx, base_y + dy
+                left = x - text_w / 2 if anchor == "middle" else (x - text_w if anchor == "end" else x)
+                right = x + text_w / 2 if anchor == "middle" else (x if anchor == "end" else x + text_w)
+                box = (left, y - text_h * 0.8, right, y + text_h * 0.2)
+                if left >= 1 and right <= size - 1 and box[1] >= 1 and box[3] <= size - 1 and label_box_does_not_overlap(box, placed):
+                    found = (text, x, y, anchor, font_size, box)
+                    break
+            if found is None:
+                break
+            layout.append(found[:5])
+            placed.append(found[5])
+        else:
+            return layout
+    return None
+
+
 # ---- JUDUL HALAMAN DASHBOARD: SATU SUMBER METRIK ---------------------------------------
 # AKAR MASALAH YANG DIPERBAIKI (terukur, bukan dugaan): tinggi judul halaman dashboard dulu
 # dihitung DUA KALI dengan aturan berbeda - export_pdf._dashboard_title_html (font 22pt,

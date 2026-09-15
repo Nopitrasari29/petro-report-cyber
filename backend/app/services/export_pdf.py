@@ -31,6 +31,7 @@ from app.services.report_render_logic import (
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
     fakta_strip_kolom, _DASH_COLS_FACT_H_IN, kumpulkan_catatan_halaman,
     alokasi_kolom_bertumpuk, _kepala_seksi_h_in,
+    label_box_does_not_overlap, radar_label_layout,
     tinggi_kotak_catatan_halaman, tinggi_maks_kotak_catatan, _DASH_COLS_KEPALA_H_IN,
     _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in,
     _NESTED_CARD_GAP_IN, _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
@@ -767,23 +768,14 @@ def _radar_chart_svg(axes, values, color=None, size=360, label_margin=100) -> st
     poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
     shape = f'<polygon points="{poly}" fill="{ring_color}" fill-opacity="0.25" stroke="{ring_color}" stroke-width="2" />'
     dots = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{ring_color}" />' for x, y in pts)
-    labels = []
-    for i, ax in enumerate(axes):
-        lx, ly = cx + (r_max + 20) * math.cos(_angle(i)), cy + (r_max + 20) * math.sin(_angle(i))
-        anchor = "start" if math.cos(_angle(i)) > 0.3 else ("end" if math.cos(_angle(i)) < -0.3 else "middle")
-        # Bug nyata (dilaporkan user: "Allowed: Tagged" terbaca "wed: Tagged") — label sumbu
-        # yg panjang & berada di sisi kiri (anchor "end"/"middle") bisa menjorok ke x<0, lalu
-        # terpotong krn root <svg> meng-clip apa pun di luar viewBox. Perkirakan lebar teks
-        # dari jumlah karakter & geser x sekadarnya spy seluruh teks tetap dlm [0, size].
-        text_w = len(ax) * 4.8
-        pad = 2.0
-        if anchor == "end":
-            lx = max(lx, text_w + pad)
-        elif anchor == "start":
-            lx = min(lx, size - pad - text_w)
-        else:
-            lx = min(max(lx, text_w / 2 + pad), size - pad - text_w / 2)
-        labels.append(f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anchor}" font-size="8.5" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(ax)}</text>')
+    label_layout = radar_label_layout(axes, size, label_margin)
+    if label_layout is None:
+        return ""
+    labels = [
+        f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" font-size="{font_size:.1f}" '
+        f'fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(text)}</text>'
+        for text, x, y, anchor, font_size in label_layout
+    ]
     svg = (
         f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">'
         f'{rings}{spokes}{shape}{dots}{"".join(labels)}</svg>'
@@ -1065,9 +1057,7 @@ def _scatter_bubble_svg(points, x_key="count", y_key="avg", size_key=None, color
             # digambar: yang tertutup terbaca SALAH, yang absen cuma absen.
             _lw = len(short_label) * 7 * 0.62
             _kotak = (cx - _lw / 2, cy - r - 11, cx + _lw / 2, cy - r - 1)
-            _bentrok = any(not (_kotak[2] <= q[0] or q[2] <= _kotak[0]
-                                or _kotak[3] <= q[1] or q[3] <= _kotak[1])
-                           for q in _label_terpasang)
+            _bentrok = not label_box_does_not_overlap(_kotak, _label_terpasang)
             if _bentrok:
                 continue
             _label_terpasang.append(_kotak)

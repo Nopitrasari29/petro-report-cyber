@@ -49,6 +49,7 @@ from app.services.report_render_logic import (
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
     fakta_strip_kolom, _DASH_COLS_FACT_H_IN, kumpulkan_catatan_halaman,
     alokasi_kolom_bertumpuk, _kepala_seksi_h_in,
+    radar_label_layout,
     tinggi_kotak_catatan_halaman, tinggi_maks_kotak_catatan, _DASH_COLS_KEPALA_H_IN,
     _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in,
     muat_catatan,
@@ -1732,13 +1733,29 @@ def add_native_radar_chart(slide, x, y, cx, cy, axes, values, color=None):
     series.format.line.color.rgb = line_color
     series.format.line.width = Pt(2)
     try:
-        chart.category_axis.tick_labels.font.size = Pt(9)
-        chart.category_axis.tick_labels.font.name = BODY_FONT
+        chart.category_axis.tick_label_position = XL_TICK_LABEL_POSITION.NONE
+        chart.category_axis.tick_labels.font.size = Pt(1)
         chart.value_axis.visible = False
         chart.value_axis.minimum_scale = 0
         chart.value_axis.maximum_scale = 100
     except Exception:
         pass
+    size_px = min(cx.inches, cy.inches) * 96
+    label_layout = radar_label_layout(axes, size_px, max(55 * min(size_px / 220, 1.3), 16))
+    if label_layout is None:
+        return gframe
+    for text, label_x, label_y, anchor, font_size in label_layout:
+        width_px = max(font_size * 0.52, len(text) * font_size * 0.52)
+        left_px = label_x - width_px if anchor == "end" else (label_x - width_px / 2 if anchor == "middle" else label_x)
+        label = slide.shapes.add_textbox(
+            x + Inches(left_px / 96), y + Inches((label_y - font_size) / 96),
+            Inches(width_px / 96), Inches(font_size * 1.2 / 96),
+        )
+        label.text_frame.word_wrap = False
+        paragraph = label.text_frame.paragraphs[0]
+        paragraph.text = text
+        paragraph.alignment = PP_ALIGN.LEFT if anchor == "start" else (PP_ALIGN.RIGHT if anchor == "end" else PP_ALIGN.CENTER)
+        _set_font(paragraph, BODY_FONT, Pt(font_size), color=TEXT_DARK)
     return gframe
 
 
