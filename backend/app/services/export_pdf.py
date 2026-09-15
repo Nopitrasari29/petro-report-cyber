@@ -31,6 +31,7 @@ from app.services.report_render_logic import (
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
     fakta_strip_kolom, _DASH_COLS_FACT_H_IN, kumpulkan_catatan_halaman,
     tinggi_kotak_catatan_halaman, tinggi_maks_kotak_catatan, _DASH_COLS_KEPALA_H_IN,
+    _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in,
     _NESTED_CARD_GAP_IN, _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -3747,7 +3748,15 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
     title_html, title_h_in = _dashboard_title_html(block.get("title", ""), total_w_in)
     avail_h_in = _DASH_CONTENT_BOTTOM_IN - title_h_in
 
-    n = len(cols)
+    # ---- PENUMPUKAN TILE: satu kolom memuat BEBERAPA seksi ----------------------------
+    # `bentuk_kolom` dari perencana menyebut berapa seksi yang ditumpuk di tiap kolom visual,
+    # mis. [2, 1, 1]. `cols` tetap daftar DATAR; di sini dikelompokkan jadi slot vertikal.
+    # Kalau bentuknya tidak lagi cocok dgn jumlah kolom (mis. kolom_yang_digambar membuang
+    # kolom yang tile-nya dilewati), jatuh balik ke satu seksi per kolom - bukan menebak.
+    _bentuk = list(block.get("bentuk_kolom") or [])
+    if sum(_bentuk) != len(cols):
+        _bentuk = [1] * len(cols)
+    n = max(1, len(_bentuk))
     col_w = (total_w_in - _DASH_COLS_GAP_IN * (n - 1)) / n
     parts = []
     _y_terendah = 0.0
@@ -3776,9 +3785,31 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                 len(_butir_note), _NOTE_HAL_H_IN, _maks_note_in, _note_tak_muat,
                 len(_catatan_per_kolom))
     avail_h_in = avail_h_in - _NOTE_HAL_H_IN
-    for idx, col in enumerate(cols):
-        x = idx * (col_w + _DASH_COLS_GAP_IN)
-        y = 0.0
+    # ---- SLOT DIBANGUN SETELAH avail_h_in DIKURANGI catatan (URUTAN DIPERBAIKI) ---------
+    # BUG NYATA (ditemukan lewat pengukuran, dilaporkan sbg dugaan lalu dibuktikan): versi
+    # pertama penumpukan membangun _slot dari avail_h_in SEBELUM kotak catatan mengurangi
+    # jatahnya - setiap slot (termasuk _bawah_seksi tile ke-2/3 dalam satu kolom bertumpuk)
+    # jadi TERLALU BESAR persis sebesar _NOTE_HAL_H_IN (terukur report 188: stale 6.289in vs
+    # benar 5.269in, selisih 1.020in = NOTE_H persis). Utk kolom SATU tile ini tidak
+    # kelihatan (chart bentuk tetap cuma dpt ruang kosong ekstra di bawahnya, tidak overlap
+    # apa pun) - itulah sebabnya 182/184/187/188 (semua satu tile/kolom) tidak pernah gagal
+    # uji tumpang tindih. Tapi utk kolom BERTUMPUK, tile KEDUA diposisikan mulai di
+    # `_bagi + gap` yang staleness itu ikut membesar - tile kedua mulai ~1in lebih rendah
+    # dari seharusnya & bertindih kotak catatan yang diposisikan dari avail_h_in yang BENAR.
+    _slot, _pos = [], 0
+    for _ki, _cnt in enumerate(_bentuk):
+        _seksi = cols[_pos:_pos + _cnt]
+        _pos += _cnt
+        if not _seksi:
+            continue
+        _bagi = (avail_h_in - _DASH_TILE_GAP_IN * (len(_seksi) - 1)) / len(_seksi)
+        _y = 0.0
+        for _c in _seksi:
+            _slot.append((_ki, _c, _y, _y + _bagi))
+            _y += _bagi + _DASH_TILE_GAP_IN
+    for idx, (_kol_i, col, _y_awal, _bawah_seksi) in enumerate(_slot):
+        x = _kol_i * (col_w + _DASH_COLS_GAP_IN)
+        y = _y_awal
         col_parts = []
 
         # BATASAN USER: judul kolom TIDAK dipotong. Ukurannya dikecilkan sampai muat 2 baris.
@@ -3796,7 +3827,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # inilah yang membentuk sekat antar kolom.
         col_parts.append(
             f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
-            f'height:{avail_h_in - (y - title_h_in) - 0.02}in;background:{WHITE};'
+            f'height:{_bawah_seksi - (y - title_h_in) - 0.02}in;background:{WHITE};'
             f'border:0.75pt solid {PANEL_BORDER};border-radius:2px;"></div>'
         )
 
@@ -3859,7 +3890,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             y += _DASH_COLS_KPI_H_IN + 0.10
 
 
-        body_h = max(1.2, avail_h_in - y - 0.10)
+        body_h = max(1.2, _bawah_seksi - y - 0.10)
         notes = [str(x_) for x_ in (col.get("notes") or []) if str(x_).strip()]
         notes_consumed = False
         # PERMINTAAN USER (bagian 2): chart & kartu JANGAN saling meniadakan. Dulu pilihannya
@@ -3906,7 +3937,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                 )
                 if _has_cards:
                     y += _chart_h + 0.10
-                    body_h = max(1.0, avail_h_in - y - 0.10)
+                    body_h = max(1.0, _bawah_seksi - y - 0.10)
             elif _has_cards:
                 # chart tidak jadi digambar -> kartu memakai kembali seluruh tinggi kolom
                 _chart_h = 0.0
@@ -3931,7 +3962,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                 )
                 if False:  # catatan per kolom DIMATIKAN - lihat catatan A5 di atas
                     note_y = y + cards_h + 0.08
-                    note_h = max(0.0, avail_h_in - note_y)
+                    note_h = max(0.0, _bawah_seksi - note_y)
                     # Butir catatan dibuang dari BELAKANG sampai muat - sebelumnya kotaknya
                     # mengalir melewati jatah & menimpa nomor halaman (laporan 143).
                     notes, _dibuang_note = muat_catatan(col_w, notes, note_h)
@@ -3963,7 +3994,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         _fakta, _ = fakta_strip_kolom(col, is_english(ctx.report))
         if _fakta:
             _dasar_isi = _dasar_kolom + float(_column_layout.get("note_y") or 0.0)
-            _sisa_in = avail_h_in - _dasar_isi - 0.10
+            _sisa_in = _bawah_seksi - _dasar_isi - 0.10
             if _sisa_in >= _DASH_COLS_FACT_H_IN:
                 col_parts.append(
                     f'<div style="position:absolute;left:{x}in;top:{_dasar_isi + 0.06}in;'

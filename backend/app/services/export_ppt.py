@@ -49,6 +49,7 @@ from app.services.report_render_logic import (
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
     fakta_strip_kolom, _DASH_COLS_FACT_H_IN, kumpulkan_catatan_halaman,
     tinggi_kotak_catatan_halaman, tinggi_maks_kotak_catatan, _DASH_COLS_KEPALA_H_IN,
+    _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in,
     muat_catatan,
     _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
@@ -4231,7 +4232,12 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     # sisa - kolom yang diberi seluruh tinggi menyisakan nol ruang & kotaknya tak pernah ada.
     # Lebar kolom dihitung SEBELUM blok catatan: batas atas kotak catatan diturunkan
     # dari tinggi minimum chart, dan tinggi minimum itu bergantung lebar kolom.
-    n = len(cols)
+    # PENUMPUKAN TILE (kembaran export_pdf.py): `bentuk_kolom` menyebut berapa seksi yang
+    # ditumpuk di tiap kolom visual. `cols` tetap datar; slot vertikalnya dihitung di bawah.
+    _bentuk = list(block.get("bentuk_kolom") or [])
+    if sum(_bentuk) != len(cols):
+        _bentuk = [1] * len(cols)
+    n = max(1, len(_bentuk))
     col_w = (total_w_in - _DASH_COLS_GAP_IN * (n - 1)) / n
 
     # ---- A5 LANJUTAN: TINGGI KOTAK CATATAN DIHITUNG, BUKAN DIPATOK -------------------
@@ -4255,17 +4261,30 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 len(_catatan_per_kolom))
     avail_h_in = avail_h_in - _NOTE_HAL_H_IN
 
-    for idx, col in enumerate(cols):
-        x = _DASH_MARGIN_X_IN + idx * (col_w + _DASH_COLS_GAP_IN)
+    _slot, _pos = [], 0
+    for _ki, _cnt in enumerate(_bentuk):
+        _seksi = cols[_pos:_pos + _cnt]
+        _pos += _cnt
+        if not _seksi:
+            continue
+        _bagi = (avail_h_in - _DASH_TILE_GAP_IN * (len(_seksi) - 1)) / len(_seksi)
+        _yy = 0.0
+        for _c in _seksi:
+            _slot.append((_ki, _c, _yy, _yy + _bagi))
+            _yy += _bagi + _DASH_TILE_GAP_IN
+
+    for idx, (_kol_i, col, _y_awal, _bawah_rel) in enumerate(_slot):
+        x = _DASH_MARGIN_X_IN + _kol_i * (col_w + _DASH_COLS_GAP_IN)
+        _bawah_seksi = title_bottom_in + _bawah_rel
         # ---- A1 + A4 (kembaran export_pdf.py): PITA KEPALA berwarna + cara-baca --------
         # Acuan memakai pita ~0.20in berisi judul panel, dgn pita kedua sebaris berisi CARA
         # MEMBACA chart. Sekat di acuan GARIS TEPI, bukan bayangan (141/141 shape bergaris).
-        y = title_bottom_in
+        y = title_bottom_in + _y_awal
         _cara = str(col.get("cara_baca") or "")
         # ---- A2 (kembaran export_pdf.py): BADAN PANEL putih bergaris sbg alas ---------
         _badan = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(col_w),
-            Inches(max(0.5, (title_bottom_in + avail_h_in) - y - 0.02)))
+            Inches(max(0.5, _bawah_seksi - y - 0.02)))
         _badan.fill.solid()
         _badan.fill.fore_color.rgb = WHITE
         _badan.line.color.rgb = PANEL_BORDER
@@ -4325,7 +4344,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
             y += _DASH_COLS_KPI_H_IN + 0.10
 
 
-        body_h = max(1.2, (title_bottom_in + avail_h_in) - y - 0.10)
+        body_h = max(1.2, _bawah_seksi - y - 0.10)
         notes = [str(v) for v in (col.get("notes") or []) if str(v).strip()]
         notes_consumed = False
         # Kembar dari _build_management_dashboard_columns_block di export_pdf.py: chart di ATAS
@@ -4356,7 +4375,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
             )
             if _has_cards:
                 y += _chart_h + 0.10
-                body_h = max(1.0, (title_bottom_in + avail_h_in) - y - 0.10)
+                body_h = max(1.0, _bawah_seksi - y - 0.10)
         if not _tile or _has_cards:
             cards = _column_layout["cards"]
             if cards:
@@ -4374,7 +4393,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 # kali ini di kode yang baru saja saya tulis. Tinggi catatan dihitung DULU;
                 # kalau tidak muat, butir paling belakang dilepas satu per satu sampai muat -
                 # bukan digambar menembus batas slide di mana pembaca tidak bisa melihatnya.
-                _bawah = title_bottom_in + avail_h_in
+                _bawah = _bawah_seksi
                 if notes:
                     _sisa = _bawah - (y + cards_h + 0.08)
                     while notes and _note_box_height_in(col_w, notes) > _sisa:
@@ -4400,7 +4419,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         _fakta, _ = fakta_strip_kolom(col, is_english(ctx.report))
         _dasar_isi = _dasar_kolom + float(_column_layout.get("note_y") or 0.0)
         if _fakta:
-            _sisa_in = (title_bottom_in + avail_h_in) - _dasar_isi - 0.10
+            _sisa_in = _bawah_seksi - _dasar_isi - 0.10
             if _sisa_in >= _DASH_COLS_FACT_H_IN:
                 _draw_fact_strip_kolom(slide, _fakta, x, _dasar_isi + 0.06, col_w)
                 _y_terendah = max(_y_terendah, _dasar_isi + 0.06 + _DASH_COLS_FACT_H_IN)

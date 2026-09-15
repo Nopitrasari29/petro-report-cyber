@@ -1779,6 +1779,76 @@ def _layout_dashboard_column_content(
             "chart_dilewati": has_chart is False and tile is not None}
 
 
+_DASH_TILE_GAP_IN = 0.10          # jeda antar tile bertumpuk dalam satu kolom
+
+
+def tinggi_kolom_tersedia_in() -> float:
+    """Tinggi yang benar-benar tersedia untuk isi satu kolom dashboard.
+
+    Dihitung dari konstanta halaman, bukan ditebak: tepi bawah area konten dikurangi judul
+    halaman (dipesan pada tinggi MAKSIMUM krn packer berjalan sebelum judul A6 disusun) dan
+    kotak catatan halaman. Terukur 5.26in - dekat dgn perkiraan kasar 5.4in dari acuan."""
+    return max(1.0, _DASH_CONTENT_BOTTOM_IN - _DASH_TITLE_MAX_H_IN - _NOTE_HAL_MIN_H_IN)
+
+
+def tinggi_seksi_min_in(col: dict, col_w_in: float, is_en: bool = False) -> float:
+    """Tinggi MINIMUM satu seksi di dalam kolom bertumpuk: pita kepala + baris cara-baca +
+    baris KPI (kalau ada) + chart pada tinggi minimumnya.
+
+    Kartu entitas TIDAK dihitung di sini - kartu bersaing sbg antrean terpisah (lihat
+    _pack_tiles_into_columns), jadi seksi bisa masuk kolom walau kartunya nanti tidak muat."""
+    h = _DASH_COLS_TITLE_H_IN
+    if str(col.get("cara_baca") or "").strip():
+        h += _DASH_COLS_CARA_BACA_H_IN
+    if col.get("kpi_summary"):
+        h += _DASH_COLS_KPI_H_IN
+    tile = col.get("main_chart_tile")
+    if tile:
+        h += chart_min_mutlak_in(tile, col_w_in, is_en)
+    return h
+
+
+def _pack_tiles_into_columns(cols: list, col_w_in: float, n_kolom_per_hal: int,
+                             is_en: bool = False) -> list:
+    """Isi tiap kolom dgn SEKSI sampai tingginya habis; sisanya ke kolom/halaman berikutnya.
+
+    PERUBAHAN ARAH (keputusan user, dari perbandingan dgn slide acuan): kolom BUKAN "tempat
+    satu tile" melainkan ruang ~5.26in yang diisi sampai penuh. Sebelumnya jumlah halaman
+    ditentukan _DASH_TOPICS_PER_PAGE = 3 - angka tetap KELIMA di sesi ini setelah
+    mgmt_narrative_per_page, konstanta anggaran narasi, batas 6 entitas, dan potongan catatan
+    [:4]. Sekarang halaman adalah AKIBAT dari berapa yang muat, bukan target yang dipatok.
+
+    ATURAN URUTAN - SEMENTARA, DAN INI DISENGAJA. Keputusan user: semua kandidat isi (chart
+    dan kartu) idealnya masuk satu antrean, diambil menurut mana yang lebih berguna bagi
+    seksinya - chart dulu kalau seksinya soal perbandingan/distribusi, kartu dulu kalau
+    soal detail per entitas. Penilaian "lebih berguna" itu belum ada alatnya, jadi untuk
+    sekarang: tiap seksi dapat CHART-nya dulu (satu per seksi), kartu menyusul mengisi sisa
+    ruang di kolom yang sama lewat _layout_dashboard_column_content. Ganti begitu ada cara
+    menilai kegunaan per seksi."""
+    tinggi_kolom = tinggi_kolom_tersedia_in()
+    halaman: list = []
+    hal: list = []
+    kolom: list = []
+    tinggi = 0.0
+    for c in cols:
+        butuh = tinggi_seksi_min_in(c, col_w_in, is_en)
+        _tambah = butuh + (_DASH_TILE_GAP_IN if kolom else 0.0)
+        if kolom and tinggi + _tambah > tinggi_kolom:
+            hal.append(kolom)
+            kolom, tinggi = [], 0.0
+            _tambah = butuh
+            if len(hal) >= n_kolom_per_hal:
+                halaman.append(hal)
+                hal = []
+        kolom.append(c)
+        tinggi += _tambah
+    if kolom:
+        hal.append(kolom)
+    if hal:
+        halaman.append(hal)
+    return halaman
+
+
 def kolom_yang_digambar(cols: list, total_w_in: float, gap_in: float, body_h_in: float) -> list:
     """Buang kolom yang tile-nya DILEWATI seluruhnya - bukan cuma chart-nya.
 
@@ -4939,43 +5009,30 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
     # semuanya laporan bertopik 7). Sekarang ukurannya ditetapkan lebih dulu sebagai pembagian
     # serata mungkin (4->2+2, 7->3+2+2, 10->3+3+2+2), baru ISI tiap keranjang dipilih supaya
     # bobotnya seimbang. Aturan keras: tidak ada keranjang berisi kurang dari 2 topik.
-    n_pages = max(1, -(-len(idxs) // _DASH_TOPICS_PER_PAGE))
-    _base, _extra = divmod(len(idxs), n_pages)
-    sizes = sorted([_base + (1 if i < _extra else 0) for i in range(n_pages)], reverse=True)
-    if len(idxs) >= 2 and min(sizes) < 2:
-        # tidak terjadi utk pembagian per 3 (sisa 1 selalu terserap ke keranjang lain), tapi
-        # ditegakkan eksplisit supaya aturannya tidak bergantung pada nilai _DASH_TOPICS_PER_PAGE
-        sizes[sizes.index(min(sizes))] += 1
-        sizes[0] -= 1
-        sizes = sorted(sizes, reverse=True)
+    # ---- HALAMAN ADALAH AKIBAT, BUKAN TARGET (keputusan user) -------------------------
+    # Pembagian lama: n_pages = ceil(jumlah_topik / _DASH_TOPICS_PER_PAGE=3), lalu topik
+    # diratakan bobotnya ke keranjang sebanyak itu. Jumlah halaman ditentukan JUMLAH TOPIK,
+    # sama sekali tidak melihat tinggi isi - angka tetap KELIMA di sesi ini setelah
+    # mgmt_narrative_per_page, konstanta anggaran narasi, batas 6 entitas, potongan [:4].
+    #
+    # Akibatnya kolom yang isinya cuma 2.2in tetap menempati kolom setinggi 5.26in, dan satu
+    # kolom tidak pernah memuat lebih dari satu seksi. Sekarang kolom DIISI SAMPAI PENUH:
+    # seksi masuk berurutan sampai tingginya habis, sisanya ke kolom lalu halaman berikutnya.
+    _n_kol = _DASH_TOPICS_PER_PAGE          # kolom per halaman (lebar), bukan seksi per halaman
+    _col_w = (13.333 - 2 * _DASH_MARGIN_X_IN - _DASH_COLS_GAP_IN * (_n_kol - 1)) / _n_kol
+    _is_en = is_english(report)
+    _hal_kolom = _pack_tiles_into_columns([blocks[i] for i in idxs], _col_w, _n_kol, _is_en)
+    # kembali ke indeks blok supaya sisa fungsi ini tidak berubah bentuk
+    _idx_of = {id(blocks[i]): i for i in idxs}
+    buckets = [[_idx_of[id(c)] for kol in hal for c in kol] for hal in _hal_kolom]
+    _bentuk_kolom = [[len(kol) for kol in hal] for hal in _hal_kolom]
+    _bentuk_per_bucket = {}
+    logger.info("penumpukan tile: %d seksi -> %d halaman, bentuk kolom per halaman %s "
+                "(tinggi kolom %.2fin)", len(idxs), len(buckets), _bentuk_kolom,
+                tinggi_kolom_tersedia_in())
 
-    if n_pages == 1:
-        buckets = [list(idxs)]
-    elif n_pages == 2:
-        # Jumlah topiknya kecil (<=6), jadi semua kemungkinan pembagian pada UKURAN yang sudah
-        # ditetapkan diperiksa & yang paling rata bobotnya dipakai. Serakah terbukti tidak
-        # optimal di sini (satu topik bisa memegang ~37% seluruh elemen halaman).
-        best = None
-        for combo in itertools.combinations(idxs, sizes[0]):
-            rest = [i for i in idxs if i not in combo]
-            gap = abs(sum(_topic_weight(blocks[i]) for i in combo)
-                      - sum(_topic_weight(blocks[i]) for i in rest))
-            if best is None or gap < best[0]:
-                best = (gap, list(combo), rest)
-        buckets = [best[1], best[2]]
-    else:
-        buckets = [[] for _ in range(n_pages)]
-        loads = [0] * n_pages
-        for i in sorted(idxs, key=lambda i: -_topic_weight(blocks[i])):
-            cand = min((k for k in range(n_pages) if len(buckets[k]) < sizes[k]),
-                       key=lambda k: (loads[k], k))
-            buckets[cand].append(i)
-            loads[cand] += _topic_weight(blocks[i])
-
-    # BUG NYATA DIPERBAIKI: perakitan halaman dulu MEMOTONG ULANG idxs per
-    # _DASH_TOPICS_PER_PAGE, jadi ukuran keranjang yang baru saja diratakan di atas dibuang
-    # begitu saja & 7 topik tetap jadi 3+3+1. Sekarang keranjangnya dipakai APA ADANYA -
-    # satu keranjang = satu halaman.
+    for _bi, _b in enumerate(buckets):
+        _bentuk_per_bucket[tuple(sorted(_b))] = _bentuk_kolom[_bi]
     buckets.sort(key=lambda b: -len(b))
 
     packed, consumed = [], set()
@@ -5043,6 +5100,11 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
             "title": _judul_kalimat,
             "judul_topik": _judul_topik,
             "columns": cols,
+            # BENTUK KOLOM: berapa seksi yang DITUMPUK di tiap kolom visual halaman ini,
+            # mis. [2, 1, 1] = kolom kiri memuat 2 seksi, dua kolom lain masing-masing 1.
+            # `columns` tetap daftar DATAR supaya sisa kode yang membacanya tidak berubah;
+            # exporter mengelompokkannya memakai daftar ini.
+            "bentuk_kolom": _bentuk_per_bucket.get(tuple(sorted(group)), [1] * len(cols)),
         }))
 
     out, done = [], set()
