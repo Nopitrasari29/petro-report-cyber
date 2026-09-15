@@ -1893,17 +1893,47 @@ def tinggi_kolom_tersedia_in() -> float:
     return max(1.0, _DASH_CONTENT_BOTTOM_IN - _DASH_TITLE_MAX_H_IN - _NOTE_HAL_MIN_H_IN)
 
 
+def _kepala_seksi_h_in(col: dict, col_w_in: float | None = None) -> float:
+    """Tinggi pita kepala + cara-baca + KPI SATU seksi - TANPA chart.
+
+    BUG NYATA DIPERBAIKI (terukur, diselidiki karena tinggi_seksi_min_in dulu memakai
+    _DASH_COLS_TITLE_H_IN TETAP utk pita judul, padahal kode penggambar menghitung pita_h
+    DINAMIS: max(_DASH_COLS_TITLE_H_IN, jumlah_baris*tinggi_baris+0.06) - judul yang wrap ke
+    2+ baris py pita LEBIH TINGGI dari konstanta. PLUS ada dua jeda tetap di kode penggambar
+    yang tidak pernah ikut dihitung: +0.04in sesudah title/cara-baca, dan +0.10in sesudah
+    KPI. Perencana (_pack_tiles_into_columns, lewat tinggi_seksi_min_in) jadi
+    UNDERESTIMATE kebutuhan seksi berjudul panjang - taksirannya lebih kecil dari yang
+    benar-benar digambar. `col_w_in` WAJIB dialirkan drpd tebakan lebar bawaan - tanpa itu
+    jumlah baris wrap dihitung dari lebar yang salah, kelas bug yang sama dgn
+    _potong_isi_chart tanpa lebar kolom dulu."""
+    judul = str(col.get("title") or "")
+    if col_w_in and judul:
+        _w_px = max(40.0, (col_w_in - 0.12) * 96)
+        _jp, _jbaris = 8.5, 1
+        for _p in (8.5, 8.0, 7.5, 7.0, 6.5, 6.0, 5.5):
+            _jp = _p
+            _jbaris = wrap_line_count(judul, _w_px, _p, 0.80)
+            if _jbaris <= 1:
+                break
+        pita_h = max(_DASH_COLS_TITLE_H_IN, _jbaris * (_jp * 1.25 / 72.0) + 0.06)
+    else:
+        pita_h = _DASH_COLS_TITLE_H_IN
+    h = pita_h
+    if str(col.get("cara_baca") or "").strip():
+        h += _DASH_COLS_CARA_BACA_H_IN
+    h += 0.04  # jeda tetap setelah title/cara-baca - SELALU ada di kode penggambar
+    if col.get("kpi_summary"):
+        h += _DASH_COLS_KPI_H_IN + 0.10  # +0.10: jeda tetap sesudah KPI di kode penggambar
+    return h
+
+
 def tinggi_seksi_min_in(col: dict, col_w_in: float, is_en: bool = False) -> float:
     """Tinggi MINIMUM satu seksi di dalam kolom bertumpuk: pita kepala + baris cara-baca +
     baris KPI (kalau ada) + chart pada tinggi minimumnya.
 
     Kartu entitas TIDAK dihitung di sini - kartu bersaing sbg antrean terpisah (lihat
     _pack_tiles_into_columns), jadi seksi bisa masuk kolom walau kartunya nanti tidak muat."""
-    h = _DASH_COLS_TITLE_H_IN
-    if str(col.get("cara_baca") or "").strip():
-        h += _DASH_COLS_CARA_BACA_H_IN
-    if col.get("kpi_summary"):
-        h += _DASH_COLS_KPI_H_IN
+    h = _kepala_seksi_h_in(col, col_w_in)
     tile = col.get("main_chart_tile")
     if tile:
         h += chart_min_mutlak_in(tile, col_w_in, is_en)
