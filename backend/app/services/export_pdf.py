@@ -3566,6 +3566,23 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
                                                       labels=tile.get("labels") or [],
                                                       height_px=max(44, int(avail_h_px * 0.24)),
                                                       w_in=w_in)
+            # BUG NYATA DIPERBAIKI: planner (report_render_logic) sudah menghitung & menaruh
+            # tile["catatan_lainnya"] saat segmen "Lainnya" sendiri terlalu tipis utk diberi
+            # label DI ATAS batang (kembaran mekanisme metric_share di atas) - tapi cabang ini
+            # TIDAK PERNAH membacanya, jadi keterangannya dibuang diam2 & label itu hilang
+            # tanpa jejak sama sekali. Kotak warna dicocokkan dgn WARNA segmen terakhir.
+            if tile.get("catatan_lainnya"):
+                # _stacked_proportion_bar_html TIDAK diberi `colors` di jalur ini (dipanggil
+                # tanpa param itu di atas), jadi ia jatuh ke CATEGORY_COLOR_RAMP internal
+                # sendiri - warna petak di sini HARUS mengikuti fallback yang SAMA, bukan
+                # `colors` yang tidak ada di scope ini.
+                _mm_v = tile.get("values") or []
+                _mm_c = CATEGORY_COLOR_RAMP[(len(_mm_v) - 1) % len(CATEGORY_COLOR_RAMP)] if _mm_v else GRAY_TEXT
+                chart_html += (f'<div style="font-size:7pt;color:{GRAY_TEXT};margin-top:3pt;'
+                               f'text-align:left;">'
+                               f'<span style="display:inline-block;width:7px;height:7px;'
+                               f'background:{_mm_c};border-radius:1px;margin-right:4px;"></span>'
+                               f'{_esc(tile["catatan_lainnya"])}</div>')
             chart_w_in = w_in
         elif kind == "metric_compare":
             size_w = int(avail_w_px * 0.9)

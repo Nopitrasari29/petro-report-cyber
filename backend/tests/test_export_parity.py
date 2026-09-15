@@ -1319,3 +1319,4 @@ def test_galat_pembangun_blok_menggagalkan_generate():
     finally:
         db.rollback()
         db.close()
+

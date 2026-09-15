@@ -4128,9 +4128,30 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
             _swp.line.fill.background()
             _no_shadow(_swp)
     elif kind == "metric_mix":
+        _mm_h = Inches(max(0.44, min(0.8, cy_in * 0.24)))
         add_stacked_proportion_bar(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in),
                                    tile.get("values") or [], labels=tile.get("labels") or [],
-                                   height=Inches(max(0.44, min(0.8, cy_in * 0.24))))
+                                   height=_mm_h)
+        # BUG NYATA DIPERBAIKI (kembaran export_pdf.py): planner sudah menaruh
+        # tile["catatan_lainnya"] saat segmen "Lainnya" sendiri terlalu tipis diberi label
+        # DI ATAS batang - cabang ini TIDAK PERNAH membacanya, keterangannya dibuang diam2 &
+        # label itu hilang tanpa jejak sama sekali. `add_stacked_proportion_bar` TIDAK diberi
+        # `colors` di sini, jadi ia jatuh ke CATEGORY_COLOR_RAMP internal - petak warna di
+        # bawah HARUS mengikuti fallback yang SAMA.
+        if tile.get("catatan_lainnya"):
+            _mm_v = tile.get("values") or []
+            _mm_label_h = 0.32 if tile.get("labels") else 0.0
+            _mm_bawah = y0_in + _mm_label_h + Emu(_mm_h).inches + 0.03
+            _mm_c = CATEGORY_COLOR_RAMP[(len(_mm_v) - 1) % len(CATEGORY_COLOR_RAMP)] if _mm_v else GRAY_TEXT
+            _swp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x0_in),
+                                          Inches(_mm_bawah + 0.01), Inches(0.08), Inches(0.08))
+            _swp.fill.solid(); _swp.fill.fore_color.rgb = _as_rgb(_mm_c, t["main"])
+            _swp.line.fill.background(); _no_shadow(_swp)
+            _cb = slide.shapes.add_textbox(Inches(x0_in + 0.12), Inches(_mm_bawah),
+                                           Inches(max(0.3, cx_in - 0.12)), Inches(0.18))
+            _cp = _cb.text_frame.paragraphs[0]
+            _cp.text = tile["catatan_lainnya"]
+            _set_font(_cp, BODY_FONT, Pt(7), color=GRAY_TEXT)
     elif kind == "metric_compare":
         add_grouped_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
                               tile["categories"], tile["series_a"], tile["series_b"],

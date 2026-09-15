@@ -1309,6 +1309,90 @@ def segmen_bisa_dinamai(values: list, w_in: float, h_in: float) -> list:
             for rw, rh in _rect_treemap(values, w_in, h_in)]
 
 
+# ---- AMBANG LABEL BAR BERTUMPUK: SATU fungsi, DUA renderer (permintaan user) ------------
+# BUG NYATA (terukur, bukan dugaan): metric_mix SELALU digambar sbg stacked-proportion-bar
+# di KEDUA exporter (chart_style tile diabaikan sepenuhnya oleh dispatch keduanya - diperiksa
+# langsung di kode, bukan diasumsikan) - tapi keputusan "segmen mana digabung ke Lainnya"
+# sebelum ini lewat jalur _rect_treemap (geometri kotak 2D), padahal render sesungguhnya 1D
+# (lebar segmen sepanjang satu batang). Dua model geometri berbeda utk bentuk yang sama.
+#
+# Kedua renderer (_stacked_proportion_bar_html di PDF, add_stacked_proportion_bar di PPT)
+# SUDAH memakai rumus lebar teks yang identik (len*7.5/72*0.62) - disalin ke sini SEKALI.
+# Yang berbeda cuma lebar EFEKTIF yang mereka beri ke segmen: PDF memakai w_in PENUH (tanpa
+# margin), PPT mengurangi 2*_CHART_MARGIN_IN (0.15in tiap sisi) sebelum menghitung cx_in.
+# Utk laporan 187 lebar kolom 4.28in: PDF efektif 4.28in, PPT efektif 3.98in - segmen
+# "Lainnya" (11.4%) jadi 0.488in di PDF (muat) vs 0.453in di PPT (persis di bawah ambang
+# 0.452in) - PPT kehilangan labelnya, PDF tidak. Keputusan gabung sekarang dihitung SEKALI di
+# planner dari lebar TERKETAT (margined, spt PPT) - meniru pola _LABEL_MIN_W_IN utk treemap
+# yang sudah lebih dulu ada di berkas ini ("diambil yang TERKETAT supaya PDF & PPTX tidak
+# divergen"). Hasilnya SET label/value yang identik ditaruh di tile SEBELUM digambar; kedua
+# exporter cuma menggambar apa yang sudah ada, tidak menghitung ulang.
+
+
+def _teks_bar_in(label: str) -> float:
+    """Perkiraan lebar teks label bar (in) - rumus SAMA dgn kedua renderer stacked-bar."""
+    return len(str(label or "")) * (7.5 / 72.0) * 0.62
+
+
+# BUG NYATA DIPERBAIKI (terukur, bukan dugaan): keputusan planner ("segmen ini muat") dan
+# pemeriksaan renderer PPT saat menggambar sama-sama pakai rumus lebar teks yang IDENTIK,
+# tapi lebar segmennya masing2 dihitung lewat jalur float berbeda (planner: col_w_in mentah;
+# PPT: Inches(cx_in) -> EMU int -> Emu(w).inches, bulat-pulang yang lossy). Utk laporan 187
+# segmen "Lainnya" terukur PERSIS di ambang: seg_w_in=0.452051in vs teks_in=0.452083in -
+# selisih 0.000032in, LEBIH KECIL dari presisi pembulatan EMU (1/914400in) berlipat ganda di
+# sepanjang rantai konversi. Keputusan planner (pakai angka mentah) & renderer (pakai angka
+# yang sudah bulat-pulang) BISA JATUH DI SISI BERBEDA dari ambang yang sama persis.
+# Buffer 0.02in bukan "disetel supaya lolos" - ia jauh lebih besar dari selisih pembulatan
+# yang terukur (0.000032in), jadi keputusan planner tetap benar walau renderer membulatkan
+# dgn cara sedikit berbeda.
+_BAR_LABEL_SAFETY_IN = 0.02
+
+
+def segmen_bar_bisa_dinamai(labels: list, values: list, w_in_efektif: float) -> list:
+    """[bool] - segmen bar mana yang lebarnya (proporsi x lebar efektif) muat utk labelnya.
+
+    Diberi buffer _BAR_LABEL_SAFETY_IN thd pembulatan EMU antara planner & renderer - lihat
+    catatan di atas konstanta itu utk angka nyata yang mendasarinya."""
+    total = float(sum(values) or 1)
+    hasil = []
+    for lbl, val in zip(labels, values):
+        seg_in = (float(val) / total) * w_in_efektif if total else 0.0
+        hasil.append(_teks_bar_in(lbl) + _BAR_LABEL_SAFETY_IN <= seg_in)
+    return hasil
+
+
+def gabung_bar_ke_lainnya(labels: list, values: list, w_in_efektif: float, label_lainnya: str):
+    """Kembaran gabung_ekor_ke_lainnya utk BAR bertumpuk (1D), bukan treemap (2D).
+
+    Sama-sama diulang sampai stabil: menggabungkan ekor mengubah proporsi sisanya, jadi
+    segmen yang tadinya lolos bisa jatuh di bawah ambang setelah "Lainnya" ikut menambah
+    porsi. Kembalikan (labels, values, n_digabung)."""
+    kerja_l, kerja_v = list(labels), list(values)
+    total_gabung = 0
+    for _ in range(6):
+        bisa = segmen_bar_bisa_dinamai(kerja_l, kerja_v, w_in_efektif)
+        if all(bisa):
+            break
+        simpan = [i for i, ok in enumerate(bisa) if ok]
+        buang = [i for i, ok in enumerate(bisa) if not ok]
+        if not simpan or len(buang) == len(kerja_v):
+            break
+        nilai_gabung = sum(kerja_v[i] for i in buang)
+        sudah = [i for i in simpan if kerja_l[i] == label_lainnya]
+        baru_l = [kerja_l[i] for i in simpan]
+        baru_v = [kerja_v[i] for i in simpan]
+        if sudah:
+            baru_v[simpan.index(sudah[0])] += nilai_gabung
+        else:
+            baru_l.append(label_lainnya)
+            baru_v.append(nilai_gabung)
+        total_gabung += len(buang)
+        if (baru_l, baru_v) == (kerja_l, kerja_v):
+            break
+        kerja_l, kerja_v = baru_l, baru_v
+    return kerja_l, kerja_v, total_gabung
+
+
 def gabung_ekor_ke_lainnya(labels: list, values: list, w_in: float, h_in: float, label_lainnya: str):
     """Segmen yang terlalu kecil untuk dinamai DIGABUNG jadi satu "Lainnya".
 
@@ -1576,7 +1660,20 @@ def _layout_dashboard_column_content(
             # segmen "lolos" di perencana tapi gagal saat digambar - terukur: PPTX tetap
             # kehilangan 1 label walau penggabungannya sudah diulang sampai stabil.
             _gw, _gh = max(0.5, col_w_in - 2 * _CHART_MARGIN_IN), max(0.4, chart_h - 2 * _CHART_MARGIN_IN)
-            _lolos = sum(1 for ok in segmen_bisa_dinamai(_v, _gw, _gh) if ok)
+            # ---- BENTUK BAR (1D) vs TREEMAP (2D) - GEOMETRI BEDA, AMBANG BEDA -------------
+            # BUG NYATA (terukur, ditemukan lewat regresi uji label): metric_mix SELALU
+            # digambar sbg stacked-proportion-bar di KEDUA exporter (chart_style tile
+            # diabaikan dispatch-nya, diperiksa langsung di kode) - tapi ambang gabungnya
+            # sebelum ini SELALU lewat _rect_treemap (kotak 2D), padahal segmen bar cuma
+            # punya SATU dimensi yang menyempit (lebar sepanjang batang). Sekarang bentuk bar
+            # (metric_mix, atau custom_topic gaya "stacked") pakai segmen_bar_bisa_dinamai/
+            # gabung_bar_ke_lainnya - kembaran 1D yang rumusnya SAMA dgn kedua renderer.
+            _gaya = (tile.get("chart_style") or "").lower()
+            _is_bar = tile.get("tile_kind") == "metric_mix" or _gaya == "stacked"
+            if _is_bar:
+                _lolos = sum(1 for ok in segmen_bar_bisa_dinamai(_l, _v, _gw) if ok)
+            else:
+                _lolos = sum(1 for ok in segmen_bisa_dinamai(_v, _gw, _gh) if ok)
             if _lolos < 2:
                 # ITEM 5: tile dilewati kalau segmen yang LOLOS ambang label kurang dari 2 -
                 # tidak tersisa chart yang bermakna utk digambar. Dicatat ke log, TIDAK ke
@@ -1588,7 +1685,10 @@ def _layout_dashboard_column_content(
                 chart_h = 0.0
                 tile_dipakai = None
             else:
-                _nl, _nv, n_gabung = gabung_ekor_ke_lainnya(_l, _v, _gw, _gh, label_lainnya())
+                if _is_bar:
+                    _nl, _nv, n_gabung = gabung_bar_ke_lainnya(_l, _v, _gw, label_lainnya())
+                else:
+                    _nl, _nv, n_gabung = gabung_ekor_ke_lainnya(_l, _v, _gw, _gh, label_lainnya())
                 if n_gabung:
                     tile_dipakai = dict(tile)
                     tile_dipakai["labels"] = _nl
@@ -1600,7 +1700,9 @@ def _layout_dashboard_column_content(
                     # SUDAH hasil gabungan) & menggeser ambang cuma memindah masalahnya.
                     # Keterangannya karena itu dibawa sebagai TEKS DI BAWAH chart, yang tidak
                     # bergantung pada geometri segmen sama sekali.
-                    if not segmen_bisa_dinamai(_nv, _gw, _gh)[-1]:
+                    _lolos_akhir = (segmen_bar_bisa_dinamai(_nl, _nv, _gw) if _is_bar
+                                    else segmen_bisa_dinamai(_nv, _gw, _gh))
+                    if not _lolos_akhir[-1]:
                         tile_dipakai["catatan_lainnya"] = (
                             "%s: %s (%d %s)" % (
                                 label_lainnya(),
