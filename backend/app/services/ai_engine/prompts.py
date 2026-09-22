@@ -694,6 +694,12 @@ Data yang dianalisis bertipe '{data_type}', total {total_records if total_record
 {topics_text}
 --- AKHIR DAFTAR TOPIK ---
 
+CATATAN BAHASA UNTUK FIELD "title": judul topik di daftar atas boleh datang dalam bahasa yang
+BERBEDA dari bahasa laporan (judul itu dipilih di langkah upload, sebelum bahasa laporan
+ditentukan). TERJEMAHKAN judulnya ke bahasa laporan - jangan disalin apa adanya. Yang wajib
+sama persis adalah URUTAN dan MAKNA topiknya, bukan kata-katanya. Nilai data mentah dari
+berkas sumber (nama vendor, path, kode tiket, nama kategori asli) TIDAK diterjemahkan.
+
 Tuliskan naskah utk PERSIS topik-topik di atas saja, ikuti kontrak JSON "sections" yang sudah
 dijelaskan. {lang_str}
 """

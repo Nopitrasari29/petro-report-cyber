@@ -29,11 +29,13 @@ from app.services.report_render_logic import (
     tinggi_kartu_in, wrap_line_count, muat_catatan, kolom_yang_digambar, _kpi_card_widths,
     metrik_judul_dashboard,
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
+    warna_pita_panel, rapikan_nama_kolom,
     fakta_strip_kolom, _DASH_COLS_FACT_H_IN, kumpulkan_catatan_halaman,
     alokasi_kolom_bertumpuk, _kepala_seksi_h_in,
     label_box_does_not_overlap, radar_label_layout,
     tinggi_kotak_catatan_halaman, tinggi_maks_kotak_catatan, _DASH_COLS_KEPALA_H_IN,
-    _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in,
+    _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in, _DASH_COLS_PAD_IN, _DASH_COLS_JUDUL_GAP_IN,
+    _DASH_COLS_TITLE_PAD_IN, _KPI_VALUE_MAX_PT,
     _NESTED_CARD_GAP_IN, _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -78,6 +80,9 @@ RED_CRIT_BG = "#F8E2DE"
 PANEL_BORDER = "#D6DBE3"
 # A4: palet kotak KPI dari acuan - latar & angka berubah menurut nilainya.
 KPI_BG_NETRAL = "#F4F6F9"
+# PITA KEPALA PANEL: warnanya TIDAK didefinisikan di sini. Latar terang + garis + teks
+# gelap senada diturunkan dari warna TEMA AKTIF lewat warna_pita_panel() di
+# report_render_logic.py - lihat catatan lengkap di sana untuk kenapa hardcode salah.
 KPI_BG_BAIK = "#DFF0E6"
 KPI_FG_NETRAL = "#1F3864"
 KPI_FG_BAIK = "#1E7A4D"
@@ -1027,7 +1032,20 @@ def _scatter_bubble_svg(points, x_key="count", y_key="avg", size_key=None, color
     if not SVG_SUPPORTED:
         return _scatter_bubble_html_fallback(points, x_key, y_key, color)
     base = color or GREEN_MAIN
-    pad_l, pad_r, pad_t, pad_b = 30, 14, 14, 26
+    # PADDING HARUS MEMUAT GELEMBUNG & LABELNYA, bukan cuma garis sumbu. Radius maksimum
+    # gelembung 13px (r = 4 + (sz/size_max)*9, jadi entitas TERBESAR selalu kena 13), dan
+    # label titik teratas digambar 4px di atas tepi gelembung dgn tinggi ~7pt.
+    # BUG NYATA (terukur dari render, bukan dugaan): pad_t = 14 < 13 + 11, jadi titik dgn
+    # nilai y maksimum punya cy = pad_t = 14 & labelnya jatuh di y = 14 - 13 - 4 = -3 -
+    # DI LUAR viewBox, terpotong diam-diam ("PT Mitra 4" hilang separuh). Gelembungnya
+    # sendiri juga menjorok sampai 1px dari tepi atas. Sama di sisi kanan: cx maksimum =
+    # size_w - pad_r, ditambah radius 13 -> praktis menyentuh tepi kanan.
+    # Ini BUKAN "ruang kosong berlebih yang perlu dirapatkan" - justru kebalikannya.
+    _R_BUBBLE_MAX = 13
+    _H_LABEL = 11
+    pad_l, pad_b = 30, 26
+    pad_r = _R_BUBBLE_MAX + 2
+    pad_t = _R_BUBBLE_MAX + _H_LABEL
     plot_w, plot_h = size_w - pad_l - pad_r, size_h - pad_t - pad_b
     xs = [p.get(x_key, 0) for p in points]
     ys = [p.get(y_key, 0) for p in points]
@@ -1061,8 +1079,13 @@ def _scatter_bubble_svg(points, x_key="count", y_key="avg", size_key=None, color
             if _bentrok:
                 continue
             _label_terpasang.append(_kotak)
+            # label ditahan di dalam viewBox scr horizontal: titik teratas hampir selalu
+            # yang PALING KANAN (top_idx = x terbesar), jadi label ber-anchor tengah di
+            # atasnya menjorok keluar tepi kanan & terpotong. Digeser masuk, bukan dipotong
+            # atau dibuang - aturan tetap: label TIDAK dipotong.
+            _cx_label = min(max(cx, _lw / 2 + 1), size_w - _lw / 2 - 1)
             parts.append(
-                f'<text x="{cx:.1f}" y="{cy - r - 4:.1f}" text-anchor="middle" font-size="7" font-weight="700" '
+                f'<text x="{_cx_label:.1f}" y="{cy - r - 4:.1f}" text-anchor="middle" font-size="7" font-weight="700" '
                 f'fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(short_label)}</text>'
             )
     parts.append(f'<text x="{pad_l}" y="{size_h - 6}" font-size="7" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(x_label)}</text>')
@@ -1109,12 +1132,17 @@ def _ranked_bar_ternorm_html(labels, values, color=None, is_en=False) -> str:
             f'font-size:1px;line-height:1px;">&nbsp;</td><td></td></tr></table>'
             f'</td></tr>'
         )
-    sumbu = "relative to highest" if is_en else "relatif terhadap tertinggi"
+    # KEPUTUSAN USER: kaki legenda "| relatif terhadap tertinggi - tertinggi X" DIBUANG dari
+    # ranked bar ternormalisasi. Bukan karena tidak penting - keterangan skala ini justru
+    # wajib supaya panjang batang tidak disalahbaca absolut - tapi karena teks yang SAMA
+    # sudah tercetak di pita kepala panel lewat cara_baca_kolom() ("skala relatif thd
+    # tertinggi - tertinggi X"), jadi ia muncul dua kali dalam satu panel. Yang di pita
+    # dipertahankan karena terbaca SEBELUM chart, sesuai acuan. Kaki grouped_bar_ternorm
+    # TIDAK ikut dibuang: isinya peringatan lain ("panjang sama BUKAN berarti nilai sama")
+    # yang tidak ada duanya di mana pun.
     return (
         f'<table style="width:100%;border-collapse:collapse;" cellpadding="0" cellspacing="0">'
         f'{"".join(baris)}</table>'
-        f'<div style="font-size:7pt;color:{GRAY_TEXT};margin-top:3pt;">'
-        f'| {_esc(sumbu)} &mdash; {_esc("highest" if is_en else "tertinggi")} {_fmt_num(maks)}</div>'
     )
 
 
@@ -1793,6 +1821,24 @@ def _flourish_html(corner="bottom_right", theme: dict | None = None) -> str:
     return f'<div style="position:absolute;top:0;right:0;bottom:0;left:0;overflow:hidden;pointer-events:none;">{circles}</div>'
 
 
+def _cover_subtitle_html(block: dict) -> str:
+    """Baris subtitle cover - DIHILANGKAN SELURUHNYA kalau isinya kosong.
+
+    PERMINTAAN USER (Management Report): subtitle generik dibuang dari cover. Menyetel
+    field-nya jadi "" saja TIDAK cukup di sisi PDF - div-nya tetap lahir dgn line-box 12.5pt
+    + margin-bottom 20px, jadi yang terlihat bukan "baris hilang" tapi "celah kosong
+    setinggi satu baris" dan seluruh baris di bawahnya (Periode data, info_line) turun.
+    Dua varian cover memakai helper yang sama supaya tidak ada satu varian yang ketinggalan.
+
+    Cover Descriptive TIDAK terpengaruh: subtitle-nya dirakit `sanitize_text(
+    report.header_subtitle) or (fallback)` di build_report_blocks - selalu ada isinya, jadi
+    cabang ini menghasilkan markup yang SAMA PERSIS dgn sebelumnya."""
+    sub = str(block.get("subtitle") or "").strip()
+    if not sub:
+        return ""
+    return f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(sub)}</div>'
+
+
 def _split_cover_td(block, flourish_corner, logo_b64=None, theme: dict | None = None) -> str:
     """Varian cover 2-kolom warna penuh (emas kiri + hijau kanan, angka hero besar di kolom
     emas) — titik variasi tampilan (lihat `cover_style` di generate_pdf_report), alternatif
@@ -1845,7 +1891,7 @@ def _split_cover_td(block, flourish_corner, logo_b64=None, theme: dict | None = 
         f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
         f'{_kicker(block["kicker"], WHITE)}'
         f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:{title_size_pt}pt;color:#fff;margin-bottom:10px;">{_esc(title_text)}</div>'
-        f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(block["subtitle"])}</div>'
+        f'{_cover_subtitle_html(block)}'
         f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
         f'<div style="font-size:10.5pt;color:{t["soft"]};margin-top:6px;">{_esc(block["info_line"])}</div>'
         f'</div></td>'
@@ -2097,7 +2143,7 @@ def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
             f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
             f'{_kicker(block["kicker"], WHITE)}'
             f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:#fff;margin-bottom:10px;">{_esc(block["title"])}</div>'
-            f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(block["subtitle"])}</div>'
+            f'{_cover_subtitle_html(block)}'
             f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
             f'<div style="font-size:10.5pt;color:{ctx.accent_soft};margin-top:6px;">{_esc(block["info_line"])}</div>'
             # BUG YANG DIPERBAIKI (dilaporkan user): "bottom:0" di sini dulu terlihat benar
@@ -3205,7 +3251,31 @@ def _insight_kpi_row_html(cards: list, total_w_in: float, h_in: float, y_in: flo
         # faktor 0.56 -> 0.62: terukur dari render, 0.56 masih membiarkan nilai spt
         # "Requests (50%)" membungkus ke baris kedua & TERPOTONG tepi bawah kartu
         # (kasus yang persis dicontohkan user: "(85%)" jatuh di luar rect kartu).
-        _size_pt = min(20.0, max(9.5, _avail_pt / (len(_val) * 0.62) if _val else 20.0))
+        # PLAFON diturunkan 20pt -> _KPI_VALUE_MAX_PT (15pt): kartu KPI elemen SEKUNDER,
+        # lihat catatan lengkap di konstanta itu (report_render_logic.py).
+        # UKURAN DIHITUNG DARI PEMBUNGKUSAN SEBENARNYA, bukan dari asumsi "muat satu baris".
+        # BUG NYATA DIPERBAIKI: rumus lama membagi lebar kartu dgn panjang teks & mematok
+        # lantai 9,5pt - di kartu sempit hasilnya tetap 9,5pt walau teksnya jelas tidak muat,
+        # lalu overflow:hidden memotongnya tanpa penanda apa pun (angka 14 digit tercetak 10
+        # digit). Sekarang font diturunkan bertahap sampai jumlah baris hasil wrap SUNGGUHAN
+        # muat di tinggi yang tersisa di dalam kartu - pola yang sama dgn judul panel.
+        _h_isi_pt = max(10.0, h_in * 72.0 - 20.0 - 8.0 * 1.2 - 6.0)  # dikurangi padding+label
+        _w_isi_px = max(24.0, _avail_pt / 72.0 * 96.0)
+        _size_pt = _KPI_VALUE_MAX_PT
+        if _val:
+            # DUA syarat, bukan satu. Versi pertama cuma memeriksa tinggi (jumlah baris) &
+            # lolos pada 15pt untuk "311221140243,0" - wrap_line_count memang mengembalikan
+            # 1 baris, karena teks itu tidak punya titik pecah sama sekali. Yang menentukan
+            # untuk token tanpa pemisah adalah LEBAR: token terpanjang harus muat.
+            _token_pt = max((len(w) for w in _val.split()), default=len(_val)) * 0.62
+            for _p_kpi in (15.0, 14.0, 13.0, 12.0, 11.0, 10.0, 9.5, 9.0, 8.0, 7.0):
+                _size_pt = _p_kpi
+                _muat_tinggi = (wrap_line_count(_val, _w_isi_px, _p_kpi, 0.62)
+                                * _p_kpi * 1.15) <= _h_isi_pt
+                _muat_lebar = _token_pt * _p_kpi <= _avail_pt
+                if _muat_tinggi and _muat_lebar:
+                    break
+            _size_pt = min(_KPI_VALUE_MAX_PT, _size_pt)
         # A4: latar DAN warna angka berubah menurut NILAINYA - acuan memakai #F4F6F9 netral
         # / #DFF0E6 kalau nilainya baik, dgn angka #1F3864 / #1E7A4D. "Baik" dibaca dari
         # persentase yang tinggi atau kata kunci pencapaian; selain itu netral.
@@ -3314,7 +3384,8 @@ def _nested_category_card_html(card: dict, w_in: float, h_in: float, x_in: float
         f'<div style="height:{header_h_in}in;padding:8pt 10pt;box-sizing:border-box;">'
         f'<div style="font-size:{_nm_pt:.1f}pt;line-height:1.15;font-weight:700;color:{WHITE};">{_esc(card["name"])}</div>'
         f'<div style="font-family:{TITLE_FONT};font-size:16pt;font-weight:700;color:{WHITE};margin-top:2pt;">{_esc(card["score"])}'
-        f'<span style="font-size:7.5pt;font-weight:700;background:{t["light"]};color:{t["bg"]};border-radius:8pt;padding:2pt 7pt;margin-left:8pt;">{_esc(card["badge"])}</span></div>'
+        + (f'<span style="font-size:7.5pt;font-weight:700;background:{t["light"]};color:{t["bg"]};border-radius:8pt;padding:2pt 7pt;margin-left:8pt;">{_esc(card["badge"])}</span>'
+           if card.get("badge") else "") + '</div>'
         f'</div>'
         f'<div style="padding:6pt 10pt;box-sizing:border-box;">{body_content}</div>'
         f'</div>'
@@ -3369,6 +3440,16 @@ _CHART_SIDE_PANEL_MIN_W_IN = 2.5
 # Padding-top pembungkus chart (10pt di dua cabang, 6pt di cabang catatan-di-bawah).
 # Dipotong dari tinggi SEBELUM SVG diskalakan - lihat catatan di _insight_main_chart_html.
 _CHART_WRAP_PAD_IN = 10.0 / 72.0
+# AMBANG BINGKAI AREA CHART. Bingkai cuma berguna kalau chart benar-benar MENGISI kotak
+# yang dibingkai - itulah bentuknya di acuan (chart uptime bar+garis mengisi 6.11 dari
+# 6.27in lebar kolomnya, 97%). Chart yang cuma mengisi sebagian kecil kotaknya (kpi_radar
+# BUJURSANGKAR: terukur 1.35in di dalam kotak 4.12in = 33%) justru jadi lebih buruk kalau
+# dibingkai - bingkainya membingkai ruang kosong, bukan chart. Jadi keputusannya diambil
+# dari RASIO PENGISIAN yang sudah dihitung _gambar_chart (chart_w_in), bukan dari daftar
+# tile_kind yang harus diingat-ingat tiap kali ada jenis tile baru.
+_CHART_FRAME_MIN_FILL = 0.70
+_CHART_FRAME_PAD_IN = 0.08
+
 
 
 def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h_in: float, notes: list | None = None, report=None) -> tuple:
@@ -3410,6 +3491,19 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
     # SELURUH laporan gagal digenerate (terukur: 11 dari 29 laporan Visual). Sekarang satu
     # definisi dipakai kedua tempat, jadi jenis baru tidak bisa lagi lupa disalin.
     def _gambar_chart(avail_w_px: float, avail_h_px: float):
+        # RAMP KATEGORI DARI TEMA AKTIF. CATEGORY_COLOR_RAMP modul-level dievaluasi SAAT
+        # IMPORT dari GREEN_MAIN/GOLD_MAIN, jadi isinya hijau+emas selamanya - chart yang
+        # jatuh ke sana tetap hijau-emas walau laporannya bertema navy/teal (terukur di
+        # render: segmen severity tetap hijau-emas di tema navy, selisih hue 169 derajat).
+        # Ramp ini pola yang SAMA dgn yang sudah dipakai cabang custom_topic di bawah -
+        # diputar, bukan dipotong, supaya nilai yang lebih banyak dari 5 tidak meng-index
+        # di luar batas (bug yang pernah menggagalkan seluruh laporan 162).
+        # Dilewatkan sbg argumen `colors=`; parameter itu tetap default None untuk pemanggil
+        # lain, jadi jalur Descriptive memakai CATEGORY_COLOR_RAMP persis seperti sebelumnya.
+        def _ramp_tema(n: int) -> list:
+            _b = [ctx.accent_main, ctx.accent_chart, ctx.accent_light, ctx.accent_soft, GRAY_TEXT]
+            return [_b[i % len(_b)] for i in range(max(1, n))]
+
         chart_w_in = w_in
         if kind == "kpi_radar":
             size = int(min(avail_w_px, avail_h_px) * 0.92)
@@ -3462,7 +3556,12 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
             size_h = int(avail_h_px * 0.88)
             chart_html = _scatter_bubble_svg(tile["points"], color=ctx.accent_main,
                                              size_w=size_w, size_h=size_h,
-                                             x_label=tile.get("x_label") or "")
+                                             # LABEL SUMBU dirapikan dgn fungsi yang SAMA
+                                             # dgn judul pita panel (rapikan_nama_kolom):
+                                             # "nilai_kontrak" -> "Nilai Kontrak". Tanpa ini
+                                             # judul panel rapi tapi sumbunya masih nama
+                                             # variabel mentah di halaman yang sama.
+                                             x_label=rapikan_nama_kolom(tile.get("x_label") or ""))
             chart_w_in = size_w / 96
         elif kind == "trend_chart":
             _c = tile.get("chart") or {}
@@ -3500,6 +3599,7 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
                 chart_w_in = w_in
             elif _style == "stacked":
                 chart_html = _stacked_proportion_bar_html(_values, labels=_labels,
+                                                          colors=_ramp_tema(len(_values)),
                                                           height_px=max(40, int(avail_h_px * 0.22)),
                                                           w_in=w_in)
                 chart_w_in = w_in
@@ -3553,8 +3653,10 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
             chart_w_in = size_w / 96
         elif kind == "metric_mix":
             # komposisi antar metrik -> proporsi, jujur meski skalanya beda jauh
+            _mm_ramp = _ramp_tema(len(tile.get("values") or []))
             chart_html = _stacked_proportion_bar_html(tile.get("values") or [],
                                                       labels=tile.get("labels") or [],
+                                                      colors=_mm_ramp,
                                                       height_px=max(44, int(avail_h_px * 0.24)),
                                                       w_in=w_in)
             # BUG NYATA DIPERBAIKI: planner (report_render_logic) sudah menghitung & menaruh
@@ -3563,12 +3665,13 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
             # TIDAK PERNAH membacanya, jadi keterangannya dibuang diam2 & label itu hilang
             # tanpa jejak sama sekali. Kotak warna dicocokkan dgn WARNA segmen terakhir.
             if tile.get("catatan_lainnya"):
-                # _stacked_proportion_bar_html TIDAK diberi `colors` di jalur ini (dipanggil
-                # tanpa param itu di atas), jadi ia jatuh ke CATEGORY_COLOR_RAMP internal
-                # sendiri - warna petak di sini HARUS mengikuti fallback yang SAMA, bukan
-                # `colors` yang tidak ada di scope ini.
+                # Warna petak HARUS warna segmen TERAKHIR yang benar-benar digambar. Dulu
+                # dibaca dari CATEGORY_COLOR_RAMP karena batangnya memang jatuh ke sana;
+                # sekarang batangnya diberi `_mm_ramp` eksplisit, jadi petaknya membaca ramp
+                # yang sama - kalau tidak, keterangannya menunjuk warna yang tidak ada di
+                # batang manapun.
                 _mm_v = tile.get("values") or []
-                _mm_c = CATEGORY_COLOR_RAMP[(len(_mm_v) - 1) % len(CATEGORY_COLOR_RAMP)] if _mm_v else GRAY_TEXT
+                _mm_c = _mm_ramp[(len(_mm_v) - 1) % len(_mm_ramp)] if _mm_v else GRAY_TEXT
                 chart_html += (f'<div style="font-size:7pt;color:{GRAY_TEXT};margin-top:3pt;'
                                f'text-align:left;">'
                                f'<span style="display:inline-block;width:7px;height:7px;'
@@ -3580,7 +3683,8 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
             size_h = int(avail_h_px * 0.85)
             chart_html = _grouped_bar_chart_svg(
                 tile["categories"], tile["series_a"], tile["series_b"],
-                label_a=tile.get("label_a", ""), label_b=tile.get("label_b", ""),
+                label_a=rapikan_nama_kolom(tile.get("label_a", "")),
+                label_b=rapikan_nama_kolom(tile.get("label_b", "")),
                 color_a=ctx.accent_main, color_b=ctx.accent_chart, size_w=size_w, size_h=size_h,
             )
             chart_w_in = size_w / 96
@@ -3593,7 +3697,8 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
         elif kind == "grouped_bar_ternormalisasi":
             chart_html = _grouped_bar_ternorm_html(
                 tile.get("categories") or [], tile.get("series_a") or [], tile.get("series_b") or [],
-                label_a=tile.get("label_a", ""), label_b=tile.get("label_b", ""),
+                label_a=rapikan_nama_kolom(tile.get("label_a", "")),
+                label_b=rapikan_nama_kolom(tile.get("label_b", "")),
                 color_a=ctx.accent_main, color_b=ctx.accent_chart, is_en=is_english(report))
             chart_w_in = w_in
         else:
@@ -3653,6 +3758,23 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
             f'</div>'
         )
         return html, True
+    # BINGKAI AREA CHART (permintaan user): border tipis senada garis tepi panel supaya
+    # batas area chart terbaca - dipasang di wrapper yang SUDAH ada, bukan sbg elemen baru.
+    # `box-sizing:border-box` di wrapper ini (lihat catatan di bawah) membuat border 0.75pt
+    # jatuh DI DALAM `height`, jadi tinggi yang sudah dipesan perencana TIDAK berubah sama
+    # sekali - aturan tetap proyek ini: tidak ada elemen yang tingginya lahir di luar
+    # anggaran halaman.
+    # Napas HORIZONTAL di dalam bingkai: tanpa ini batang chart div-based (lebar 100%)
+    # menempel PERSIS di garis bingkai kiri-kanan - terlihat langsung di render (batang
+    # ranked_bar menembus garis). 0.08in = angka padding internal acuan yang sama dipakai
+    # utk inset kartu. Cuma kiri-kanan: sisi atas sudah punya padding-top 10pt yang sudah
+    # dikalibrasi, dan sisi bawah masih menyisakan ruang (terukur), jadi tidak disentuh -
+    # menambah padding-bottom mengurangi tinggi isi & berisiko mendorong chart meluber.
+    # Chart SVG tidak terpengaruh: size_w-nya sudah 0.85-0.92 x lebar tersedia, jadi tetap
+    # muat di dalam content-box yang menyempit 0.16in, dan tetap tertengah (text-align).
+    _bingkai = (f"border:0.75pt solid {PANEL_BORDER};border-radius:2px;"
+                f"padding-left:{_CHART_FRAME_PAD_IN}in;padding-right:{_CHART_FRAME_PAD_IN}in;"
+                if chart_w_in >= w_in * _CHART_FRAME_MIN_FILL else "")
     return (
         # AKAR NON-KONVERGENSI (terukur, bukan dugaan): tanpa box-sizing:border-box,
         # `padding-top` DITAMBAHKAN DI LUAR `height`, jadi tinggi nyata elemen selalu
@@ -3661,7 +3783,7 @@ def _insight_main_chart_html(tile: dict, ctx: "_PdfBlockContext", w_in: float, h
         # Bukan rumus SVG yang salah & bukan konstanta yang kurang - padding yang jatuh di
         # luar kotak. border-box memasukkannya ke dalam tinggi yang sudah dipesan.
         f'<div style="position:relative;height:{h_in}in;box-sizing:border-box;'
-        f'text-align:center;padding-top:10pt;">{chart_html}</div>'
+        f'text-align:center;padding-top:10pt;{_bingkai}">{chart_html}</div>'
     ), False
 
 
@@ -3727,10 +3849,15 @@ def _build_management_insight_page_block(block: dict, ctx: _PdfBlockContext) -> 
 # 6.89, masing-masing w=2.24) - nol jarak. Yang membentuk sekat adalah GARIS TEPI #D6DBE3
 # yang bersentuhan, bukan ruang kosong. Sebelumnya 0.28in.
 _DASH_COLS_GAP_IN = 0.0
-# PITA kepala, bukan kotak judul: acuan 0.16in, dipakai 0.20in supaya judul 8.5pt tetap
-# muat satu baris. Sebelumnya 0.52in - tiga kali tinggi yang diperlukan.
+# PITA kepala: LANTAI saja - tinggi sesungguhnya dihitung dari tinggi teks judul +
+# _DASH_COLS_TITLE_PAD_IN (0.14in, angka acuan; sebelumnya 0.06in sehingga judul
+# menempel tepi atas-bawah pitanya). Kartu KPI: acuan 0.88in (kartu angka besar
+# slide 3, W=2.39 H=0.88); sebelumnya 0.95in - 0.07in diambil dari jatah chart.
+# HARUS sama persis dgn nilai di report_render_logic.py - perencana memakai yang di sana.
 _DASH_COLS_TITLE_H_IN = 0.20
-_DASH_COLS_KPI_H_IN = 0.95
+_DASH_COLS_KPI_H_IN = 0.88
+# Lebar garis tepi badan panel - lihat catatan di titik pakainya.
+_DASH_PANEL_LINE_PT = 0.4
 
 
 def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext) -> tuple:
@@ -3766,6 +3893,18 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         _bentuk = [1] * len(cols)
     n = max(1, len(_bentuk))
     col_w = (total_w_in - _DASH_COLS_GAP_IN * (n - 1)) / n
+    # LEBAR ISI vs LEBAR PANEL - dua hal berbeda yang sebelumnya dipakai sbg satu angka.
+    # Panel (badan putih bergaris + pita kepalanya) tetap selebar `col_w` & berbagi tepi dgn
+    # panel sebelahnya (A1). Seluruh ISI-nya - judul, cara-baca, KPI, chart, kartu, strip
+    # fakta - digambar di dalam inset _DASH_COLS_PAD_IN (0.08in, angka acuan). Dulu teks
+    # di-inset 0.06in TAPI chart & kartu tidak di-inset sama sekali (left=x width=col_w
+    # penuh), jadi bar/donat/treemap menyentuh garis tepi panel.
+    # `col_w_isi` WAJIB ikut dialirkan ke perencana (alokasi_kolom_bertumpuk /
+    # _kepala_seksi_h_in / tinggi_maks_kotak_catatan): kalau perencana memakai lebar yang
+    # lebih besar dari lebar gambar sesungguhnya, jumlah baris wrap & tinggi minimum chart
+    # dihitung dari lebar yang salah - persis kelas bug yang sudah menggigit di
+    # _potong_isi_chart dulu.
+    col_w_isi = max(0.5, col_w - 2 * _DASH_COLS_PAD_IN)
     parts = []
     _y_terendah = 0.0
     # ---- A5: RUANG KOTAK CATATAN DIPESAN LEBIH DULU -------------------------------------
@@ -3785,7 +3924,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
     ]
     _catatan_per_kolom = [k for k in _catatan_per_kolom if k]
     _maks_note_in = tinggi_maks_kotak_catatan(
-        cols, col_w, avail_h_in - _DASH_COLS_KEPALA_H_IN, is_english(ctx.report))
+        cols, col_w_isi, avail_h_in - _DASH_COLS_KEPALA_H_IN, is_english(ctx.report))
     _NOTE_HAL_H_IN, _butir_note, _note_tak_muat = tinggi_kotak_catatan_halaman(
         total_w_in, _catatan_per_kolom, _maks_note_in)
     logger.info("kotak catatan halaman: %d butir muat (kotak %.2fin, batas %.2fin), "
@@ -3823,24 +3962,29 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         _pos += _cnt
         if not _seksi:
             continue
-        _hasil_kol = alokasi_kolom_bertumpuk(_seksi, col_w, avail_h_in, is_english(ctx.report))
+        _hasil_kol = alokasi_kolom_bertumpuk(_seksi, col_w_isi, avail_h_in, is_english(ctx.report))
         _y = 0.0
         for _c, _h in zip(_seksi, _hasil_kol):
-            _kepala_c = _kepala_seksi_h_in(_c, col_w)
+            _kepala_c = _kepala_seksi_h_in(_c, col_w_isi)
             _footprint = _kepala_c + _h["chart_h"] + (0.10 + _h["cards_h"] if _h["cards"] else 0.0)
             _slot.append((_ki, _c, _y, _y + _footprint))
             _alokasi[id(_c)] = _h
             _y += _footprint + _DASH_TILE_GAP_IN
     for idx, (_kol_i, col, _y_awal, _bawah_seksi) in enumerate(_slot):
         x = _kol_i * (col_w + _DASH_COLS_GAP_IN)
+        x_isi = x + _DASH_COLS_PAD_IN
         y = _y_awal
         col_parts = []
 
         # BATASAN USER: judul kolom TIDAK dipotong. Ukurannya dikecilkan sampai muat 2 baris.
-        col_title = str(col.get("title") or "")
+        # PITA KEPALA = LABEL TOPIK PENDEK, bukan kalimat temuan. `title` blok tetap
+        # kalimat temuan karena dipakai headline halaman; kalau keduanya memakai field
+        # yang sama, kalimat identik tercetak dua kali di halaman yang sama (temuan user).
+        # Lihat judul_pendek_kolom di report_render_logic.py.
+        col_title = str(col.get("judul_pendek") or col.get("title") or "")
         _ct_pt = 10.5
         for _p in (10.5, 9.5, 8.5, 7.5):
-            if len(col_title) <= 2 * max(12, int(col_w * 96 / (_p * 0.62))):
+            if len(col_title) <= 2 * max(12, int(col_w_isi * 96 / (_p * 0.62))):
                 _ct_pt = _p
                 break
         else:
@@ -3849,10 +3993,18 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # Acuan: badan w=2.24 h=2.95 fill #FFFFFF line #D6DBE3 0.75pt, dgn pita kepala
         # bertumpuk di posisi yang sama. Panel bersebelahan berbagi tepi (A1), jadi garis
         # inilah yang membentuk sekat antar kolom.
+        # PANEL BERSEBELAHAN NOL-JARAK -> GARISNYA DOBEL. Terukur dari render (profil piksel
+        # 400dpi melintasi perbatasan): garis di antara dua panel selebar 1,62pt, padahal
+        # satu border cuma 0,75pt - dua border bersentuhan menumpuk jadi garis dua kali
+        # lebih tebal dari tepi luar panel. Itulah yang terbaca sbg "kolom terlalu rapat",
+        # BUKAN gap yang kurang: _DASH_COLS_GAP_IN = 0 sudah cocok dgn acuan & TIDAK diubah.
+        # Melunakkan WARNA garis tidak menolong - yang dobel tebalnya, bukan gelapnya.
+        # 0.4pt dipilih supaya dua garis bersentuhan (0,8pt) kembali setara satu garis
+        # 0,75pt seperti di tepi luar; nol perubahan geometri, murni ketebalan garis.
         col_parts.append(
             f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
             f'height:{_bawah_seksi - (y - title_h_in) - 0.02}in;background:{WHITE};'
-            f'border:0.75pt solid {PANEL_BORDER};border-radius:2px;"></div>'
+            f'border:{_DASH_PANEL_LINE_PT}pt solid {PANEL_BORDER};border-radius:2px;"></div>'
         )
 
         # ---- A1 + A4: PITA KEPALA, bukan kotak judul setinggi 0.52in ------------------
@@ -3862,27 +4014,33 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # Sekat di acuan adalah GARIS TEPI (141/141 shape bergaris, nol shadow), jadi seluruh
         # panel di bawah ini dibungkus kartu bergaris.
         _cara_baca = str(col.get("cara_baca") or "")
-        _judul_w = col_w
+        _judul_w = col_w_isi
         # BATASAN TETAP: judul TIDAK dipotong. Fontnya yang mengecil sampai muat, dan kalau
         # pada batas bawah acuan (5.5pt) masih belum muat satu baris, PITANYA yang ditinggikan.
         # overflow:hidden di sini SEMPAT memotong judul panjang diam-diam - tertangkap uji
         # paritas ("PDF tidak menemukan [checked_topic] 'Analysis of Blocked Spam by Section'").
-        _w_judul_px = max(40.0, (_judul_w - 0.12) * 96)
+        _w_judul_px = max(40.0, _judul_w * 96)
         _jp, _jbaris = 8.5, 1
         for _p in (8.5, 8.0, 7.5, 7.0, 6.5, 6.0, 5.5):
             _jp = _p
             _jbaris = wrap_line_count(col_title, _w_judul_px, _p, 0.80)
             if _jbaris <= 1:
                 break
-        _pita_h = max(_DASH_COLS_TITLE_H_IN, _jbaris * (_jp * 1.25 / 72.0) + 0.06)
+        _pita_h = max(_DASH_COLS_TITLE_H_IN,
+                      _jbaris * (_jp * 1.25 / 72.0) + _DASH_COLS_TITLE_PAD_IN)
+        # tint pita DARI TEMA AKTIF - ikut berubah kalau user mengganti Theme Color.
+        _pita_bg, _pita_garis, _pita_fg = warna_pita_panel(ctx.accent_main)
         col_parts.append(
             f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
-            f'height:{_pita_h}in;background:{ctx.accent_main};'
-            f'border:0.5pt solid {ctx.accent_main};border-radius:2px;"></div>'
-            f'<div style="position:absolute;left:{x + 0.06}in;top:{y + 0.02}in;'
-            f'width:{_judul_w - 0.12}in;'
+            f'height:{_pita_h}in;background:{_pita_bg};'
+            f'border:0.5pt solid {_pita_garis};border-radius:2px;"></div>'
+            # judul DITENGAHKAN vertikal di dalam pitanya (pita sekarang 0.34in sesuai
+            # acuan, bukan 0.20in) - dipatok 0.02in dari atas spt dulu, teksnya menggantung
+            # di tepi atas & menyisakan celah tebal di bawah.
+            f'<div style="position:absolute;left:{x_isi}in;top:{y + max(0.02, (_pita_h - _jbaris * _jp * 1.25 / 72.0) / 2.0)}in;'
+            f'width:{_judul_w}in;'
             f'font-family:{TITLE_FONT};font-size:{_jp}pt;'
-            f'font-weight:700;color:{WHITE};line-height:1.25;">{_esc(col_title)}</div>'
+            f'font-weight:700;color:{_pita_fg};line-height:1.25;">{_esc(col_title)}</div>'
         )
         y += _pita_h
         if _cara_baca:
@@ -3890,13 +4048,14 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             # judul - bukan teks putih di dalam pita berwarna. Pita berwarna itu KEPALA PANEL
             # (A2); keterangan cara membaca di acuan justru italic abu tanpa latar.
             col_parts.append(
-                f'<div style="position:absolute;left:{x + 0.06}in;top:{y + 0.01}in;'
-                f'width:{col_w - 0.12}in;height:0.16in;'
+                f'<div style="position:absolute;left:{x_isi}in;top:{y + 0.01}in;'
+                f'width:{col_w_isi}in;height:0.16in;'
                 f'font-size:6.5pt;font-style:italic;color:{GRAY_TEXT};'
                 f'line-height:1.15;">{_esc(_cara_baca)}</div>'
             )
             y += 0.18
-        y += 0.04
+        # jeda setelah blok judul - HARUS sepadan dgn _kepala_seksi_h_in di perencana.
+        y += 0.04 if _cara_baca else _DASH_COLS_JUDUL_GAP_IN
 
         kpi = (col.get("kpi_summary") or [])[:2]
         if kpi:
@@ -3905,16 +4064,19 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             # kolom benar-benar jatuh di kolomnya sendiri. Tanpa ini ketiga kolom menimpa di
             # kiri (terlihat langsung waktu render diperiksa).
             col_parts.append(
-                f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
+                f'<div style="position:absolute;left:{x_isi}in;top:{y}in;width:{col_w_isi}in;'
                 f'height:{_DASH_COLS_KPI_H_IN}in;">'
                 f'<div style="position:relative;height:{_DASH_COLS_KPI_H_IN}in;">'
-                f'{_insight_kpi_row_html(kpi, col_w, _DASH_COLS_KPI_H_IN, 0.0, theme=ctx.theme)}'
+                f'{_insight_kpi_row_html(kpi, col_w_isi, _DASH_COLS_KPI_H_IN, 0.0, theme=ctx.theme)}'
                 f'</div></div>'
             )
             y += _DASH_COLS_KPI_H_IN + 0.10
 
 
-        body_h = max(1.2, _bawah_seksi - y - 0.10)
+        # Lantai tinggi DIHAPUS (lihat catatan panjang di scratchpad/patch_body_h): grid kartu
+        # tidak boleh melewati jatah slotnya - begitu kotak Catatan tumbuh, kelebihan itu
+        # menembus dan menimpa isinya. Lantai 0,25in cuma penjaga nilai nol/negatif.
+        body_h = max(0.25, _bawah_seksi - y - 0.10)
         notes = [str(x_) for x_ in (col.get("notes") or []) if str(x_).strip()]
         notes_consumed = False
         # PERMINTAAN USER (bagian 2): chart & kartu JANGAN saling meniadakan. Dulu pilihannya
@@ -3933,7 +4095,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # ke kartu oleh alokasi_kolom_bertumpuk (bug nyata yg sama persis ditemukan &
         # diperbaiki di dalam fungsi itu sendiri).
         _column_layout = _alokasi.get(id(col)) or _layout_dashboard_column_content(
-            body_h, col_w, bool(_tile), col.get("category_details"), False, _tile,
+            body_h, col_w_isi, bool(_tile), col.get("category_details"), False, _tile,
             is_english(ctx.report),
         )
         _chart_h = _column_layout["chart_h"]
@@ -3951,7 +4113,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             # catatan yang sama membuat kotaknya bertumpuk (terukur: uji tumpang-tindih
             # menemukan dua "CATATAN:" persis bertindih di laporan 186/187/189).
             inner, _nc = _insight_main_chart_html(
-                _tile, ctx, col_w, _chart_h, notes=None, report=ctx.report,
+                _tile, ctx, col_w_isi, _chart_h, notes=None, report=ctx.report,
             )
             if inner:
         # PERMINTAAN USER: overflow:hidden DIBUANG dari pembungkus chart. Ia memotong TANPA
@@ -3961,12 +4123,12 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
         # maupun dari kita. Tanpa ini, salah hitung akan TERLIHAT (menonjol/menimpa) &
         # tertangkap tes tumpang tindih level span.
                 col_parts.append(
-                    f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
+                    f'<div style="position:absolute;left:{x_isi}in;top:{y}in;width:{col_w_isi}in;'
                     f'height:{_chart_h}in;">{inner}</div>'
                 )
                 if _has_cards:
                     y += _chart_h + 0.10
-                    body_h = max(1.0, _bawah_seksi - y - 0.10)
+                    body_h = max(0.25, _bawah_seksi - y - 0.10)
             elif _has_cards:
                 # chart tidak jadi digambar -> kartu memakai kembali seluruh tinggi kolom
                 _chart_h = 0.0
@@ -3984,9 +4146,9 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                 # sub-item TERBANYAK yang sungguhan ada; kalau tidak muat, yang dikurangi
                 # jumlah kartu per baris, bukan kedalaman kartunya.
                 cards_h = _column_layout["cards_h"]
-                inner, notes_consumed = _insight_detail_row_html(cards, col_w, cards_h, 0.0, ctx, notes=None)
+                inner, notes_consumed = _insight_detail_row_html(cards, col_w_isi, cards_h, 0.0, ctx, notes=None)
                 col_parts.append(
-                    f'<div style="position:absolute;left:{x}in;top:{y}in;width:{col_w}in;'
+                    f'<div style="position:absolute;left:{x_isi}in;top:{y}in;width:{col_w_isi}in;'
                     f'height:{cards_h}in;overflow:hidden;"><div style="position:relative;height:{cards_h}in;">{inner}</div></div>'
                 )
                 if False:  # catatan per kolom DIMATIKAN - lihat catatan A5 di atas
@@ -4026,9 +4188,9 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             _sisa_in = _bawah_seksi - _dasar_isi - 0.10
             if _sisa_in >= _DASH_COLS_FACT_H_IN:
                 col_parts.append(
-                    f'<div style="position:absolute;left:{x}in;top:{_dasar_isi + 0.06}in;'
-                    f'width:{col_w}in;height:{_DASH_COLS_FACT_H_IN}in;">'
-                    f'{_fact_strip_kolom_html(_fakta, col_w)}</div>'
+                    f'<div style="position:absolute;left:{x_isi}in;top:{_dasar_isi + 0.06}in;'
+                    f'width:{col_w_isi}in;height:{_DASH_COLS_FACT_H_IN}in;">'
+                    f'{_fact_strip_kolom_html(_fakta, col_w_isi)}</div>'
                 )
                 _y_terendah = max(_y_terendah, _dasar_isi + 0.06 + _DASH_COLS_FACT_H_IN)
             else:
@@ -4377,6 +4539,24 @@ class PDFExporter:
         else:
             palette = THEME_PALETTES["green"]
         accent_bar_color = palette["main"]
+        # ---- DOMINASI WARNA TEMA (permintaan user, HANYA jalur Visual/Management) --------
+        # Diukur dari render: pada tema bawaan non-gold, THEME_PALETTES menyetel
+        # "light"/"soft" ke GOLD_MAIN/GOLD_LIGHT - aksen emas yang TIDAK terkait warna tema.
+        # Keduanya dipakai di bar sub-item kartu bersarang & badge, jadi emas muncul ~21.000
+        # piksel per laporan; pada tema navy selisih hue-nya 169 derajat (praktis komplementer)
+        # dan pada teal 130 derajat - bukan "aksen yang serasi", tapi tabrakan.
+        # Untuk warna KUSTOM keempat peran sudah diturunkan dari satu hue (lihat cabang di
+        # atas); yang tertinggal cuma tema BAWAAN. Di sini ramp yang sama dipakai ulang -
+        # frac 0.30/0.12 persis seperti cabang kustom, jadi bukan aturan baru.
+        #
+        # SENGAJA di sini, bukan di THEME_PALETTES: palet itu dipakai BERSAMA oleh jalur
+        # Descriptive yang tidak boleh berubah sedikit pun. Dengan menyalin dict-nya lebih
+        # dulu, Descriptive tetap mendapat palet aslinya (emas) apa adanya.
+        if "management" in _template:
+            palette = dict(palette)
+            palette["light"] = _blend_with_white(palette["main"], 0.30)
+            palette["soft"] = _blend_with_white(palette["main"], 0.12)
+            accent_bar_color = palette["main"]
 
         pages = []  # list of (html, dark, flourish, is_last)
 

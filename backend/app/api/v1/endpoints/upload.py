@@ -22,12 +22,6 @@ from app.utils.sanitizer import sanitize_for_json
 
 router = APIRouter()
 
-_MONTH_NAMES_EN = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-]
-
-
 _DOMAIN_TITLE_LABELS = {
     "financial": ("Laporan Analisis Eksekutif Keuangan", "Financial Executive Analysis Report"),
     "keuangan": ("Laporan Analisis Eksekutif Keuangan", "Financial Executive Analysis Report"),
@@ -42,8 +36,16 @@ _DOMAIN_TITLE_LABELS = {
 def _default_report_title(template_type: Optional[str], domain_type: Optional[str] = None, language: Optional[str] = None) -> str:
     """
     Judul dipakai saat pengguna belum mengisi nama laporan sendiri — supaya laporan tidak
-    pernah tersimpan dengan judul kosong. Formatnya "{Nama Dasar} - {Bulan Tahun}", bisa
-    diganti pengguna kapan saja lewat halaman Preview & Edit atau History.
+    pernah tersimpan dengan judul kosong. Judulnya MURNI nama dasar topik data ("Laporan
+    Analisis Eksekutif Pengadaan"), bisa diganti pengguna kapan saja lewat halaman Preview &
+    Edit atau History.
+
+    PERMINTAAN USER: akhiran " - {Bulan} {Tahun}" DIBUANG. Dua alasan konkret: (1) bulan yang
+    ditempel diambil dari datetime.now() — WAKTU UNGGAH, bukan periode datanya, jadi file
+    berisi data Januari-September yang diunggah hari ini berjudul "... - September 2026" dan
+    menyesatkan; (2) periode data sudah tampil sebagai baris tersendiri di cover ("Periode
+    data. 1 Januari 2026 sampai 30 September 2026", dirakit dari period_start/period_end),
+    jadi akhiran ini duplikat yang lebih buruk dari sumber yang benar.
 
     `domain_type` (dideteksi AI dari isi file: financial/kpi_hr/soc_security/general/operasional)
     dipakai sebagai sumber utama nama dasar judul — BUKAN `template_type` lagi, karena tidak
@@ -63,8 +65,7 @@ def _default_report_title(template_type: Optional[str], domain_type: Optional[st
         base = labels[1] if is_en else labels[0]
     else:
         base = (template_type or ("Executive Analysis Report" if is_en else "Laporan Analisis Eksekutif")).split(" (")[0].strip()
-    now = datetime.now()
-    return f"{base} - {_MONTH_NAMES_EN[now.month - 1]} {now.year}"
+    return base
 
 
 def count_threats(parsed_data: list) -> dict:

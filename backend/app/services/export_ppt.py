@@ -47,11 +47,13 @@ from app.services.report_render_logic import (
     tinggi_kartu_in, wrap_line_count, kolom_yang_digambar, _kpi_card_widths, _NESTED_CARD_GAP_IN,
     metrik_judul_dashboard,
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
+    warna_pita_panel,
     fakta_strip_kolom, _DASH_COLS_FACT_H_IN, kumpulkan_catatan_halaman,
     alokasi_kolom_bertumpuk, _kepala_seksi_h_in,
     radar_label_layout,
     tinggi_kotak_catatan_halaman, tinggi_maks_kotak_catatan, _DASH_COLS_KEPALA_H_IN,
-    _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in,
+    _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in, _DASH_COLS_PAD_IN, _DASH_COLS_JUDUL_GAP_IN,
+    _DASH_COLS_TITLE_PAD_IN, _KPI_VALUE_MAX_PT,
     muat_catatan,
     _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
@@ -73,6 +75,8 @@ RED_CRIT = RGBColor(0xB2, 0x3A, 0x2E)
 RED_CRIT_BG = RGBColor(0xF8, 0xE2, 0xDE)
 # A2: garis tepi panel disamakan dgn acuan (#D6DBE3) - kembaran export_pdf.py.
 PANEL_BORDER = RGBColor(0xD6, 0xDB, 0xE3)
+# PITA KEPALA PANEL: warnanya TIDAK didefinisikan di sini - diturunkan dari warna TEMA
+# AKTIF lewat warna_pita_panel() di report_render_logic.py, sama seperti sisi PDF.
 # A5: warna label "Catatan:" di acuan.
 CATATAN_LABEL = RGBColor(0x00, 0xB0, 0x50)
 TITLE_FONT = "Bookman Old Style"
@@ -230,8 +234,15 @@ def _estimate_wrapped_height_in(text: str, font_pt: float, box_width_in: float) 
         return font_pt * 1.25 / 72
     avg_char_width_in = (font_pt * 0.6) / 72
     chars_per_line = max(int(box_width_in / avg_char_width_in), 1)
-    line_count = max(1, -(-len(text) // chars_per_line))  # ceil division
-    return line_count * (font_pt * 1.25) / 72
+    # Pemisah baris EKSPLISIT di dalam teks dipecah dulu. Nilai data dari berkas sumber bisa
+    # membawa pemisah barisnya sendiri (sisa pemecahan baris saat PDF sumber dibaca), dan
+    # ceil(len/kapasitas) menghitungnya sebagai satu baris panjang - padahal PowerPoint
+    # memulai baris baru di tiap pemisah itu. Terukur di kotak Catatan laporan 195: butir
+    # ketiga memakai 3 baris sementara perkiraan bilang 2, lalu butir keempat menimpanya.
+    line_count = 0
+    for potongan in (str(text).splitlines() or [""]):
+        line_count += max(1, -(-len(potongan) // chars_per_line))  # ceil division
+    return max(1, line_count) * (font_pt * 1.25) / 72
 
 
 def _no_shadow(shape):
@@ -1352,12 +1363,49 @@ def add_recommendation_banner_list(slide, x, y, w, items, title_pt=13, detail_pt
     return cur_y
 
 
-def add_native_bar_chart(slide, x, y, cx, cy, categories, values, colors=None, horizontal=False):
+def _paksa_semua_label_sumbu(axis):
+    """Setel c:tickLblSkip=1 - PowerPoint dilarang melewati label kategori.
+
+    Tanpa ini, plot yang pendek membuat PowerPoint diam-diam membuang sebagian nama batang.
+    Urutan anak di CT_CatAx ditentukan skema: tickLblSkip harus SEBELUM tickMarkSkip &
+    noMultiLvlLbl, jadi disisipkan relatif ke keduanya, bukan di-append begitu saja."""
+    from pptx.oxml.ns import qn
+    el = axis._element
+    ada = el.find(qn("c:tickLblSkip"))
+    if ada is not None:
+        ada.set("val", "1")
+        return
+    node = el.makeelement(qn("c:tickLblSkip"), {"val": "1"})
+    for nama in ("c:tickMarkSkip", "c:noMultiLvlLbl"):
+        sesudah = el.find(qn(nama))
+        if sesudah is not None:
+            sesudah.addprevious(node)
+            return
+    el.append(node)
+
+
+def _emu(v):
+    """Bulatkan panjang apa pun jadi EMU bilangan bulat.
+
+    BUG PRE-EXISTING DIPERBAIKI (disetujui user): pembagian `/` Python 3 menghasilkan float,
+    dan python-pptx menuliskannya MENTAH ke XML - `x="4523232.0"`. OOXML mensyaratkan EMU
+    bilangan bulat, jadi PowerPoint menolak berkasnya & meminta "repair". Terukur di jalur
+    Descriptive: 9 atribut pecahan di slide3/4/5/7. Kelas bug yang sama sudah ditambal di
+    jalur Management; helper ini menutupnya di SATU pintu masuk - semua chart native lewat
+    add_chart()."""
+    try:
+        return int(round(float(v)))
+    except (TypeError, ValueError):
+        return v
+
+
+def add_native_bar_chart(slide, x, y, cx, cy, categories, values, colors=None, horizontal=False,
+                         label_pt: float | None = None, jangan_lewati_label: bool = False):
     chart_data = CategoryChartData()
     chart_data.categories = categories
     chart_data.add_series("Jumlah", values)
     chart_type = XL_CHART_TYPE.BAR_CLUSTERED if horizontal else XL_CHART_TYPE.COLUMN_CLUSTERED
-    gframe = slide.shapes.add_chart(chart_type, x, y, cx, cy, chart_data)
+    gframe = slide.shapes.add_chart(chart_type, _emu(x), _emu(y), _emu(cx), _emu(cy), chart_data)
     chart = gframe.chart
     chart.has_legend = False
     # BUG YANG DIPERBAIKI (dilaporkan user, disertai tangkapan layar): python-pptx/PowerPoint
@@ -1368,7 +1416,9 @@ def add_native_bar_chart(slide, x, y, cx, cy, categories, values, colors=None, h
     plot = chart.plots[0]
     plot.has_data_labels = True
     dl = plot.data_labels
-    dl.font.size = Pt(11)
+    # `label_pt` DITAMBAHKAN belakangan (jalur Management). Default None = 11pt persis spt
+    # sebelumnya, supaya jalur Descriptive yang memanggil fungsi ini nol dampak.
+    dl.font.size = Pt(label_pt or 11)
     dl.font.name = BODY_FONT
     dl.font.bold = True
     try:
@@ -1399,8 +1449,10 @@ def add_native_bar_chart(slide, x, y, cx, cy, categories, values, colors=None, h
         chart.category_axis.has_minor_gridlines = False
         chart.category_axis.major_tick_mark = XL_TICK_MARK.NONE
         chart.category_axis.minor_tick_mark = XL_TICK_MARK.NONE
-        chart.category_axis.tick_labels.font.size = Pt(11)
+        chart.category_axis.tick_labels.font.size = Pt(label_pt or 11)
         chart.category_axis.tick_labels.font.name = BODY_FONT
+        if jangan_lewati_label:
+            _paksa_semua_label_sumbu(chart.category_axis)
         chart.value_axis.has_major_gridlines = False
         chart.value_axis.has_minor_gridlines = False
         chart.value_axis.visible = False
@@ -1430,7 +1482,7 @@ def add_native_doughnut_chart(
     chart_data = CategoryChartData()
     chart_data.categories = categories
     chart_data.add_series("Jumlah", values)
-    gframe = slide.shapes.add_chart(XL_CHART_TYPE.DOUGHNUT, x, y, cx, cy, chart_data)
+    gframe = slide.shapes.add_chart(XL_CHART_TYPE.DOUGHNUT, _emu(x), _emu(y), _emu(cx), _emu(cy), chart_data)
     chart = gframe.chart
     chart.has_legend = False
     chart.has_title = False  # lihat catatan sama di add_native_bar_chart soal judul default "Jumlah"
@@ -1497,7 +1549,7 @@ def add_native_gauge(slide, x, y, cx, cy, value, max_value=100, label="", color=
     chart_data = CategoryChartData()
     chart_data.categories = ["Value", "Remainder"]
     chart_data.add_series("Gauge", (pct * 100, (1 - pct) * 100))
-    gframe = slide.shapes.add_chart(XL_CHART_TYPE.DOUGHNUT, x, y, cx, cy, chart_data)
+    gframe = slide.shapes.add_chart(XL_CHART_TYPE.DOUGHNUT, _emu(x), _emu(y), _emu(cx), _emu(cy), chart_data)
     chart = gframe.chart
     chart.has_legend = False
     chart.has_title = False
@@ -1539,7 +1591,7 @@ def add_native_bubble_chart(slide, x, y, cx, cy, points, color=None):
     series = chart_data.add_series("Data")
     for p in points:
         series.add_data_point(p["count"], p["avg"], p["count"])
-    gframe = slide.shapes.add_chart(XL_CHART_TYPE.BUBBLE, x, y, cx, cy, chart_data)
+    gframe = slide.shapes.add_chart(XL_CHART_TYPE.BUBBLE, _emu(x), _emu(y), _emu(cx), _emu(cy), chart_data)
     chart = gframe.chart
     chart.has_legend = False
     chart.has_title = False
@@ -1722,7 +1774,7 @@ def add_native_radar_chart(slide, x, y, cx, cy, axes, values, color=None):
     chart_data = CategoryChartData()
     chart_data.categories = axes
     chart_data.add_series("Skor", values)
-    gframe = slide.shapes.add_chart(XL_CHART_TYPE.RADAR_MARKERS, x, y, cx, cy, chart_data)
+    gframe = slide.shapes.add_chart(XL_CHART_TYPE.RADAR_MARKERS, _emu(x), _emu(y), _emu(cx), _emu(cy), chart_data)
     chart = gframe.chart
     chart.has_legend = False
     chart.has_title = False
@@ -1740,16 +1792,31 @@ def add_native_radar_chart(slide, x, y, cx, cy, axes, values, color=None):
         chart.value_axis.maximum_scale = 100
     except Exception:
         pass
-    size_px = min(cx.inches, cy.inches) * 96
+    # BUG PRE-EXISTING DIPERBAIKI (disetujui user): `cx`/`cy` boleh datang sbg Length
+    # (punya .inches) ATAU sbg angka EMU mentah - pemanggil di jalur Descriptive mengoper
+    # hasil perhitungan float, dan barisnya langsung meledak dgn
+    # AttributeError: 'float' object has no attribute 'inches', menggagalkan SELURUH ekspor
+    # PPTX Descriptive untuk data yang punya >=3 kolom numerik. Ini crash, bukan soal gaya.
+    # Dinormalkan lewat Emu(int(...)) - pola yang sama sudah dipakai di jalur Management.
+    _cx_in = cx.inches if hasattr(cx, "inches") else Emu(int(cx)).inches
+    _cy_in = cy.inches if hasattr(cy, "inches") else Emu(int(cy)).inches
+    size_px = min(_cx_in, _cy_in) * 96
     label_layout = radar_label_layout(axes, size_px, max(55 * min(size_px / 220, 1.3), 16))
     if label_layout is None:
         return gframe
     for text, label_x, label_y, anchor, font_size in label_layout:
         width_px = max(font_size * 0.52, len(text) * font_size * 0.52)
         left_px = label_x - width_px if anchor == "end" else (label_x - width_px / 2 if anchor == "middle" else label_x)
+        # `x`/`y` ikut dinormalkan: kalau keduanya float mentah, penjumlahan dgn Inches()
+        # menghasilkan float lagi dan tertulis mentah ke XML sbg EMU pecahan (PowerPoint
+        # menolak file-nya & minta "repair") - kelas bug yang sama sudah diperbaiki di
+        # jalur Management.
+        _x0 = int(x) if not hasattr(x, "inches") else int(x)
+        _y0 = int(y) if not hasattr(y, "inches") else int(y)
         label = slide.shapes.add_textbox(
-            x + Inches(left_px / 96), y + Inches((label_y - font_size) / 96),
-            Inches(width_px / 96), Inches(font_size * 1.2 / 96),
+            Emu(_x0 + int(Inches(left_px / 96))),
+            Emu(_y0 + int(Inches((label_y - font_size) / 96))),
+            Emu(int(Inches(width_px / 96))), Emu(int(Inches(font_size * 1.2 / 96))),
         )
         label.text_frame.word_wrap = False
         paragraph = label.text_frame.paragraphs[0]
@@ -1767,7 +1834,7 @@ def add_grouped_bar_chart(slide, x, y, cx, cy, categories, series_a, series_b, l
     chart_data.categories = categories
     chart_data.add_series(label_a or "A", series_a)
     chart_data.add_series(label_b or "B", series_b)
-    gframe = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, x, y, cx, cy, chart_data)
+    gframe = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, _emu(x), _emu(y), _emu(cx), _emu(cy), chart_data)
     chart = gframe.chart
     chart.has_legend = True
     chart.legend.include_in_layout = False
@@ -1941,7 +2008,16 @@ def add_ranked_bar_ternorm(slide, x, y, cx, cy, labels, values, color=None, is_e
     maks = max(values) or 1
     x_in, y_in = Emu(x).inches, Emu(y).inches
     w_in, h_in = Emu(cx).inches, Emu(cy).inches
-    lbl_w, val_w, kaki = 1.25, 0.85, 0.22
+    # KEPUTUSAN USER: kaki legenda "| relatif terhadap tertinggi - tertinggi X" DIBUANG dari
+    # ranked bar ternormalisasi. Bukan karena tidak penting - keterangan skala ini justru
+    # wajib supaya panjang batang tidak disalahbaca absolut - tapi karena teks yang SAMA
+    # sudah tercetak di pita kepala panel lewat cara_baca_kolom() ("skala relatif thd
+    # tertinggi - tertinggi X"), jadi ia muncul dua kali dalam satu panel. Yang di pita
+    # dipertahankan karena terbaca SEBELUM chart, sesuai acuan. Kaki grouped_bar_ternorm
+    # TIDAK ikut dibuang: isinya peringatan lain ("panjang sama BUKAN berarti nilai sama")
+    # yang tidak ada duanya di mana pun.
+    # `kaki` = 0.0: tinggi yang tadinya dipesan utk kaki sekarang jatuh ke baris chart.
+    lbl_w, val_w, kaki = 1.25, 0.85, 0.0
     track_w = max(0.5, w_in - lbl_w - val_w - 0.15)
     n = max(1, len(values))
     # DISAMAKAN DGN ACUAN (kembaran export_pdf.py): baris 0.35in, bar 0.10in.
@@ -1954,12 +2030,14 @@ def add_ranked_bar_ternorm(slide, x, y, cx, cy, labels, values, color=None, is_e
         _set_font(tp, BODY_FONT, Pt(7), color=TEXT_DARK)
         trek = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in + lbl_w),
                                       Inches(ty + row_h * 0.30), Inches(track_w), Inches(min(0.10, max(0.07, row_h * 0.34))))
+        _modest_corner(trek)
         trek.fill.solid(); trek.fill.fore_color.rgb = PANEL_BORDER
         trek.line.fill.background(); _no_shadow(trek)
         frac = max(0.012, float(val) / maks)
         isi = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in + lbl_w),
                                      Inches(ty + row_h * 0.30), Inches(max(0.05, track_w * frac)),
                                      Inches(min(0.10, max(0.07, row_h * 0.34))))
+        _modest_corner(isi)
         isi.fill.solid(); isi.fill.fore_color.rgb = _as_rgb(warna, GREEN_MAIN)
         isi.line.fill.background(); _no_shadow(isi)
         vb = slide.shapes.add_textbox(Inches(x_in + lbl_w + track_w + 0.06), Inches(ty),
@@ -1968,10 +2046,6 @@ def add_ranked_bar_ternorm(slide, x, y, cx, cy, labels, values, color=None, is_e
         vp.text = _fmt_num(val)
         vp.alignment = PP_ALIGN.RIGHT
         _set_font(vp, BODY_FONT, Pt(9.5), bold=True, color=TEXT_DARK)
-    sb = slide.shapes.add_textbox(Inches(x_in), Inches(y_in + h_in - kaki), Inches(w_in), Inches(kaki))
-    sp = sb.text_frame.paragraphs[0]
-    sp.text = ("relative to highest - highest %s" if is_en else "relatif terhadap tertinggi - tertinggi %s") % _fmt_num(maks)
-    _set_font(sp, BODY_FONT, Pt(7), color=GRAY_TEXT)
 
 
 def add_grouped_bar_ternorm(slide, x, y, cx, cy, labels, seri_a, seri_b, label_a="", label_b="",
@@ -3443,6 +3517,7 @@ def _build_management_kpi_grid_slide(block: dict, ctx: _PptBlockContext):
         col = color_map.get(it.get("color", "blue"), ctx.accent_main)
         # Background card
         rect = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, cy, card_w, card_h)
+        _modest_corner(rect)
         rect.fill.solid()
         rect.fill.fore_color.rgb = IVORY
         rect.line.color.rgb = col
@@ -3486,6 +3561,7 @@ def _draw_fact_strip_kolom(slide, pasangan: list, x_in: float, y_in: float, w_in
         bx = x_in + i * (kotak_w + 0.08)
         kotak = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(bx), Inches(y_in),
                                        Inches(kotak_w), Inches(_DASH_COLS_FACT_H_IN))
+        _modest_corner(kotak)
         kotak.fill.solid(); kotak.fill.fore_color.rgb = RGBColor(0xF2, 0xF4, 0xF7)
         kotak.line.fill.background(); _no_shadow(kotak)
         tb = slide.shapes.add_textbox(Inches(bx + 0.07), Inches(y_in + 0.06),
@@ -3760,6 +3836,29 @@ def _build_management_visual_dashboard_slide(block: dict, ctx: _PptBlockContext)
     return slide
 
 
+def _rapatkan_margin(tf, kiri: float = 0.0, kanan: float = 0.0,
+                     atas: float | None = None, bawah: float | None = None):
+    """Nolkan margin dalam kotak teks, lalu kembalikan lebar yang HILANG karenanya (inci).
+
+    CACAT NYATA YANG DIPERBAIKI (terlihat di ekspor PowerPoint, tidak terlihat dari
+    python-pptx): tiap kotak teks python-pptx lahir dengan margin 0,1in di kiri DAN kanan -
+    0,2in, setara 14,4pt. Rumus pengepasan font di sini menghitung ruang dari LEBAR KOTAK,
+    jadi ia mengira punya 0,2in lebih banyak dari yang sebenarnya ada. Di kartu KPI selebar
+    ~0,85in itu bukan selisih kecil: ruang yang diklaim 38pt nyatanya 24pt, dan "26.068"
+    pecah jadi "26.0" / "68". Angka yang terbelah terbaca sebagai angka lain - kelas
+    kesalahan yang sama seperti angka terpotong.
+    Dinolkan, BUKAN dikurangkan dari rumus: kartu ini sudah punya inset sendiri (0,16in tiap
+    sisi) dan margin kedua di atasnya cuma menyempitkan tanpa menambah apa pun."""
+    hilang = tf.margin_left.inches + tf.margin_right.inches
+    tf.margin_left = Inches(kiri)
+    tf.margin_right = Inches(kanan)
+    if atas is not None:
+        tf.margin_top = Inches(atas)
+    if bawah is not None:
+        tf.margin_bottom = Inches(bawah)
+    return hilang - (kiri + kanan)
+
+
 def _insight_kpi_row(slide, cards: list, x_in: float, total_w_in: float, h_in: float, y_in: float, theme: dict | None = None) -> None:
     """Lapis ringkasan KPI (permintaan user poin 2/6): kartu lebar TAK SAMA (dari isi
     masing2, lihat _kpi_card_widths), label kecil kapital berspasi + nilai besar tebal
@@ -3777,12 +3876,14 @@ def _insight_kpi_row(slide, cards: list, x_in: float, total_w_in: float, h_in: f
         box.line.width = Pt(0.75)
         _no_shadow(box)
         lbl_box = slide.shapes.add_textbox(Inches(x + 0.16), Inches(y_in + 0.13), Inches(w - 0.32), Inches(0.2))
+        _rapatkan_margin(lbl_box.text_frame, atas=0.0, bawah=0.0)
         lp = lbl_box.text_frame.paragraphs[0]
         lp.alignment = PP_ALIGN.LEFT
         lp.text = card["label"]
         _set_font(lp, BODY_FONT, Pt(8), bold=True, color=GRAY_TEXT)
         val_box = slide.shapes.add_textbox(Inches(x + 0.16), Inches(y_in + 0.4), Inches(w - 0.32), Inches(max(0.3, h_in - 0.5)))
         vtf = val_box.text_frame
+        _rapatkan_margin(vtf, atas=0.0, bawah=0.0)
         vtf.word_wrap = True
         vp = vtf.paragraphs[0]
         vp.alignment = PP_ALIGN.LEFT
@@ -3794,7 +3895,33 @@ def _insight_kpi_row(slide, cards: list, x_in: float, total_w_in: float, h_in: f
         # faktor 0.56 -> 0.62: terukur dari render, 0.56 masih membiarkan nilai spt
         # "Requests (50%)" membungkus ke baris kedua & TERPOTONG tepi bawah kartu
         # (kasus yang persis dicontohkan user: "(85%)" jatuh di luar rect kartu).
-        _size_pt = min(20.0, max(9.5, _avail_pt / (len(_val) * 0.62))) if _val else 20.0
+        # PLAFON diturunkan 20pt -> _KPI_VALUE_MAX_PT (15pt), kembaran export_pdf.py:
+        # kartu KPI elemen SEKUNDER. Lihat catatan di konstanta (report_render_logic.py).
+        # Kembaran export_pdf.py: ukuran dibatasi oleh TOKEN TERPANJANG, bukan panjang
+        # seluruh teks - pembungkusan tidak bisa memecah "311221140243,0", jadi rumus yang
+        # memakai len(teks) penuh memberi ukuran yang terlalu besar & nilainya meluber keluar
+        # kartu. Batas bawah 7pt (bukan 9,5) supaya angka panjang tetap tergambar UTUH:
+        # angka yang terpotong terbaca sebagai angka lain yang masuk akal, dan itu jauh lebih
+        # berbahaya daripada angka yang kecil.
+        # DUA syarat, bukan satu - kembaran persis _insight_kpi_row_html di export_pdf.py.
+        # Rumus satu-baris sebelumnya hanya menjamin token TERPANJANG muat lebarnya, jadi
+        # nilai yang punya titik pecah ("Tender Terbuka (21,2%)") tetap dapat 15pt, lalu
+        # membungkus jadi 3 baris dan tumpah KELUAR kartu ke panel di bawahnya (terlihat di
+        # ekspor PowerPoint v19). Yang kurang: jumlah baris hasil wrap SUNGGUHAN harus muat
+        # di tinggi sisa kartu. Sisi PDF sudah begini sejak lama; sisi PPT ketinggalan.
+        _h_isi_pt = max(10.0, max(0.3, h_in - 0.5) * 72.0 - 4.0)
+        _w_isi_px = max(24.0, _avail_pt / 72.0 * 96.0)
+        _size_pt = _KPI_VALUE_MAX_PT
+        if _val:
+            _token_pt = max((len(_t) for _t in _val.split()), default=len(_val)) * 0.62
+            for _p_kpi in (15.0, 14.0, 13.0, 12.0, 11.0, 10.0, 9.5, 9.0, 8.0, 7.0):
+                _size_pt = _p_kpi
+                _muat_tinggi = (wrap_line_count(_val, _w_isi_px, _p_kpi, 0.62)
+                                * _p_kpi * 1.15) <= _h_isi_pt
+                _muat_lebar = _token_pt * _p_kpi <= _avail_pt
+                if _muat_tinggi and _muat_lebar:
+                    break
+            _size_pt = min(_KPI_VALUE_MAX_PT, _size_pt)
         _set_font(vp, TITLE_FONT, Pt(_size_pt), bold=True, color=TEXT_DARK)
         x += w + gap_in
 
@@ -3855,30 +3982,47 @@ def _nested_category_card(slide, card: dict, x_in: float, y_in: float, w_in: flo
     np_.text = card["name"]
     _set_font(np_, BODY_FONT, Pt(_nm_pt), bold=True, color=WHITE)
 
-    score_box = slide.shapes.add_textbox(Inches(x_in + 0.12), Inches(y_in + 0.27), Inches(w_in * 0.55), Inches(0.36))
+    # CACAT NYATA DIPERBAIKI (dilaporkan user: badge menumpuk MENUTUPI sebagian angka):
+    # lebar kotak skor dulu dipatok w*0.55 tanpa melihat badge, padahal badge duduk di sudut
+    # kanan kartu yang sama. Terukur di kartu selebar 2,2in: kotak skor berakhir di 1,33in
+    # sementara badge mulai di 1,18in - bertindih 0,15in, dan nilai yang panjang benar-benar
+    # tergambar di bawah kapsulnya. Sekarang lebar kotak skor dihitung MUNDUR dari tepi kiri
+    # badge, dan fontnya ikut mengecil kalau angkanya tetap tidak muat.
+    _badge_w_prev = (min(0.9, max(0.5, len(str(card.get("badge") or "")) * 0.09 + 0.3))
+                     if card.get("badge") else 0.0)
+    _skor_w = max(0.6, w_in - 0.12 - (_badge_w_prev + 0.12 + 0.08 if _badge_w_prev else 0.12))
+    _skor = str(card["score"])
+    _skor_pt = min(16.0, max(9.0, (_skor_w * 72.0) / max(1, len(_skor)) / 0.60))
+    score_box = slide.shapes.add_textbox(Inches(x_in + 0.12), Inches(y_in + 0.27), Inches(_skor_w), Inches(0.36))
+    _rapatkan_margin(score_box.text_frame, atas=0.0, bawah=0.0)
+    score_box.text_frame.word_wrap = False
     sp = score_box.text_frame.paragraphs[0]
     sp.alignment = PP_ALIGN.LEFT
-    sp.text = card["score"]
-    _set_font(sp, TITLE_FONT, Pt(16), bold=True, color=WHITE)
+    sp.text = _skor
+    _set_font(sp, TITLE_FONT, Pt(_skor_pt), bold=True, color=WHITE)
 
-    badge_w_in = min(0.9, max(0.5, len(card["badge"]) * 0.09 + 0.3))
-    badge_x_in = x_in + w_in - badge_w_in - 0.12
-    badge = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(badge_x_in), Inches(y_in + 0.32), Inches(badge_w_in), Inches(0.22))
-    try:
-        badge.adjustments[0] = 0.5
-    except Exception:
-        pass
-    badge.fill.solid()
-    badge.fill.fore_color.rgb = t["light"]
-    badge.line.fill.background()
-    _no_shadow(badge)
-    btf = badge.text_frame
-    btf.margin_left = btf.margin_right = Inches(0.02)
-    btf.margin_top = btf.margin_bottom = Inches(0.01)
-    bp = btf.paragraphs[0]
-    bp.alignment = PP_ALIGN.CENTER
-    bp.text = card["badge"]
-    _set_font(bp, BODY_FONT, Pt(7.5), bold=True, color=t["bg"])
+    # Badge boleh kosong: panel beda-satuan sengaja TIDAK memberi vonis Tinggi/Rendah
+    # (lihat "satuan_beragam" di report_render_logic.py). Tanpa penjaga ini yang
+    # tergambar adalah kapsul berwarna tanpa teks di sudut kartu.
+    if card.get("badge"):
+        badge_w_in = min(0.9, max(0.5, len(card["badge"]) * 0.09 + 0.3))
+        badge_x_in = x_in + w_in - badge_w_in - 0.12
+        badge = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(badge_x_in), Inches(y_in + 0.32), Inches(badge_w_in), Inches(0.22))
+        try:
+            badge.adjustments[0] = 0.5
+        except Exception:
+            pass
+        badge.fill.solid()
+        badge.fill.fore_color.rgb = t["light"]
+        badge.line.fill.background()
+        _no_shadow(badge)
+        btf = badge.text_frame
+        btf.margin_left = btf.margin_right = Inches(0.02)
+        btf.margin_top = btf.margin_bottom = Inches(0.01)
+        bp = btf.paragraphs[0]
+        bp.alignment = PP_ALIGN.CENTER
+        bp.text = card["badge"]
+        _set_font(bp, BODY_FONT, Pt(7.5), bold=True, color=t["bg"])
 
     # BUG NYATA DIPERBAIKI (permintaan user, koreksi "tidak ada dimensi kedua"): dulu frac/
     # target_frac DIHITUNG ULANG di sini dari `it["value"]` thd max HANYA di antara sub-item
@@ -3972,6 +4116,17 @@ def _insight_detail_row(slide, cards: list, x_in: float, total_w_in: float, h_in
 
 
 _CHART_SIDE_PANEL_MIN_W_IN = 2.5
+# Ambang bingkai area chart - HARUS sama dgn _CHART_FRAME_MIN_FILL di export_pdf.py,
+# kalau berbeda satu format dapat bingkai & satunya tidak untuk chart yang sama.
+_CHART_FRAME_MIN_FILL = 0.70
+
+
+def _hex_tema(nilai) -> str:
+    """RGBColor/str -> "#RRGGBB". Aturan warna pita tinggal di report_render_logic.py yang
+    bekerja dgn hex (dipakai bersama sisi PDF); ini cuma jembatan tipe, bukan keputusan warna."""
+    if isinstance(nilai, str):
+        return nilai if nilai.startswith("#") else "#" + nilai
+    return "#%02X%02X%02X" % (nilai[0], nilai[1], nilai[2])
 
 
 def _as_rgb(nilai, cadangan):
@@ -3992,6 +4147,32 @@ def _as_rgb(nilai, cadangan):
     return cadangan
 
 
+def _label_satu_baris(x) -> str:
+    """Ratakan pemisah baris di dalam satu label jadi spasi.
+
+    Lihat scratchpad/patch_label_baris: HTML sudah meratakannya sendiri, PowerPoint tidak -
+    jadi tanpa ini label yang sama tampil satu baris di PDF dan dua baris di PPTX."""
+    return " ".join(str(x if x is not None else "").split())
+
+
+def _kat_bar(tile: dict) -> list:
+    """Daftar kategori yang akan jadi label sumbu - satu tempat, supaya penghitung ukuran
+    font tidak bisa memakai jumlah yang berbeda dari yang benar-benar digambar."""
+    return ((tile.get("bars") or [])
+            or (tile.get("labels") or [])
+            or ((tile.get("chart") or {}).get("categories") or []))
+
+
+def _pt_label_bar(tinggi_in: float, n_kat: int) -> float:
+    """Ukuran font label sumbu yang muat di pita per kategori.
+
+    Tinggi plot dibagi jumlah kategori = tinggi pita; label butuh ~1,35x ukuran fontnya
+    (tinggi baris + napas). Dibatasi 6-11pt: 11pt = nilai lama (jangan membesar dari itu),
+    6pt = batas masih terbaca saat dicetak."""
+    n = max(1, int(n_kat or 1))
+    return max(6.0, min(11.0, (float(tinggi_in) * 72.0 / n) / 1.35))
+
+
 def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float, h_in: float, theme: dict | None = None, notes: list | None = None, is_en: bool = False) -> bool:
     """PERMINTAAN USER ("hapus jalur management_visual_dashboard, semua lewat insight"): tile
     "space-hungry" (kpi_radar/period_compare/time_heatmap, lihat _build_chart_insight_page di
@@ -4008,8 +4189,35 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
     `notes` terpakai di panel ini (pemanggil tidak boleh menggambarnya lagi di bawah)."""
     t = theme or THEME_PALETTES["green"]
     kind = tile["tile_kind"]
+
+    # RAMP KATEGORI DARI TEMA AKTIF (kembaran export_pdf.py::_gambar_chart).
+    # CATEGORY_COLOR_RAMP modul-level dievaluasi SAAT IMPORT dari GREEN_MAIN/GOLD_MAIN, jadi
+    # chart yang jatuh ke sana tetap hijau-emas walau laporannya bertema navy/teal. Diputar,
+    # bukan dipotong, supaya nilai lebih banyak dari 5 tidak meng-index di luar batas.
+    # Dilewatkan sbg `colors=`; default None pemanggil lain tidak berubah, jadi jalur
+    # Descriptive tetap memakai CATEGORY_COLOR_RAMP persis seperti sebelumnya.
+    def _ramp_tema(n: int) -> list:
+        _b = [t["main"], t["chart"], t["light"], t["soft"], GRAY_TEXT]
+        return [_b[i % len(_b)] for i in range(max(1, n))]
+
     margin_in = 0.15
-    cx_in, cy_in = max(1.0, w_in - 2 * margin_in), max(1.0, h_in - 2 * margin_in)
+    # CACAT NYATA DIPERBAIKI (terukur, bukan dugaan): lantai `max(1.0, ...)` dulu berlaku utk
+    # TINGGI juga. Begitu perencana menjatah kurang dari 1,0in + margin - lazim untuk tile
+    # KEDUA di kolom bertumpuk - chart tetap digambar 1,0in dan MENEMBUS slotnya, lalu
+    # tertimpa kotak Catatan sehingga terlihat terpotong. Di v21 slide 3: Catatan mulai
+    # y=5,73in sementara dua chart berakhir 6,02in & 5,84in, dua-duanya tinggi TEPAT 1,00in.
+    #
+    # Lebar tetap berlantai 1,0in (kolom selalu jauh lebih lebar dari itu, jadi lantainya
+    # cuma penjaga nilai degenerate). Tinggi TIDAK boleh melewati jatah: kontraknya milik
+    # perencana, yang sudah punya ambang keterbacaan sendiri (chart_min_height_in). Lantai
+    # 0,25in disisakan semata-mata supaya tidak pernah ada shape nol/negatif di PPTX.
+    # Kalau jatahnya genuinely terlalu kecil, itu dicatat - bukan ditutupi dgn melewati slot.
+    cx_in = max(1.0, w_in - 2 * margin_in)
+    cy_in = max(0.25, h_in - 2 * margin_in)
+    if h_in - 2 * margin_in < 1.0:
+        logger.info("tinggi chart %s dijatah %.2fin (area gambar %.2fin) - di bawah 1,0in, "
+                    "digambar sesuai jatah supaya tidak menembus kotak catatan",
+                    tile.get("tile_kind"), h_in, cy_in)
     chart_w_in = cx_in
     if kind == "kpi_radar":
         chart_w_in = min(cx_in, cy_in)
@@ -4034,6 +4242,24 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
             add_note_box(slide, Inches(x_in), Inches(y_in + h_in - note_h_in), Inches(w_in),
                          notes, theme=t, title=note_title)
             notes_consumed = True
+    # ---- BINGKAI AREA CHART (permintaan user; kembaran export_pdf.py) ------------------
+    # Aturan keputusan SAMA PERSIS dgn sisi PDF supaya kedua format tidak berbeda: bingkai
+    # cuma dipasang kalau chart benar-benar MENGISI kotaknya (>= _CHART_FRAME_MIN_FILL dari
+    # lebar). kpi_radar BUJURSANGKAR mengecil mengikuti sisi terpendek - di kolom pendek ia
+    # cuma mengisi sepertiga lebar, dan membingkainya berarti membingkai ruang kosong.
+    # Digambar DULU (sebelum chart) supaya jadi alas, bukan menutupi chart. Kotaknya TIDAK
+    # diisi warna & tidak menambah ukuran apa pun - murni garis di batas area yang sudah
+    # dipesan, jadi anggaran tinggi kolom tidak berubah sedikit pun.
+    # Napas plot-ke-bingkai di sini SUDAH ada lewat `margin_in` (0.15in, chart digambar di
+    # x_in+margin_in) - lebih lega dari 0.08in acuan, jadi TIDAK dirapatkan maupun ditambah.
+    if chart_w_in >= w_in * _CHART_FRAME_MIN_FILL:
+        _bk = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in), Inches(y_in),
+                                     Inches(w_in), Inches(h_in))
+        _modest_corner(_bk)
+        _bk.fill.background()
+        _bk.line.color.rgb = PANEL_BORDER
+        _bk.line.width = Pt(0.75)
+        _no_shadow(_bk)
     x0_in, y0_in = x_in + margin_in, y_in + margin_in
     if kind == "kpi_radar":
         add_native_radar_chart(
@@ -4047,16 +4273,21 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
             label_a=tile["label_a"], label_b=tile["label_b"], color_a=t["main"], color_b=t["chart"],
         )
     elif kind == "time_heatmap":
+        # Label diratakan jadi satu baris - lihat _label_satu_baris. Tanpa ini nilai data yang
+        # membawa pemisah baris sendiri tampil 2 baris di PPTX padahal 1 baris di PDF.
         add_heatmap_grid(
             slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
-            tile["day_labels"], tile["hour_labels"], tile["grid"], color=t["main"],
+            [_label_satu_baris(v) for v in tile["day_labels"]],
+            [_label_satu_baris(v) for v in tile["hour_labels"]],
+            tile["grid"], color=t["main"],
         )
     # ---- KEMBARAN PERSIS dari _insight_main_chart_html di export_pdf.py (lihat catatan
     # panjang di sana). Diubah BERSAMAAN dalam satu perubahan: divergensi dua engine sudah
     # dua kali jadi sumber bug di berkas ini. ----
     elif kind == "status_funnel":
         add_funnel_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
-                         tile["categories"], tile["values"], color=t["main"])
+                         [_label_satu_baris(v) for v in tile["categories"]],
+                         tile["values"], color=t["main"])
     elif kind == "kpi_gauge":
         _g = min(cx_in, cy_in)
         add_native_gauge(slide, Inches(x0_in), Inches(y0_in), Inches(_g), Inches(_g),
@@ -4072,23 +4303,42 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
                                _c.get("categories") or [], _c.get("values") or [],
                                _c.get("cumulative"), color=t["main"])
         else:
+            # tanpa dimensi waktu -> ranked bar horizontal, kembaran _bar_chart_html di PDF
             add_native_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
                                  _c.get("categories") or [], _c.get("values") or [],
-                                 colors=[t["main"]] * len(_c.get("values") or []))
+                                 colors=[t["main"]] * len(_c.get("values") or []),
+                                 horizontal=True,
+                                 label_pt=_pt_label_bar(cy_in, len(_kat_bar(tile))), jangan_lewati_label=True)
     elif kind == "custom_topic":
         _style = (tile.get("chart_style") or "bar").lower()
         _labels, _values = tile.get("labels") or [], tile.get("values") or []
         if _style == "donut":
-            _d = min(cx_in, cy_in)
-            add_native_doughnut_chart(slide, Inches(x0_in), Inches(y0_in), Inches(_d), Inches(_d),
-                                      _labels, _values)
+            # CACAT NYATA DIPERBAIKI (terukur di laporan 195): donat di jalur INI digambar
+            # tanpa legend sama sekali, jadi 4 dari 4 nama irisan ("Kantor Pusat", "Gudang
+            # Lini I", ...) tidak pernah sampai ke PPTX - pembaca melihat lingkaran berwarna
+            # tanpa keterangan apa pun. Cabang donat di _mgmt_tile_chart sudah benar sejak
+            # awal; yang ini tertinggal. Aturannya disalin dari sana: ekor digabung dulu
+            # (supaya tidak ada irisan yatim tanpa keterangan), tinggi legend dihitung LEBIH
+            # DULU, lalu donat diberi SISA ruangnya - bukan sebaliknya.
+            _dl, _dv, _dc = _merge_tail_into_other(_labels, _values, _ramp_tema(len(_values)))
+            _gap = 0.05
+            _lh = mini_legend_height_needed_in(_dl, Inches(cx_in), False) + _gap
+            _d = min(cx_in, max(0.35, cy_in - _lh))
+            _dx = x0_in + (cx_in - _d) / 2
+            add_native_doughnut_chart(slide, Inches(_dx), Inches(y0_in), Inches(_d), Inches(_d),
+                                      _dl, _dv, colors=_dc, theme=t)
+            _add_mini_legend(slide, Inches(x0_in), Inches(y0_in + _d + _gap), Inches(cx_in),
+                             _dl, _dc, compact=False)
         elif _style == "stacked":
             add_stacked_proportion_bar(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in),
                                        _values, labels=_labels,
+                                       colors=_ramp_tema(len(_values)),
                                        height=Inches(max(0.42, min(0.75, cy_in * 0.22))))
         else:
             add_native_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
-                                 _labels, _values, colors=[t["main"]] * len(_values))
+                                 _labels, _values, colors=[t["main"]] * len(_values),
+                                 horizontal=True,
+                                 label_pt=_pt_label_bar(cy_in, len(_kat_bar(tile))), jangan_lewati_label=True)
     elif kind == "risk_heatmap":
         _bars = tile.get("bars") or []
         # warna tile datang sbg string heks (dipakai apa adanya di sisi PDF); python-pptx
@@ -4118,7 +4368,9 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
         # user sbg keputusan, bukan dikerjakan diam-diam.
         add_native_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
                              [b.get("label") for b in _bars], [b.get("count") for b in _bars],
-                             colors=[_as_rgb(_cmap.get(b.get("color", "gray")), t["main"]) for b in _bars])
+                             colors=[_as_rgb(_cmap.get(b.get("color", "gray")), t["main"]) for b in _bars],
+                             horizontal=True,
+                             label_pt=_pt_label_bar(cy_in, len(_kat_bar(tile))), jangan_lewati_label=True)
     elif kind == "metric_share":
         # palet DIPUTAR, bukan dipotong - lihat catatan kembarannya di export_pdf.py
         _tv = tile.get("values") or []
@@ -4147,20 +4399,21 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
             _no_shadow(_swp)
     elif kind == "metric_mix":
         _mm_h = Inches(max(0.44, min(0.8, cy_in * 0.24)))
+        _mm_ramp = _ramp_tema(len(tile.get("values") or []))
         add_stacked_proportion_bar(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in),
                                    tile.get("values") or [], labels=tile.get("labels") or [],
-                                   height=_mm_h)
+                                   colors=_mm_ramp, height=_mm_h)
         # BUG NYATA DIPERBAIKI (kembaran export_pdf.py): planner sudah menaruh
         # tile["catatan_lainnya"] saat segmen "Lainnya" sendiri terlalu tipis diberi label
         # DI ATAS batang - cabang ini TIDAK PERNAH membacanya, keterangannya dibuang diam2 &
         # label itu hilang tanpa jejak sama sekali. `add_stacked_proportion_bar` TIDAK diberi
-        # `colors` di sini, jadi ia jatuh ke CATEGORY_COLOR_RAMP internal - petak warna di
-        # bawah HARUS mengikuti fallback yang SAMA.
+        # Petak warna di bawah HARUS warna segmen TERAKHIR yang benar-benar digambar -
+        # sekarang batangnya diberi `_mm_ramp` eksplisit, jadi petaknya membaca ramp itu.
         if tile.get("catatan_lainnya"):
             _mm_v = tile.get("values") or []
             _mm_label_h = 0.32 if tile.get("labels") else 0.0
             _mm_bawah = y0_in + _mm_label_h + Emu(_mm_h).inches + 0.03
-            _mm_c = CATEGORY_COLOR_RAMP[(len(_mm_v) - 1) % len(CATEGORY_COLOR_RAMP)] if _mm_v else GRAY_TEXT
+            _mm_c = _mm_ramp[(len(_mm_v) - 1) % len(_mm_ramp)] if _mm_v else GRAY_TEXT
             _swp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x0_in),
                                           Inches(_mm_bawah + 0.01), Inches(0.08), Inches(0.08))
             _swp.fill.solid(); _swp.fill.fore_color.rgb = _as_rgb(_mm_c, t["main"])
@@ -4243,8 +4496,14 @@ def _build_management_insight_page_slide(block: dict, ctx: _PptBlockContext):
 # yang bersentuhan, bukan ruang kosong. Sebelumnya 0.28in.
 _DASH_COLS_GAP_IN = 0.0
 # PITA kepala, bukan kotak judul (kembaran export_pdf.py): acuan 0.16in, dipakai 0.20in.
+# PITA kepala: LANTAI saja - tinggi sesungguhnya dihitung dari tinggi teks judul +
+# _DASH_COLS_TITLE_PAD_IN (0.14in, angka acuan; sebelumnya 0.06in sehingga judul menempel
+# tepi atas-bawah pitanya). Kartu KPI: acuan 0.88in (kartu angka besar slide 3, W=2.39
+# H=0.88); sebelumnya 0.95in. HARUS sama persis dgn export_pdf.py & report_render_logic.py.
 _DASH_COLS_TITLE_H_IN = 0.20
-_DASH_COLS_KPI_H_IN = 0.95
+_DASH_COLS_KPI_H_IN = 0.88
+# Lebar garis tepi badan panel - HARUS sama dgn export_pdf.py.
+_DASH_PANEL_LINE_PT = 0.4
 
 
 def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext):
@@ -4278,6 +4537,11 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         _bentuk = [1] * len(cols)
     n = max(1, len(_bentuk))
     col_w = (total_w_in - _DASH_COLS_GAP_IN * (n - 1)) / n
+    # Kembaran export_pdf.py: LEBAR ISI vs LEBAR PANEL. Panel (badan + pita kepalanya)
+    # tetap selebar col_w & berbagi tepi dgn panel sebelahnya (A1); seluruh ISI-nya digambar
+    # di dalam inset _DASH_COLS_PAD_IN (0.08in, angka acuan). Dulu teks di-inset 0.05-0.06in
+    # tapi chart & kartu tidak di-inset sama sekali, jadi menyentuh garis tepi panel.
+    col_w_isi = max(0.5, col_w - 2 * _DASH_COLS_PAD_IN)
 
     # ---- A5 LANJUTAN: TINGGI KOTAK CATATAN DIHITUNG, BUKAN DIPATOK -------------------
     # KEPUTUSAN USER: catatan berisi agregat yang TIDAK BISA dibaca dari chart mana pun
@@ -4291,7 +4555,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     ]
     _catatan_per_kolom = [k for k in _catatan_per_kolom if k]
     _maks_note_in = tinggi_maks_kotak_catatan(
-        cols, col_w, avail_h_in - _DASH_COLS_KEPALA_H_IN, is_english(ctx.report))
+        cols, col_w_isi, avail_h_in - _DASH_COLS_KEPALA_H_IN, is_english(ctx.report))
     _NOTE_HAL_H_IN, _butir_note, _note_tak_muat = tinggi_kotak_catatan_halaman(
         total_w_in, _catatan_per_kolom, _maks_note_in)
     logger.info("kotak catatan halaman: %d butir muat (kotak %.2fin, batas %.2fin), "
@@ -4307,10 +4571,10 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         _pos += _cnt
         if not _seksi:
             continue
-        _hasil_kol = alokasi_kolom_bertumpuk(_seksi, col_w, avail_h_in, is_english(ctx.report))
+        _hasil_kol = alokasi_kolom_bertumpuk(_seksi, col_w_isi, avail_h_in, is_english(ctx.report))
         _yy = 0.0
         for _c, _h in zip(_seksi, _hasil_kol):
-            _kepala_c = _kepala_seksi_h_in(_c, col_w)
+            _kepala_c = _kepala_seksi_h_in(_c, col_w_isi)
             _footprint = _kepala_c + _h["chart_h"] + (0.10 + _h["cards_h"] if _h["cards"] else 0.0)
             _slot.append((_ki, _c, _yy, _yy + _footprint))
             _alokasi[id(_c)] = _h
@@ -4318,7 +4582,11 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
 
     for idx, (_kol_i, col, _y_awal, _bawah_rel) in enumerate(_slot):
         x = _DASH_MARGIN_X_IN + _kol_i * (col_w + _DASH_COLS_GAP_IN)
-        _bawah_seksi = title_bottom_in + _bawah_rel
+        x_isi = x + _DASH_COLS_PAD_IN
+        # BATAS KERAS ke garis kotak Catatan - lihat scratchpad/patch_clamp untuk ukurannya.
+        # Akumulasi footprint seksi bisa melampaui anggaran; tanpa batas ini panel kolom
+        # digambar menembus kotak Catatan dan keduanya jadi tidak terbaca.
+        _bawah_seksi = min(title_bottom_in + _bawah_rel, title_bottom_in + avail_h_in)
         # ---- A1 + A4 (kembaran export_pdf.py): PITA KEPALA berwarna + cara-baca --------
         # Acuan memakai pita ~0.20in berisi judul panel, dgn pita kedua sebaris berisi CARA
         # MEMBACA chart. Sekat di acuan GARIS TEPI, bukan bayangan (141/141 shape bergaris).
@@ -4328,49 +4596,68 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         _badan = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(col_w),
             Inches(max(0.5, _bawah_seksi - y - 0.02)))
+        _modest_corner(_badan)
         _badan.fill.solid()
         _badan.fill.fore_color.rgb = WHITE
         _badan.line.color.rgb = PANEL_BORDER
-        _badan.line.width = Pt(0.75)
+        # Kembaran export_pdf.py: panel bersebelahan nol-jarak membuat garisnya DOBEL
+        # (terukur 1,62pt di render PDF, padahal satu border 0,75pt). Yang terbaca sbg
+        # "kolom terlalu rapat" itu tebal garisnya, bukan gap yang kurang - _DASH_COLS_GAP_IN
+        # tetap 0 sesuai acuan. 0,4pt supaya dua garis bersentuhan kembali setara satu garis.
+        _badan.line.width = Pt(_DASH_PANEL_LINE_PT)
         _no_shadow(_badan)
-        _judul_w = col_w
+        _judul_w = col_w_isi
         # Kembaran export_pdf.py: font mengecil sampai judul muat, pita ditinggikan kalau
         # pada 5.5pt pun masih lebih dari satu baris. Judul TIDAK dipotong.
         # TINGGI PITA DIHITUNG DULU, sebelum shape-nya dibuat - aturan tetap: tinggi yang
         # bergantung isi harus bisa dihitung sebelum digambar.
-        _w_judul_px = max(40.0, (_judul_w - 0.10) * 96)
-        _judul_teks = str(col.get("title") or "")
+        _w_judul_px = max(40.0, _judul_w * 96)
+        # PITA KEPALA = LABEL TOPIK PENDEK (kembaran export_pdf.py) - `title` blok tetap
+        # kalimat temuan karena dipakai headline halaman. Lihat judul_pendek_kolom.
+        _judul_teks = str(col.get("judul_pendek") or col.get("title") or "")
         _jp, _jbaris = 8.5, 1
         for _pt in (8.5, 8.0, 7.5, 7.0, 6.5, 6.0, 5.5):
             _jp = _pt
             _jbaris = wrap_line_count(_judul_teks, _w_judul_px, _pt, 0.80)
             if _jbaris <= 1:
                 break
-        _pita_h = max(_DASH_COLS_TITLE_H_IN, _jbaris * (_jp * 1.25 / 72.0) + 0.06)
+        _pita_h = max(_DASH_COLS_TITLE_H_IN,
+                      _jbaris * (_jp * 1.25 / 72.0) + _DASH_COLS_TITLE_PAD_IN)
+        # tint pita DARI TEMA AKTIF (kembaran export_pdf.py) - helper mengembalikan hex,
+        # python-pptx butuh RGBColor, jadi dikonversi di sini lewat _as_rgb yang sudah ada.
+        _bg_hex, _garis_hex, _fg_hex = warna_pita_panel(_hex_tema(ctx.theme["main"]))
+        _pita_bg = _as_rgb(_bg_hex, PANEL_BORDER)
+        _pita_garis = _as_rgb(_garis_hex, PANEL_BORDER)
+        _pita_fg = _as_rgb(_fg_hex, TEXT_DARK)
         _pita = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y),
                                        Inches(col_w), Inches(_pita_h))
+        _modest_corner(_pita)
         _pita.fill.solid()
-        _pita.fill.fore_color.rgb = ctx.theme["main"]
-        _pita.line.color.rgb = ctx.theme["main"]
+        _pita.fill.fore_color.rgb = _pita_bg
+        _pita.line.color.rgb = _pita_garis
         _pita.line.width = Pt(0.5)
         _no_shadow(_pita)
         t_box = slide.shapes.add_textbox(
-            Inches(x + 0.05), Inches(y), Inches(_judul_w - 0.10), Inches(_pita_h)
+            Inches(x_isi), Inches(y), Inches(_judul_w), Inches(_pita_h)
         )
         t_tf = t_box.text_frame
         t_tf.word_wrap = True
         t_tf.margin_top = t_tf.margin_bottom = 0
+        # judul DITENGAHKAN vertikal di pitanya. Pita sekarang mengikuti tinggi teks +
+        # padding acuan (0.14in), jadi ada ruang di atas & di bawah teks yang harus dibagi
+        # rata - bukan seluruhnya jatuh di bawah spt pada jangkar atas bawaan.
+        t_tf.vertical_anchor = MSO_ANCHOR.MIDDLE
         t_p = t_tf.paragraphs[0]
-        t_p.text = str(col.get("title") or "")
+        t_p.text = _judul_teks
         t_p.font.size = Pt(_jp)
         t_p.font.bold = True
-        t_p.font.color.rgb = WHITE
+        t_p.font.color.rgb = _pita_fg
         t_p.font.name = TITLE_FONT
         y += _pita_h
         if _cara:
             # A3 (kembaran export_pdf.py): keterangan ITALIC ABU tanpa latar, di bawah pita.
             c_box = slide.shapes.add_textbox(
-                Inches(x + 0.06), Inches(y), Inches(col_w - 0.12), Inches(0.17))
+                Inches(x_isi), Inches(y), Inches(col_w_isi), Inches(0.17))
             c_tf = c_box.text_frame
             c_tf.word_wrap = True
             c_tf.margin_top = c_tf.margin_bottom = 0
@@ -4379,15 +4666,26 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
             _set_font(c_p, BODY_FONT, Pt(6.5), color=GRAY_TEXT)
             c_p.font.italic = True
             y += 0.18
-        y += 0.04
+        # jeda setelah blok judul - HARUS sepadan dgn _kepala_seksi_h_in di perencana &
+        # dgn sisi PDF. Lihat catatan di _DASH_COLS_JUDUL_GAP_IN.
+        y += 0.04 if _cara else _DASH_COLS_JUDUL_GAP_IN
 
         kpi = (col.get("kpi_summary") or [])[:2]
         if kpi:
-            _insight_kpi_row(slide, kpi, x, col_w, _DASH_COLS_KPI_H_IN, y, theme=ctx.theme)
+            # Penjaga yang sama dgn chart & kartu: strip KPI seksi kedua bisa jatuh di bawah
+            # batas kotak Catatan. Diputuskan sebelum digambar, bukan sesudah.
+            if y + _DASH_COLS_KPI_H_IN > _bawah_seksi + 0.02:
+                logger.info("strip KPI kolom dilewati: butuh sampai %.2fin, batas seksi %.2fin",
+                            y + _DASH_COLS_KPI_H_IN, _bawah_seksi)
+                kpi = []
+            _insight_kpi_row(slide, kpi, x_isi, col_w_isi, _DASH_COLS_KPI_H_IN, y, theme=ctx.theme)
             y += _DASH_COLS_KPI_H_IN + 0.10
 
 
-        body_h = max(1.2, _bawah_seksi - y - 0.10)
+        # Lantai tinggi DIHAPUS (lihat catatan panjang di scratchpad/patch_body_h): grid kartu
+        # tidak boleh melewati jatah slotnya - begitu kotak Catatan tumbuh, kelebihan itu
+        # menembus dan menimpa isinya. Lantai 0,25in cuma penjaga nilai nol/negatif.
+        body_h = max(0.25, _bawah_seksi - y - 0.10)
         notes = [str(v) for v in (col.get("notes") or []) if str(v).strip()]
         notes_consumed = False
         # Kembar dari _build_management_dashboard_columns_block di export_pdf.py: chart di ATAS
@@ -4400,7 +4698,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         _dasar_kolom = y
         # SUDAH dihitung sekali oleh alokasi_kolom_bertumpuk di atas (kembaran export_pdf.py)
         _column_layout = _alokasi.get(id(col)) or _layout_dashboard_column_content(
-            body_h, col_w, bool(_tile), col.get("category_details"), False, _tile,
+            body_h, col_w_isi, bool(_tile), col.get("category_details"), False, _tile,
             is_english(ctx.report),
         )
         _chart_h = _column_layout["chart_h"]
@@ -4412,14 +4710,25 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         if _tile is None:
             _has_cards = bool(col.get("category_details"))
             _chart_h = 0.0
+        if _tile and y + _chart_h > _bawah_seksi + 0.02:
+            _ruang_chart = _bawah_seksi - y - 0.02
+            if _ruang_chart >= 0.30:
+                logger.info("chart kolom dipepatkan: %.2fin -> %.2fin (batas seksi %.2fin)",
+                            _chart_h, _ruang_chart, _bawah_seksi)
+                _chart_h = _ruang_chart
+            else:
+                logger.info("chart kolom dilewati: sisa ruang %.2fin di bawah 0,30in",
+                            _ruang_chart)
+                _tile = None
+                _chart_h = 0.0
         if _tile:
             notes_consumed = _insight_main_chart(
-                slide, _tile, x, y, col_w, _chart_h,
+                slide, _tile, x_isi, y, col_w_isi, _chart_h,
                 theme=ctx.theme, notes=None, is_en=is_en,
             )
             if _has_cards:
                 y += _chart_h + 0.10
-                body_h = max(1.0, _bawah_seksi - y - 0.10)
+                body_h = max(0.25, _bawah_seksi - y - 0.10)
         if not _tile or _has_cards:
             cards = _column_layout["cards"]
             if cards:
@@ -4440,14 +4749,26 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 _bawah = _bawah_seksi
                 if notes:
                     _sisa = _bawah - (y + cards_h + 0.08)
-                    while notes and _note_box_height_in(col_w, notes) > _sisa:
+                    while notes and _note_box_height_in(col_w_isi, notes) > _sisa:
                         notes = notes[:-1]
-                notes_consumed = _insight_detail_row(
-                    slide, cards, x, col_w, cards_h, y, theme=ctx.theme, notes=None, is_en=is_en,
-                )
+                # Muat atau tidak, DIPUTUSKAN sebelum digambar - aturan yang sama dgn kotak
+                # catatan kolom di atas. Tanpa ini strip kartu seksi kedua tergambar menembus
+                # kotak Catatan halaman (terukur: laporan 195 slide 4, 5 shape menembus).
+                _ruang_kartu = _bawah_seksi - y - 0.02
+                if cards_h > _ruang_kartu:
+                    if _ruang_kartu >= 0.30:
+                        logger.info("kartu kolom dipepatkan: %.2fin -> %.2fin", cards_h, _ruang_kartu)
+                        cards_h = _ruang_kartu
+                    else:
+                        logger.info("kartu kolom dilewati: sisa ruang %.2fin", _ruang_kartu)
+                        cards = []
+                if cards:
+                    notes_consumed = _insight_detail_row(
+                        slide, cards, x_isi, col_w_isi, cards_h, y, theme=ctx.theme, notes=None, is_en=is_en,
+                    )
                 if notes:
                     add_note_box(
-                        slide, Inches(x), Inches(y + cards_h + 0.08), Inches(col_w),
+                        slide, Inches(x_isi), Inches(y + cards_h + 0.08), Inches(col_w_isi),
                         notes, theme=ctx.theme, title=note_title,
                     )
                     notes_consumed = True
@@ -4465,7 +4786,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         if _fakta:
             _sisa_in = _bawah_seksi - _dasar_isi - 0.10
             if _sisa_in >= _DASH_COLS_FACT_H_IN:
-                _draw_fact_strip_kolom(slide, _fakta, x, _dasar_isi + 0.06, col_w)
+                _draw_fact_strip_kolom(slide, _fakta, x_isi, _dasar_isi + 0.06, col_w_isi)
                 _y_terendah = max(_y_terendah, _dasar_isi + 0.06 + _DASH_COLS_FACT_H_IN)
             else:
                 logger.info("A8 strip fakta DILEWATI di kolom %d: sisa tinggi %.3fin, "
@@ -4481,6 +4802,16 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     if _butir_note and _NOTE_HAL_H_IN:
         _note_y = title_bottom_in + avail_h_in + 0.06
         _note_h = _NOTE_HAL_H_IN - 0.06
+        # Nomor halaman hidup di y=7,08-7,38in, DI DALAM batas kanvas isi - jadi kotak catatan
+        # tidak boleh sampai ke sana. Butir paling belakang dilepas sampai muat, sama seperti
+        # yang sudah dilakukan kotak catatan per-kolom. Lihat scratchpad/patch_note_bawah.
+        _BATAS_NOTE_BAWAH_IN = 7.02
+        _ruang = max(0.0, _BATAS_NOTE_BAWAH_IN - _note_y)
+        if _note_h > _ruang:
+            while _butir_note and _note_box_height_in(total_w_in, _butir_note) > _ruang:
+                _butir_note = _butir_note[:-1]
+                _note_tak_muat += 1
+            _note_h = min(_note_h, _ruang)
         if _note_h >= 0.40:
             # Butir & tinggi kotak SUDAH diputuskan di atas (tinggi_kotak_catatan_halaman),
             # sebelum kolom dibagi tinggi - tidak dihitung ulang di sini. Butirnya digabung
@@ -4532,6 +4863,7 @@ def _build_management_action_items_slide(block: dict, ctx: _PptBlockContext):
         fg, bg = URGENCY_COLOR.get(it.get("urgency", "low"), (GRAY_TEXT, IVORY))
 
         rect = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, MARGIN_X, cy, CONTENT_W, Inches(card_h))
+        _modest_corner(rect)
         rect.fill.solid()
         rect.fill.fore_color.rgb = bg
         rect.line.color.rgb = fg
@@ -4644,18 +4976,46 @@ def _build_management_ai_narrative_slide(block: dict, ctx: _PptBlockContext):
     items = block.get("items", [])
     if not items:
         return slide
-    cols = 2
-    rows = math.ceil(len(items) / cols)
+    n = len(items)
+    # Aturan kolom & skala DISALIN dari _build_management_ai_narrative_block (export_pdf.py),
+    # bukan dikarang ulang: 1 atau 3 item -> satu kolom lebar penuh (kalau 2 kolom, item
+    # terakhir berdiri sendiri dgn sel kosong di sampingnya); makin sedikit item, makin besar
+    # font & padding supaya halaman terisi wajar.
+    cols = 1 if n in (1, 3) else 2
+    rows = math.ceil(n / cols)
+    skala = 1.8 if n <= 1 else (1.3 if n == 2 else (1.15 if n == 3 else 0.82))
+    pad_in = (14.0 * (3.0 if n <= 1 else (1.6 if n == 2 else (1.3 if n == 3 else 0.62)))) / 72.0
+    pt_judul = 9.5 * skala
+    pt_isi = 9.0 * skala
+    badge_in = (20.0 * skala) / 96.0
+
     gap_in = 0.25
     start_y_in = max(title_bottom + 0.15, 1.05)
     margin_x_in = Emu(MARGIN_X).inches
     content_w_in = Emu(CONTENT_W).inches
-    # Keep the card grid inside the slide canvas. The previous minimum-height rule
-    # could make a one-row narrative grid extend below the 7.5in slide boundary.
     content_bottom_in = Emu(SLIDE_H).inches - 0.25
     content_h_in = max(1.2, content_bottom_in - start_y_in)
     card_w_in = (content_w_in - gap_in * (cols - 1)) / cols
-    card_h_in = (content_h_in - gap_in * (rows - 1)) / rows
+
+    def _butir(teks):
+        """Satu kalimat = satu bullet, sama spt _bullet_lines_html di sisi PDF."""
+        return [b.strip() for b in re.split(r"(?<=[.!?])\s+", str(teks or "").strip()) if b.strip()]
+
+    def _tinggi_kartu(it):
+        """Tinggi yang BENAR-BENAR dibutuhkan isi kartu - bukan jatah kanvas dibagi rata.
+        Inilah inti cacatnya: versi lama memakai (tinggi kanvas / jumlah baris), jadi kartu
+        berisi tiga kalimat tetap setinggi 5,5in dan sisanya kosong melompong."""
+        w_px = max(60.0, (card_w_in - 2 * pad_in - badge_in - 0.10) * 96.0)
+        baris = sum(max(1, wrap_line_count(b, w_px, pt_isi, 0.62)) for b in _butir(it.get("content", "")))
+        tinggi_isi = baris * (pt_isi * 1.55) / 72.0
+        return pad_in * 2 + badge_in + 0.12 + tinggi_isi
+
+    tinggi = [_tinggi_kartu(it) for it in items]
+    card_h_in = max(tinggi) if tinggi else 1.0
+    # Tetap tidak boleh melewati kanvas: kalau isinya memang banyak, kartu dibatasi & teks
+    # yang tidak muat tetap tergambar tapi terpotong tepi kartu - sama spt sisi PDF.
+    maks = (content_h_in - gap_in * (rows - 1)) / rows
+    card_h_in = min(card_h_in, maks)
 
     for i, it in enumerate(items):
         r, c = divmod(i, cols)
@@ -4670,23 +5030,45 @@ def _build_management_ai_narrative_slide(block: dict, ctx: _PptBlockContext):
         _no_shadow(card)
         _modest_corner(card)
 
-        pad_in = 0.18
-        title_box = slide.shapes.add_textbox(Inches(cx_in + pad_in), Inches(cy_in + pad_in), Inches(card_w_in - pad_in * 2), Inches(0.32))
+        # Garis aksen kiri - kembaran border_left_colors di card_style sisi PDF.
+        aksen = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(cx_in), Inches(cy_in),
+                                       Inches(0.045), Inches(card_h_in))
+        aksen.fill.solid()
+        aksen.fill.fore_color.rgb = TEXT_DARK
+        aksen.line.fill.background()
+        _no_shadow(aksen)
+
+        add_badge_circle(slide, Inches(cx_in + pad_in), Inches(cy_in + pad_in),
+                         Inches(badge_in), str(i + 1), TEXT_DARK, font_size=Pt(9 * skala))
+
+        jx = cx_in + pad_in + badge_in + 0.10
+        title_box = slide.shapes.add_textbox(Inches(jx), Inches(cy_in + pad_in - 0.02),
+                                             Inches(card_w_in - pad_in - badge_in - 0.20),
+                                             Inches(badge_in + 0.06))
+        _rapatkan_margin(title_box.text_frame, atas=0.0, bawah=0.0)
+        title_box.text_frame.word_wrap = True
+        title_box.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
         tp = title_box.text_frame.paragraphs[0]
         tp.alignment = PP_ALIGN.LEFT
-        tp.text = it.get("title", "")
-        _set_font(tp, BODY_FONT, Pt(11), bold=True, color=TEXT_DARK)
+        tp.text = str(it.get("title", "")).upper()
+        _set_font(tp, BODY_FONT, Pt(pt_judul), bold=True, color=TEXT_DARK)
 
+        by = cy_in + pad_in + badge_in + 0.12
         body_box = slide.shapes.add_textbox(
-            Inches(cx_in + pad_in), Inches(cy_in + pad_in + 0.4),
-            Inches(card_w_in - pad_in * 2), Inches(card_h_in - pad_in * 2 - 0.4),
+            Inches(cx_in + pad_in), Inches(by),
+            Inches(card_w_in - pad_in * 2), Inches(max(0.25, card_h_in - (by - cy_in) - pad_in)),
         )
         btf = body_box.text_frame
+        _rapatkan_margin(btf, atas=0.0, bawah=0.0)
         btf.word_wrap = True
-        bp = btf.paragraphs[0]
-        bp.alignment = PP_ALIGN.LEFT
-        bp.text = it.get("content", "")
-        _set_font(bp, BODY_FONT, Pt(9.5), color=GRAY_TEXT)
+        for bi, butir in enumerate(_butir(it.get("content", ""))):
+            bp = btf.paragraphs[0] if bi == 0 else btf.add_paragraph()
+            bp.alignment = PP_ALIGN.LEFT
+            # Bullet digambar sbg karakter, bukan penomoran otomatis PowerPoint: penomoran
+            # otomatis butuh properti daftar di level XML & gampang hilang saat tema diganti.
+            bp.text = "\u2022  " + butir
+            bp.space_after = Pt(pt_isi * 0.45)
+            _set_font(bp, BODY_FONT, Pt(pt_isi), color=GRAY_TEXT)
 
     return slide
 
@@ -4865,6 +5247,24 @@ class PPTXExporter:
         else:
             palette = THEME_PALETTES["green"]
         accent_bar_color = palette["main"]
+        # ---- DOMINASI WARNA TEMA (permintaan user, HANYA jalur Visual/Management) --------
+        # Diukur dari render: pada tema bawaan non-gold, THEME_PALETTES menyetel
+        # "light"/"soft" ke GOLD_MAIN/GOLD_LIGHT - aksen emas yang TIDAK terkait warna tema.
+        # Keduanya dipakai di bar sub-item kartu bersarang & badge, jadi emas muncul ~21.000
+        # piksel per laporan; pada tema navy selisih hue-nya 169 derajat (praktis komplementer)
+        # dan pada teal 130 derajat - bukan "aksen yang serasi", tapi tabrakan.
+        # Untuk warna KUSTOM keempat peran sudah diturunkan dari satu hue (lihat cabang di
+        # atas); yang tertinggal cuma tema BAWAAN. Di sini ramp yang sama dipakai ulang -
+        # frac 0.30/0.12 persis seperti cabang kustom, jadi bukan aturan baru.
+        #
+        # SENGAJA di sini, bukan di THEME_PALETTES: palet itu dipakai BERSAMA oleh jalur
+        # Descriptive yang tidak boleh berubah sedikit pun. Dengan menyalin dict-nya lebih
+        # dulu, Descriptive tetap mendapat palet aslinya (emas) apa adanya.
+        if "management" in _template:
+            palette = dict(palette)
+            palette["light"] = _blend_with_white(palette["main"], 0.30)
+            palette["soft"] = _blend_with_white(palette["main"], 0.12)
+            accent_bar_color = palette["main"]
 
         content_slides: list = []  # dipakai utk stamping footer di akhir (kecuali cover/penutup)
 

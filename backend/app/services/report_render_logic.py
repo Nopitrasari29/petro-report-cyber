@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 from app.crud.report import get_parsed_data
 from app.services.ai_engine.data_profiler import (compute_statistics, _classify_severity_value,
+                                                 format_statistics_as_text,
                                                   _coerce_indo_numeric_columns)
 from app.services.ai_engine.ollama_client import normalize_recommendations, sanitize_text, coerce_finding_text, coerce_narrative_text
 
@@ -321,7 +322,7 @@ def fmt_desimal(nilai, n_desimal: int, is_en: bool) -> str:
     return teks if is_en else teks.replace(".", ",")
 
 
-def fmt_persen(bagian, total) -> str:
+def fmt_persen(bagian, total, decimals: int | None = None) -> str:
     """Persentase yang TIDAK berbohong saat dibulatkan, dgn format yang SERAGAM.
 
     KOREKSI USER: ">99%" itu bentuk yang berbeda dari "49%" & "0,04%" di halaman yang sama,
@@ -343,6 +344,18 @@ def fmt_persen(bagian, total) -> str:
     if b <= 0:
         return "0%"
     p = b / t * 100
+    # `decimals` DITAMBAHKAN belakangan (permintaan user: persentase di jalur Visual Report
+    # seragam 1 angka di belakang koma). Default None = perilaku LAMA persis - desimal
+    # ditambah secukupnya sampai angkanya tidak membulat ke 0 atau 100. Itu penting: jalur
+    # Descriptive memakai fungsi ini juga dan TIDAK BOLEH berubah sedikit pun, jadi hanya
+    # pemanggil yang meminta eksplisit yang mendapat format tetap.
+    # Aturan "tidak berbohong" tetap berlaku di atas `decimals`: kalau pembulatan ke jumlah
+    # desimal yang diminta menghasilkan 0 atau 100 padahal nilainya bukan itu, desimal tetap
+    # ditambah - lebih baik "0,04%" daripada "0,0%" yang terbaca sebagai nol.
+    if decimals is not None:
+        teks = f"{p:.{decimals}f}"
+        if float(teks) not in (0.0, 100.0):
+            return (teks if render_is_en() else teks.replace(".", ",")) + "%"
     for desimal in range(0, 5):
         teks = f"{p:.{desimal}f}"
         if float(teks) not in (0.0, 100.0):
@@ -449,18 +462,543 @@ def cara_baca_kolom(tile: dict, report) -> str:
         if _v:
             return (f"relative to highest - highest {_fmt_count(max(_v), _ien)}" if _ien
                     else f"skala relatif thd tertinggi - tertinggi {_fmt_count(max(_v), _ien)}")
-    n_penuh = int(tile.get("n_entitas_penuh") or 0)
-    n_gambar = chart_label_count(tile)
-    if n_penuh and n_gambar and n_penuh > n_gambar:
-        _tp = float(tile.get("total_entitas_penuh") or 0)
-        _nv = sorted((float(x or 0) for x in (tile.get("nilai_penuh") or [])), reverse=True)
-        _sisa = max(0.0, _tp - sum(_nv[:n_gambar])) if _nv else 0.0
-        return (f"{n_gambar} of {n_penuh} entities - rest {fmt_persen(_sisa, _tp)} of total"
-                if _ien else
-                f"{n_gambar} dari {n_penuh} entitas - sisanya {fmt_persen(_sisa, _tp)} dari total")
-    if n_gambar:
-        return (f"{n_gambar} entities shown" if _ien else f"{n_gambar} entitas ditampilkan")
+    # KEPUTUSAN USER: baris cakupan ("N dari M entitas - sisanya X% dari total") DIBUANG dari
+    # pita kepala. Isinya memang soal kejujuran data, bukan metadata teknis - tapi kotak
+    # Catatan di dasar halaman yang SAMA sudah memuatnya, lebih lengkap ("Chart menampilkan 6
+    # dari 25 entitas; 19 sisanya menyumbang 16.112 data (62% dari total)", lihat
+    # catatan_agregat). Jadi yang dibuang duplikatnya, bukan informasinya: di pita berhenti
+    # dicetak, di Catatan tetap ada. Kalau kelak kotak Catatan ditiadakan dari halaman dasbor,
+    # baris ini HARUS dihidupkan lagi - tanpa salah satunya, pembaca tidak tahu chart cuma
+    # menampilkan sebagian populasi.
+    # PERMINTAAN USER (laporan ini untuk PRESENTASI ke manajemen): baris "N entitas
+    # ditampilkan" DIBUANG. Itu metadata teknis-internal - berapa banyak entitas yang muat
+    # di chart - dan tidak menambah nilai baca bagi audiens; jumlah entitas yang tergambar
+    # sudah bisa dihitung sendiri dari chartnya. Dua varian di ATAS sengaja DIPERTAHANKAN
+    # karena keduanya soal KEJUJURAN DATA, bukan metadata: "skala relatif thd tertinggi"
+    # memberi tahu batang dibaca relatif (tanpa itu angkanya bisa disalahbaca absolut), dan
+    # "N dari M entitas - sisanya X% dari total" memberi tahu chart TIDAK menampilkan
+    # seluruh populasi.
     return ""
+
+
+_JUDUL_PENDEK_KATA_KECIL = {"per", "vs", "x", "by", "dan", "and", "of", "dari"}
+
+
+def beri_subjek_catatan(butir: list, subjek: str) -> list:
+    """Tempelkan SUBJEK di depan tiap butir catatan: "Kategori Pengadaan: 6 dari 7 entitas...".
+
+    MASALAH YANG DIPERBAIKI (terlihat di render): kotak Catatan halaman menggabungkan butir
+    dari SEMUA panel, tapi butirnya tidak menyebut panel mana yang dimaksud. Hasilnya empat
+    baris berpola sama - "6 dari 7 entitas...", "17 dari 25 entitas...", "14 dari 20
+    entitas..." - dan pembaca tidak punya cara tahu entitas APA yang dihitung di tiap baris.
+    Subjeknya sudah ada (judul pendek panel, lihat judul_pendek_kolom); yang kurang cuma
+    menuliskannya. Ini menambah informasi yang sebelumnya HILANG, bukan sekadar kosmetik."""
+    sub = str(subjek or "").strip().rstrip(".:")
+    if not sub:
+        return list(butir or [])
+    hasil = []
+    for b in (butir or []):
+        t = str(b or "").strip()
+        if not t:
+            continue
+        # jangan menempel dua kali kalau butirnya memang sudah dibuka dgn subjek yang sama
+        hasil.append(t if t.lower().startswith(sub.lower()) else f"{sub}: {t}")
+    return hasil
+
+
+def rapikan_nama_kolom(teks: str) -> str:
+    """Nama kolom data mentah -> teks tampilan ("nilai_kontrak" -> "Nilai Kontrak").
+
+    SATU aturan perapian nama, dipakai judul pita panel MAUPUN label sumbu chart. Sengaja
+    diekstrak jadi fungsi sendiri (permintaan user): sebelumnya judul panel sudah dirapikan
+    sementara label sumbu scatter masih menampilkan nama variabel mentah ("nilai_kontrak",
+    huruf kecil ber-underscore) - dua gaya penamaan untuk kolom yang SAMA di halaman yang
+    sama. Menulis aturan rapi-nama kedua yang terpisah berisiko hasilnya lama-lama menyimpang;
+    ini satu sumber untuk keduanya.
+
+    Kata sambung dibiarkan huruf kecil supaya terbaca sbg label ("Jumlah Paket per Kategori
+    Pengadaan"), bukan judul buku ber-Title-Case penuh."""
+    kata = []
+    for w in str(teks or "").replace("_", " ").split():
+        kata.append(w if w.lower() in _JUDUL_PENDEK_KATA_KECIL else w[:1].upper() + w[1:])
+    return " ".join(kata)
+
+
+def judul_pendek_kolom(tile: dict, report) -> str:
+    """Label topik PENDEK untuk pita kepala panel - BUKAN kalimat temuan.
+
+    MASALAH YANG DIPERBAIKI (temuan user atas render): pita kepala panel memakai `title`
+    blok, yang isinya kalimat insight penuh ("Tender Terbuka tertinggi dengan 5.527 dari
+    total 26.068 (21%)."). Kalimat yang SAMA PERSIS juga dipakai sebagai headline halaman
+    (_pack_insight_pages_into_columns memilih _judul_topik = titles[0]), jadi pembaca
+    membaca kalimat identik dua kali dengan jarak 2cm - dan pita kepala, yang seharusnya
+    cuma penanda topik, jadi blok teks terpanjang di kolomnya.
+
+    Bahannya SUDAH ADA, tidak perlu dikarang: tiap tile dibentuk dengan `title` pendek
+    ("jumlah_paket per kategori_pengadaan", "Komposisi status", "nilai_kontrak vs
+    jumlah_paket" - lihat bangun_tile), dan kalau AI memberi nama seksi, `source_topic_title`
+    lebih baik lagi. Yang kurang cuma perapian nama kolom mentah jadi teks tampilan."""
+    if not tile:
+        return ""
+    st = str(tile.get("source_topic_title") or "").strip()
+    if st:
+        return st
+    judul = str(tile.get("title") or "").strip()
+    if not judul:
+        return ""
+    # BUG NYATA (terlihat langsung di render, bukan dugaan): beberapa bentuk tile menamai
+    # dirinya HANYA dari metriknya - bangun_tile memberi donut & stacked title
+    # f"Komposisi {metrik}" tanpa menyebut kategori. Dua panel berbeda di halaman yang sama
+    # (komposisi durasi_hari per STATUS, dan per SEVERITY) karenanya dapat pita kepala yang
+    # SAMA PERSIS "Komposisi Durasi Hari" - pembaca tidak bisa membedakan panelnya.
+    # Kategori ditambahkan kalau belum tersebut; ini yang membedakan panel satu dari lainnya.
+    kat = str(tile.get("cat_col_name") or "").strip()
+    if kat and _norm_col_name(kat) not in _norm_col_name(judul):
+        judul = f"{judul} per {kat}"
+    return rapikan_nama_kolom(judul)
+
+
+# Ambang "kolom ini cuma memilah data": di atas ini, pola perbandingan antar kelompok
+# menolak memakainya. 0,6 dipilih dari data nyata - laporan 195 memberi 1,00 (seluruh
+# kelompok terpisah sempurna lewat kolom "Section"), sementara kolom status/severity yang
+# sehat di laporan 192/194 berada jauh di bawahnya.
+_PEMISAH_DEGENERATE = 0.6
+_POLA_MIN_BARIS = 12          # di bawah ini agregasi per kelompok tidak bermakna
+_POLA_KORELASI_KUAT = 0.5     # |r| Pearson; di bawah 0,25 dianggap tidak ada kaitan
+_POLA_KORELASI_LEMAH = 0.25
+
+
+def _pola_kolom_waktu(df):
+    """Kolom yang genuinely bisa dibaca sebagai waktu, beserta seri datetime-nya.
+
+    Dicoba PARSE, bukan ditebak dari nama: nama kolom di data nyata tidak bisa diandalkan
+    ("tanggal", "date", "waktu_input", atau nama lain sama sekali). Kolom diterima hanya
+    kalau >=80% barisnya berhasil jadi datetime - di bawah itu yang terjadi biasanya angka
+    atau teks yang kebetulan mirip tanggal."""
+    for kol in df.columns:
+        if df[kol].dtype.kind in "if":
+            continue
+        try:
+            ser = pd.to_datetime(df[kol], errors="coerce", format="mixed")
+        except Exception:
+            try:
+                ser = pd.to_datetime(df[kol], errors="coerce")
+            except Exception:
+                continue
+        if ser.notna().mean() >= 0.8:
+            return kol, ser
+    return None, None
+
+
+_VALID_TOLERANSI = 0.01       # 1% - supaya "21%" vs "21,2%" tidak dianggap berbeda
+_RX_ANGKA_KLAIM = re.compile(r"\d[\d.,]*")
+
+
+# Kata struktural blok statistik & kata umum yang muncul di hampir semua baris - kalau ikut
+# dihitung sbg "konteks yang cocok", hampir semua klaim akan beririsan dgn hampir semua baris
+# dan pencocokan konteks jadi tidak berarti apa-apa.
+_STOP_KONTEKS = {
+    "rincian", "kolom", "distribusi", "bucket", "boleh", "dipakai", "nilai", "jumlah",
+    "total", "records", "record", "data", "yang", "dari", "dengan", "pada", "untuk", "dan",
+    "atau", "hingga", "lebih", "agar", "akan", "dapat", "adalah", "ini", "itu", "per",
+    "rata", "min", "max", "top", "the", "of", "and", "with", "for", "this", "that", "are",
+    "column", "values", "value", "count", "counts", "tren", "volume", "paruh", "event",
+}
+
+
+def _token_konteks(teks: str) -> set:
+    """Kata bermakna dari sepotong teks - dipakai mencocokkan KONTEKS klaim vs baris statistik."""
+    kata = re.split(r"[^0-9A-Za-zÀ-ÿ_]+", str(teks or "").lower())
+    keluar = set()
+    for k in kata:
+        for bagian in k.split("_"):
+            if len(bagian) >= 4 and not bagian.isdigit() and bagian not in _STOP_KONTEKS:
+                keluar.add(bagian)
+    return keluar
+
+
+def _angka_dari_teks(teks: str) -> list:
+    keluar = []
+    for m in _RX_ANGKA_KLAIM.finditer(str(teks or "")):
+        mentah = m.group(0).rstrip(".,")
+        if not mentah:
+            continue
+        for kandidat in (mentah.replace(".", "").replace(",", "."), mentah.replace(",", "")):
+            try:
+                keluar.append(float(kandidat))
+                break
+            except ValueError:
+                continue
+    return keluar
+
+
+def angka_statistik_terhitung(report_stats: dict, report) -> list:
+    """Indeks [(kata_konteks, angka_di_baris), ...] dari blok STATISTIK TERHITUNG.
+
+    Dibangun dari format_statistics_as_text(), yaitu string yang PERSIS disisipkan ke prompt
+    (lihat prompts.py & ollama_client.py). Dikembalikan PER BARIS, bukan sebagai satu himpunan
+    angka datar - itu perbedaan penting yang lahir dari kegagalan nyata:
+
+    Versi pertama mengembalikan himpunan datar, dan klaim "memangkas durasi proses hingga 40%"
+    LOLOS karena 40 kebetulan sama dgn "Feb 2026: 40" (jumlah baris data bulan Februari) -
+    angka yang tidak ada hubungannya sama sekali dgn durasi proses. Memeriksa "apakah angka
+    ini ada di suatu tempat" tidak sama dengan memeriksa "apakah angka ini yang diklaim".
+    Dengan indeks per-baris, angka baru dianggap sah kalau baris yang memuatnya JUGA berbagi
+    kata dgn kalimat klaimnya."""
+    try:
+        teks = format_statistics_as_text(report_stats or {}, getattr(report, "language", None))
+    except Exception:
+        return []
+    indeks = []
+    for baris in (teks or "").split("\n"):
+        if not baris.strip():
+            continue
+        # angka hanya diambil dari bagian NILAI, tapi kata konteks dari SELURUH baris -
+        # label baris ("Rincian kolom 'durasi_hari' per 'Status'") justru yang menyebut
+        # konsepnya, dan nama entitas di bagian nilai juga sah sbg konteks.
+        indeks.append((_token_konteks(baris), _angka_dari_teks(baris)))
+    return indeks
+
+
+def _angka_terverifikasi(nilai: float, kata_klaim: set, indeks: list) -> bool:
+    """Sah kalau ADA baris statistik yang memuat angka ini DAN sekonteks dgn klaimnya."""
+    for kata_baris, angka_baris in indeks:
+        if not kata_baris & kata_klaim:
+            continue
+        for a in angka_baris:
+            if abs(nilai - a) <= max(_VALID_TOLERANSI, abs(a) * _VALID_TOLERANSI):
+                return True
+    return False
+
+
+# Kata yang MENGANTAR sebuah angka ("hingga 40%", "lebih dari 30 hari"). Ikut dibuang bersama
+# angkanya - kalau hanya angkanya yang dicoret, tersisa "memangkas durasi proses hingga."
+_RX_KUANTITAS = re.compile(
+    r"\s*(?:\b(?:hingga|sampai|sebesar|mencapai|melebihi|lebih dari|kurang dari|sekitar|hampir|"
+    r"di atas|di bawah|minimal|maksimal|up to|by|over|under|around|about|more than|less than|"
+    r"at least|at most)\s+)?"
+    r"(?:Rp\.?\s*)?\d[\d.,]*\s*"
+    r"(?:%|persen|percent|ribu|juta|miliar|milyar|triliun|hari|jam|menit|minggu|bulan|tahun|"
+    r"kali|x|paket|item|kasus|days?|hours?|weeks?|months?|years?)?"
+    # "2,5x lipat" -> satuannya dua kata; tanpa ini tersisa "Naik lipat dibanding ..."
+    r"(?:\s+(?:lipat|fold))?",
+    re.IGNORECASE)
+# Sisa sambungan yang menggantung setelah kuantitasnya dilepas.
+_RX_SAMBUNG_GANTUNG = re.compile(
+    r"[\s,;]*\b(?:dan|atau|serta|dengan|dari|ke|pada|yang|menjadi|sebesar|hingga|sampai|"
+    r"and|or|with|from|to|of|by)\b[\s,;]*$", re.IGNORECASE)
+_SALVAGE_MAKS_TERBUANG = 0.40   # >40% kalimat hilang = bukan lagi kalimat yang sama, buang saja
+_SALVAGE_MIN_KATA = 4
+
+
+def _tanpa_klaim_angka(kalimat: str) -> str:
+    """Versi kalimat TANPA angka spesifik - dipakai saat klaim kuantitatifnya tak terdukung.
+
+    Permintaan user (#11-A): angka yang tidak ada di STATISTIK TERHITUNG harus "ditolak/diganti
+    kalimat generik tanpa angka spesifik", BUKAN dibiarkan - tapi juga bukan berarti seluruh
+    kalimatnya lenyap. Membuang kalimat utuh terbukti merusak: di render v14 kedua kartu
+    Rekomendasi tinggal judul dgn badan kosong, karena tiap kartu cuma punya satu kalimat dan
+    kalimat itu memuat satu angka tak terverifikasi.
+
+    Yang dilepas cuma klaim kuantitatifnya beserta kata pengantarnya, sehingga maksud
+    kualitatif yang ditulis AI tetap terbaca: "memangkas durasi proses hingga 40%" ->
+    "memangkas durasi proses". Kalau yang terbuang terlalu banyak (>40% panjang kalimat, mis.
+    kalimat yang seluruh isinya memang angka) hasilnya bukan lagi kalimat yang sama - lebih
+    jujur dibuang daripada disajikan sebagai sisa yang menyesatkan."""
+    asli = str(kalimat or "").strip()
+    if not asli:
+        return ""
+    sisa = _RX_KUANTITAS.sub(" ", asli)
+    sisa = re.sub(r"\s+", " ", sisa).strip()
+    sisa = re.sub(r"\s+([.,;:!?])", r"\1", sisa)
+    ekor = sisa[-1] if sisa[-1:] in ".!?" else ""
+    inti = _RX_SAMBUNG_GANTUNG.sub("", sisa[:-1] if ekor else sisa).strip(" ,;:-")
+    if len(inti.split()) < _SALVAGE_MIN_KATA:
+        return ""
+    if (len(asli) - len(inti)) / float(len(asli)) > _SALVAGE_MAKS_TERBUANG:
+        return ""
+    return inti + (ekor or ".")
+
+
+def saring_angka_tak_terverifikasi(teks: str, indeks: list) -> str:
+    """Buang KALIMAT yang memuat angka yang tidak didukung STATISTIK TERHITUNG sekonteks.
+
+    LAPISAN KEDUA (permintaan user). Lapisan pertama ada di prompts.py: AI diinstruksikan
+    hanya boleh menyebut angka yang tertulis di STATISTIK TERHITUNG. Instruksi itu tidak bisa
+    dipaksakan - dibuktikan dgn dua cara: klaim mustahil ("987654%") lolos utuh, DAN klaim
+    yang terdengar masuk akal ("memangkas durasi proses hingga 40%") lolos karena angkanya
+    kebetulan ada di baris statistik yang topiknya lain.
+    Yang dibuang KALIMATNYA, bukan angkanya saja: mencoret angka meninggalkan kalimat cacat
+    ("memangkas durasi hingga "), dan kalimat yang kehilangan angkanya sering kehilangan
+    seluruh maknanya. Kalimat tanpa angka TIDAK tersentuh - yang divalidasi cuma klaim
+    kuantitatif."""
+    t = str(teks or "").strip()
+    if not t or not indeks:
+        return t
+    kalimat = [x.strip() for x in re.split(r"(?<=[.!?])\s+", t) if x.strip()]
+    lolos, diselamatkan, dibuang = [], 0, 0
+    for k in kalimat:
+        kata_klaim = _token_konteks(k)
+        if all(_angka_terverifikasi(n, kata_klaim, indeks) for n in _angka_dari_teks(k)):
+            lolos.append(k)
+            continue
+        # Klaim angkanya tak terdukung - coba sisakan kalimatnya tanpa angka itu sebelum
+        # menyerah. Lihat _tanpa_klaim_angka untuk alasan lengkapnya.
+        generik = _tanpa_klaim_angka(k)
+        if generik:
+            lolos.append(generik)
+            diselamatkan += 1
+        else:
+            dibuang += 1
+    if diselamatkan or dibuang:
+        logger.info("validator angka: %d kalimat kehilangan klaim angkanya, %d dibuang utuh "
+                    "(angka tidak didukung STATISTIK TERHITUNG yang sekonteks)",
+                    diselamatkan, dibuang)
+    return " ".join(lolos)
+
+
+# Potongan 1-2 huruf yang memang SAH berdiri sendiri di nama kolom - kalau ikut dianggap
+# pecahan, hampir semua dataset akan ditandai rusak dan narasi kehilangan nama kolom yang
+# sebenarnya baik-baik saja.
+_SINGKATAN_SAH = {
+    "id", "ip", "no", "ti", "it", "pm", "cr", "vm", "db", "os", "hr", "qa", "ok", "pc",
+    "sn", "po", "pr", "wo", "sr", "kb", "mb", "gb", "tb", "am",
+}
+
+
+def nama_kolom_pecah(nama) -> bool:
+    """Nama kolom yang jelas terpecah di tengah kata, mis. "Priorit As" / "Duras i (men it)".
+
+    Penandanya potongan 1-2 huruf yang bukan singkatan sah. Sengaja BUKAN pemeriksaan kamus:
+    yang dicari cuma bukti bahwa pemisahnya jatuh di tempat yang salah."""
+    for tok in re.split(r"[^0-9A-Za-z]+", str(nama or "")):
+        if tok and tok.isalpha() and len(tok) <= 2 and tok.lower() not in _SINGKATAN_SAH:
+            return True
+    return False
+
+
+def kolom_tak_layak_kutip(df) -> bool:
+    """Seluruh header dataset ini tidak layak dikutip di narasi.
+
+    Satu kolom yang jelas terpecah sudah cukup jadi bukti: pemecahnya bekerja pada SELURUH
+    header sekaligus, jadi nama yang kebetulan terlihat wajar ("Tang Gal", "Subkat Egori")
+    adalah hasil pemecahan yang sama - cuma tidak meninggalkan potongan pendek. Memilih
+    per-nama akan meloloskan justru yang paling menyesatkan."""
+    try:
+        return any(nama_kolom_pecah(c) for c in list(df.columns))
+    except Exception:
+        return False
+
+
+def sebut_kolom(nama, tak_layak: bool, generik_id: str, generik_en: str = "") -> str:
+    """Nama kolom untuk DIKUTIP di kalimat - atau istilah generik kalau namanya tidak layak."""
+    if tak_layak:
+        return (generik_en or generik_id) if render_is_en() else generik_id
+    return rapikan_nama_kolom(nama)
+
+
+# Nilai yang berarti "tidak ada kategori" setelah astype(str) - dikumpulkan di satu tempat
+# supaya setiap pola yang mengelompokkan data memakai daftar yang sama.
+_NILAI_KOSONG = {"", "none", "nan", "nat", "null", "-", "n/a", "na"}
+
+
+def _kelompok_nyata(df, kat: str):
+    """Baris yang GENUINELY punya nilai kategori - dipakai sebelum groupby.
+
+    `df.groupby(df[kat].astype(str))` mengubah NaN jadi kelompok bernama "None". Di file
+    yang berisi beberapa tabel sekaligus (satu kolom hanya terisi untuk sebagian baris), itu
+    melahirkan satu kelompok besar bernilai nol yang ikut dihitung sbg pembanding - dan
+    membuat entitas teratas terlihat lebih menonjol dari kenyataannya."""
+    kolom = df[kat].astype(str).str.strip()
+    return df[~kolom.str.lower().isin(_NILAI_KOSONG)]
+
+
+def catatan_pola(parsed_data: list, tile: dict, report) -> list:
+    """Kalimat POLA yang dibaca dari kolom yang SUDAH ADA di data - bukan sebab yang dikarang.
+
+    KOREKSI ARAH DARI USER: permintaannya bukan menambah kolom "alasan" ke dataset, melainkan
+    menggali POLA dari kolom yang sudah tersedia lalu menyebut maknanya. Contoh yang diberikan
+    user: "siang 20, malam 40 -> menandakan lebih banyak dipakai malam hari" - itu murni
+    membaca distribusi waktu, bukan mengarang penyebabnya.
+
+    Empat jenis pola di bawah masing-masing HANYA aktif kalau kolom yang dibutuhkannya
+    genuinely ada; dataset yang tidak punya kolom waktu tidak akan pernah menghasilkan kalimat
+    tren waktu. Semua angka dihitung pandas di sini - tidak ada AI, tidak ada template angka.
+
+    Dikembalikan maksimal 2 kalimat supaya kotak Catatan tidak dibanjiri satu jenis analisis.
+    """
+    if not parsed_data or len(parsed_data) < _POLA_MIN_BARIS:
+        return []
+    _ien = is_english(report)
+    try:
+        df = pd.DataFrame(parsed_data)
+    except Exception:
+        return []
+    if df.empty:
+        return []
+    keluar = []
+    num = [c for c in df.columns if df[c].dtype.kind in "if"]
+    kat = str((tile or {}).get("cat_col_name") or "").strip()
+    kat = kat if kat in df.columns else None
+    # Metrik panel ini sendiri; num[0] cuma cadangan utk tile yang genuinely tidak punya
+    # metrik tunggal. Lihat catatan di "met_col_name" pada bangun_tile.
+    _met = str((tile or {}).get("met_col_name") or "").strip()
+    _met = _met if (_met in df.columns and df[_met].dtype.kind in "if") else None
+    # Sekali per panel, bukan per kalimat - lihat kolom_tak_layak_kutip.
+    _tl = kolom_tak_layak_kutip(df)
+
+    # URUTAN SENGAJA: pola yang SPESIFIK ke tile ini dulu (kategori/metriknya sendiri), pola
+    # global belakangan. Versi pertama memakai dua kolom numerik PERTAMA untuk semua panel,
+    # jadi setiap panel di laporan menghasilkan kalimat korelasi yang SAMA PERSIS - persis
+    # pengulangan yang sedang diperbaiki. Sekarang kalimatnya lahir dari kolom milik panel itu
+    # sendiri, jadi berbeda dengan sendirinya antar panel.
+
+    # ---- 1. PERBANDINGAN ANTAR KELOMPOK: kategori dgn proporsi status paling menonjol ---
+    if kat:
+        # Kandidat DIPILIH, bukan diambil yang pertama ketemu: kolom pertama yang kebetulan
+        # kategorikal sering justru penanda struktur file (lihat _PEMISAH_DEGENERATE).
+        _kandidat = [c for c in df.columns
+                     if c != kat and df[c].dtype.kind not in "if"
+                     and 2 <= df[c].nunique() <= 8]
+        _stat, _ct, _rata = None, None, None
+        for _c in _kandidat:
+            _ct_c = pd.crosstab(df[kat], df[_c], normalize="index")
+            if _ct_c.empty:
+                continue
+            # Berapa banyak kelompok yang terpisah SEMPURNA (100% di satu nilai)? Kalau
+            # sebagian besar begitu, kolom ini memilah data, bukan menggambarkan hasilnya -
+            # kalimat apa pun dari situ akan selalu berbunyi "100,0%" dan tidak berarti apa2.
+            _sempurna = float((_ct_c.max(axis=1) >= 0.999).mean())
+            if _sempurna > _PEMISAH_DEGENERATE:
+                logger.info("pola perbandingan: kolom %r dilewati - %.0f%% kelompok terpisah "
+                            "sempurna (penanda struktur, bukan hasil)", _c, _sempurna * 100)
+                continue
+            _stat, _ct = _c, _ct_c
+            _rata = df[_c].value_counts(normalize=True)
+            break
+        if _stat is not None:
+            _terbaik = None
+            for _nilai in _ct.columns:
+                _dasar = float(_rata.get(_nilai, 0))
+                if _dasar <= 0:
+                    continue
+                _kol = _ct[_nilai]
+                _selisih = float(_kol.max()) - _dasar
+                if _terbaik is None or _selisih > _terbaik[2]:
+                    _terbaik = (_kol.idxmax(), _nilai, _selisih, float(_kol.max()), _dasar)
+            if _terbaik and _terbaik[2] >= 0.08:
+                _grp, _nilai, _sel, _pct, _dasar = _terbaik
+                keluar.append(_L(
+                    report,
+                    f"{_grp} paling menonjol pada {sebut_kolom(_stat, _tl, 'salah satu kategori')} '{_nilai}' "
+                    f"({fmt_desimal(_pct * 100, 1, _ien)}% dari barisnya, dibanding "
+                    f"{fmt_desimal(_dasar * 100, 1, _ien)}% rata-rata seluruh "
+                    f"{sebut_kolom(kat, _tl, 'kelompok lain')}) - selisih inilah yang membedakannya dari "
+                    f"kelompok lain.",
+                    f"{_grp} stands out on {sebut_kolom(_stat, _tl, 'salah satu kategori', 'one category')} '{_nilai}' "
+                    f"({fmt_desimal(_pct * 100, 1, _ien)}% of its rows versus "
+                    f"{fmt_desimal(_dasar * 100, 1, _ien)}% across all "
+                    f"{sebut_kolom(kat, _tl, 'kelompok lain', 'other groups')}) - that gap is what sets it apart.",
+                ))
+
+    # ---- 2. KONSENTRASI: teratas berapa kali lipat RATA-RATA yang lain ------------------
+    if kat and (_met or num) and len(keluar) < 2:
+        _mk = _met or num[0]
+        _dfk = _kelompok_nyata(df, kat)
+        _g = _dfk.groupby(_dfk[kat].astype(str))[_mk].sum().sort_values(ascending=False)
+        if len(_g) >= 3:
+            _atas = float(_g.iloc[0])
+            _sisa = _g.iloc[1:]
+            _rata_sisa = float(_sisa.mean()) if len(_sisa) else 0.0
+            if _rata_sisa > 0 and _atas / _rata_sisa >= 1.3:
+                keluar.append(_L(
+                    report,
+                    # Satuan angkanya disebut EKSPLISIT di kalimat, tidak menumpang pada
+                    # awalan subjek - supaya angka ini tidak bisa terbaca sbg besaran lain
+                    # seandainya awalan itu berubah atau hilang.
+                    f"{_g.index[0]} menyumbang {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x "
+                    f"rata-rata {sebut_kolom(kat, _tl, 'kelompok')} lainnya pada "
+                    f"{sebut_kolom(_mk, _tl, 'indikator utama', 'the main indicator')} "
+                    f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - "
+                    f"perhatian yang diarahkan ke sini menjangkau porsi terbesar.",
+                    f"{_g.index[0]} contributes {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x the "
+                    f"average of the other {sebut_kolom(kat, _tl, 'kelompok', 'groups')} on "
+                    f"{sebut_kolom(_mk, _tl, 'indikator utama', 'the main indicator')} "
+                    f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - "
+                    f"attention directed here covers the largest share.",
+                ))
+
+    # ---- 3. KORELASI - HANYA utk tile yang memang membandingkan DUA metrik --------------
+    # Dipakai metrik milik TILE ITU (label_a/label_b/x_label yang sudah dibawa tile), bukan
+    # dua kolom numerik pertama dataset: kalau memakai yang terakhir, semua panel - termasuk
+    # yang topiknya sama sekali lain - mendapat kalimat korelasi yang sama persis.
+    if len(keluar) < 2:
+        _pair = [c for c in (str((tile or {}).get("label_a") or ""),
+                             str((tile or {}).get("label_b") or ""),
+                             str((tile or {}).get("x_label") or ""))
+                 if c in df.columns and df[c].dtype.kind in "if"]
+        _pair = list(dict.fromkeys(_pair))
+        if len(_pair) >= 2:
+            _a, _b = _pair[0], _pair[1]
+            _dd = df[[_a, _b]].dropna()
+            if len(_dd) >= _POLA_MIN_BARIS and _dd[_a].std() > 0 and _dd[_b].std() > 0:
+                _r = float(_dd[_a].corr(_dd[_b]))
+                if _r == _r:
+                    _abs = abs(_r)
+                    if _abs >= _POLA_KORELASI_LEMAH:
+                        keluar.append(_L(
+                            report,
+                            f"{rapikan_nama_kolom(_a)} dan {rapikan_nama_kolom(_b)} "
+                            f"{'naik bersama' if _r > 0 else 'berlawanan arah'} dengan kaitan "
+                            f"{'erat' if _abs >= _POLA_KORELASI_KUAT else 'sedang'} "
+                            f"(r={fmt_desimal(_r, 2, _ien)}).",
+                            f"{rapikan_nama_kolom(_a)} and {rapikan_nama_kolom(_b)} "
+                            f"{'move together' if _r > 0 else 'move in opposite directions'} with a "
+                            f"{'strong' if _abs >= _POLA_KORELASI_KUAT else 'moderate'} "
+                            f"association (r={fmt_desimal(_r, 2, _ien)}).",
+                        ))
+                    else:
+                        keluar.append(_L(
+                            report,
+                            f"{rapikan_nama_kolom(_a)} dan {rapikan_nama_kolom(_b)} praktis tidak "
+                            f"berkaitan (r={fmt_desimal(_r, 2, _ien)}) - besarnya yang satu tidak "
+                            f"bisa dipakai memperkirakan yang lain.",
+                            f"{rapikan_nama_kolom(_a)} and {rapikan_nama_kolom(_b)} are effectively "
+                            f"unrelated (r={fmt_desimal(_r, 2, _ien)}) - the size of one says "
+                            f"nothing about the other.",
+                        ))
+
+    # ---- 4. POLA WAKTU: arah & besaran perubahan antar paruh periode --------------------
+    # Paling generik (tidak bergantung tile), jadi ditaruh terakhir - dedup per-kalimat di
+    # kumpulkan_catatan_halaman memastikan ia cuma tercetak sekali per halaman.
+    if len(keluar) < 2 and (_met or num):
+        _kol_w, _ser_w = _pola_kolom_waktu(df)
+        if _kol_w is not None:
+            _m = _met or num[0]
+            _d = pd.DataFrame({"w": _ser_w, "v": df[_m]}).dropna().sort_values("w")
+            if len(_d) >= _POLA_MIN_BARIS:
+                _tengah = len(_d) // 2
+                _awal, _akhir = _d.iloc[:_tengah]["v"].sum(), _d.iloc[_tengah:]["v"].sum()
+                if _awal > 0 and _akhir > 0:
+                    _rasio = _akhir / _awal
+                    _naik, _turun = _rasio >= 1.15, _rasio <= 0.87
+                    if _naik or _turun:
+                        _kali = _rasio if _naik else (1.0 / _rasio)
+                        _p1, _p2 = _d.iloc[0]["w"], _d.iloc[-1]["w"]
+                        keluar.append(_L(
+                            report,
+                            f"Sepanjang {_p1:%b %Y}-{_p2:%b %Y}, {rapikan_nama_kolom(_m)} paruh "
+                            f"kedua {'naik' if _naik else 'turun'} {fmt_desimal(_kali, 1, _ien)}x "
+                            f"dibanding paruh pertama ({_fmt_count(_awal, _ien)} -> "
+                            f"{_fmt_count(_akhir, _ien)}); beban "
+                            f"{'bergeser ke akhir periode' if _naik else 'mengendur menjelang akhir periode'}.",
+                            f"Across {_p1:%b %Y}-{_p2:%b %Y}, {rapikan_nama_kolom(_m)} in the second "
+                            f"half {'rose' if _naik else 'fell'} {fmt_desimal(_kali, 1, _ien)}x versus "
+                            f"the first half ({_fmt_count(_awal, _ien)} -> {_fmt_count(_akhir, _ien)}); "
+                            f"the load {'shifts toward the end' if _naik else 'eases toward the end'}.",
+                        ))
+
+    return keluar[:2]
 
 
 def catatan_agregat(items: list, n_digambar: int, unit: str, report,
@@ -503,18 +1041,24 @@ def catatan_agregat(items: list, n_digambar: int, unit: str, report,
     # Tidak bisa dibaca dari chart: chart cuma menampilkan yang tergambar. Populasi PENUH
     # dibawa tile (n_penuh/total_penuh) - `items` sendiri SUDAH dipotong top-N, jadi
     # menghitung dari situ saja akan selalu bilang "menampilkan semuanya".
+    # KEPUTUSAN USER (laporan ini untuk PRESENTASI): butir cakupan ini meta-komentar tentang
+    # CHART-nya, bukan tentang datanya - dipertahankan demi transparansi tapi DITARUH PALING
+    # AKHIR & tidak boleh jadi satu-satunya isi Catatan. Sebelumnya ia butir PERTAMA, dan
+    # karena butir lain sering tidak lolos syaratnya, satu halaman bisa berisi empat kalimat
+    # berpola identik "Chart menampilkan N dari M entitas..." dan tidak ada yang lain.
+    _catatan_cakupan = None
     _np = int(n_penuh or n)
     _tp = float(total_penuh or total)
     if _np > n_digambar > 0 and _tp > 0:
         sisa_n = _np - n_digambar
         sisa_v = max(0.0, _tp - sum(urut[:n_digambar]))
-        catatan.append(_L(
+        _catatan_cakupan = _L(
             report,
             f"Chart menampilkan {n_digambar} dari {_np} entitas; {sisa_n} sisanya menyumbang "
-            f"{_fmt_count(sisa_v, _ien)} {unit} ({fmt_persen(sisa_v, _tp)} dari total).",
+            f"{_fmt_count(sisa_v, _ien)} {unit} ({fmt_persen(sisa_v, _tp, decimals=1)} dari total).",
             f"The chart shows {n_digambar} of {_np} entities; the remaining {sisa_n} contribute "
-            f"{_fmt_count(sisa_v, _ien)} {unit} ({fmt_persen(sisa_v, _tp)} of the total).",
-        ))
+            f"{_fmt_count(sisa_v, _ien)} {unit} ({fmt_persen(sisa_v, _tp, decimals=1)} of the total).",
+        )
 
     # R2 - PEMUSATAN: berapa entitas paling sedikit yang sudah mencapai 80% total.
     _kum, _n80 = 0.0, 0
@@ -524,23 +1068,49 @@ def catatan_agregat(items: list, n_digambar: int, unit: str, report,
         if _kum >= 0.8 * _pop_total:
             break
     if 0 < _n80 < _pop_n:
+        # IMPLIKASI, bukan sebab yang dikarang: apakah volume TERPUSAT atau TERSEBAR adalah
+        # kesimpulan langsung dari rasio _n80/_pop_n itu sendiri - tidak ada informasi luar
+        # yang dipakai. Ambang sepertiga: kalau <=1/3 entitas sudah menutup 80% volume,
+        # sebarannya timpang; kalau perlu lebih dari itu, relatif merata.
+        _terpusat = _n80 <= max(1, _pop_n // 3)
+        _imp_id = (" Sebagian besar volume tertahan di kelompok kecil ini, sehingga perubahan "
+                   "pada mereka paling besar pengaruhnya ke total."
+                   if _terpusat else
+                   " Volume tersebar cukup merata, sehingga tidak ada satu entitas yang "
+                   "menentukan arah total sendirian.")
+        _imp_en = (" Most of the volume sits in this small group, so changes there move the "
+                   "total the most."
+                   if _terpusat else
+                   " Volume is spread fairly evenly, so no single entity drives the total on "
+                   "its own.")
         catatan.append(_L(
             report,
-            f"{_n80} dari {_pop_n} entitas sudah mencakup {fmt_persen(_kum, _pop_total)} dari "
-            f"seluruh {unit}.",
-            f"{_n80} of {_pop_n} entities already account for {fmt_persen(_kum, _pop_total)} "
-            f"of all {unit}.",
+            f"{_n80} dari {_pop_n} entitas sudah mencakup {fmt_persen(_kum, _pop_total, decimals=1)} dari "
+            f"seluruh {unit}.{_imp_id}",
+            f"{_n80} of {_pop_n} entities already account for {fmt_persen(_kum, _pop_total, decimals=1)} "
+            f"of all {unit}.{_imp_en}",
         ))
 
     # R3 - SEBARAN: median & rentang. Chart top-N menyembunyikan keduanya.
     med = statistics.median(_pop)
     if _pop_n >= 5 and max(_pop) > min(_pop):
+        # IMPLIKASI dari rasio rentang thd median - dihitung, bukan diasumsikan.
+        _lebar = med > 0 and (max(_pop) - min(_pop)) / med >= 2
+        _imp_id = (" Jaraknya lebar, jadi angka rata-rata menutupi perbedaan antar entitas "
+                   "dan median lebih mewakili kondisi umum."
+                   if _lebar else
+                   " Jaraknya rapat, jadi entitas satu dengan lainnya berada pada tingkat "
+                   "yang sebanding.")
+        _imp_en = (" The spread is wide, so an average would mask the differences and the "
+                   "median better represents the typical case."
+                   if _lebar else
+                   " The spread is narrow, so entities sit at broadly comparable levels.")
         catatan.append(_L(
             report,
             f"Median {_fmt_count(med, _ien)} {unit} per entitas, rentang "
-            f"{_fmt_count(min(_pop), _ien)}-{_fmt_count(max(_pop), _ien)}.",
+            f"{_fmt_count(min(_pop), _ien)}-{_fmt_count(max(_pop), _ien)}.{_imp_id}",
             f"Median {_fmt_count(med, _ien)} {unit} per entity, ranging "
-            f"{_fmt_count(min(_pop), _ien)}-{_fmt_count(max(_pop), _ien)}.",
+            f"{_fmt_count(min(_pop), _ien)}-{_fmt_count(max(_pop), _ien)}.{_imp_en}",
         ))
 
     # R4 - ENTITAS NOL: jumlahnya & sumbangan sisanya. Batang nol tak terlihat di chart.
@@ -549,9 +1119,11 @@ def catatan_agregat(items: list, n_digambar: int, unit: str, report,
         catatan.append(_L(
             report,
             f"{nol} dari {_pop_n} entitas tercatat 0 {unit}; {_pop_n - nol} sisanya "
-            f"menyumbang seluruh {_fmt_count(_pop_total, _ien)}.",
+            f"menyumbang seluruh {_fmt_count(_pop_total, _ien)}. Entitas bernilai nol tidak "
+            f"terlihat di chart karena batangnya tidak terbentuk.",
             f"{nol} of {_pop_n} entities recorded 0 {unit}; the other {_pop_n - nol} "
-            f"contribute the entire {_fmt_count(_pop_total, _ien)}.",
+            f"contribute the entire {_fmt_count(_pop_total, _ien)}. Zero-valued entities are "
+            f"invisible on the chart because their bars have no length.",
         ))
 
     # R5 - SIMPANGAN: teratas berapa kali median. Rasio ini tidak tergambar di mana pun.
@@ -559,10 +1131,15 @@ def catatan_agregat(items: list, n_digambar: int, unit: str, report,
         _nama_top = pasangan[nilai.index(max(nilai))][0]
         catatan.append(_L(
             report,
-            f"{_nama_top} {fmt_desimal(max(_pop) / med, 1, _ien)}x median seluruh entitas.",
+            f"{_nama_top} {fmt_desimal(max(_pop) / med, 1, _ien)}x median seluruh entitas - "
+            f"selisih sebesar ini membuat rata-rata seluruh entitas tidak mewakili mayoritas.",
             f"{_nama_top} is {fmt_desimal(max(_pop) / med, 1, _ien)}x the median across all "
-            f"entities.",
+            f"entities - a gap this large makes the overall average unrepresentative.",
         ))
+    # Cakupan ditaruh PALING AKHIR (lihat catatan di R1). Kalau tidak ada butir naratif sama
+    # sekali, ia tetap dipakai - lebih baik satu baris transparansi daripada Catatan kosong.
+    if _catatan_cakupan:
+        catatan.append(_catatan_cakupan)
     return catatan
 
 
@@ -950,7 +1527,16 @@ def radar_label_layout(axes: list, size: float, label_margin: float) -> list | N
 # Pembungkusan dihitung dgn wrap_line_count (peluang pecah SEBENARNYA), bukan len/kapasitas -
 # kedua versi lama memakai pembagian karakter yang mengasumsikan baris terisi penuh.
 _DASH_TITLE_SIZE_PT = 22.0          # ukuran dasar; dikecilkan bertahap kalau tidak muat
-_DASH_TITLE_LOGO_CLEAR_IN = 2.6     # zona logo pojok kanan-atas yang tidak boleh ditembus
+# ZONA LOGO pojok kanan-atas yang tidak boleh ditembus judul halaman.
+# BUG NYATA DIPERBAIKI (dilaporkan user "logo ketutupan", dibuktikan dgn pemindaian tumpang-
+# tindih di SELURUH halaman & slide, bukan satu render): 2.6in itu tebakan, bukan ukuran.
+# Logo yang benar-benar tergambar mulai di x=10.43in (PDF) dan x=10.35in (PPTX) dari tepi
+# kiri, jadi zona bebas yang SEBENARNYA dibutuhkan = 13.333 - 10.35 = 2.98in. Dengan 2.6in,
+# kotak judul dibolehkan sampai x=10.48in - menembus logo 0.13in di PPTX dan 0.03in di PDF.
+# 3.10in = 2.98in + 0.12in napas, jadi judul berhenti di 9.98in dan menyisakan jarak 0.37in
+# ke tepi kiri logo. Dipesan MUNDUR DARI TEPI LOGO (bukan mengandalkan z-order): menaruh logo
+# di lapisan atas hanya menyembunyikan tabrakan - judulnya tetap tertutup & tidak terbaca.
+_DASH_TITLE_LOGO_CLEAR_IN = 3.10
 _DASH_TITLE_MIN_H_IN = 0.62         # menjamin kolom pertama mulai SETELAH logo selesai
 _DASH_TITLE_PAD_IN = 0.08
 _DASH_TITLE_FAKTOR_LEBAR = 0.80     # dikalibrasi dari render PDF sungguhan, lihat catatan
@@ -970,14 +1556,44 @@ def metrik_judul_dashboard(teks: str, total_w_in: float, size_pt: float | None =
     lebar_px = text_w_in * 96.0
     teks = str(teks or "")
     pt = base_pt
-    for _try in (base_pt, base_pt * 0.9, base_pt * 0.8, base_pt * 0.72):
-        lh = _try * 1.25 / 72.0
-        maks_baris = max(1, int(_DASH_TITLE_MAX_H_IN // lh))
-        if wrap_line_count(teks, lebar_px, _try, _DASH_TITLE_FAKTOR_LEBAR) <= maks_baris:
-            pt = _try
-            break
+    # UKURAN JUDUL DIPILIH DGN MEMPRIORITASKAN JUMLAH BARIS TERKECIL, bukan font terbesar.
+    # Dua hal bertemu di sini dan harus direkonsiliasi (permintaan user):
+    #  (1) headline sekarang bisa menggabungkan dua kalimat temuan;
+    #  (2) zona bebas logo dilebarkan 2,6in -> 3,10in (perbaikan logo ketutupan), sehingga
+    #      lebar teks berkurang 0,5in dan judul yang DULU muat satu baris jadi dua.
+    # Versi lama mengambil font TERBESAR yang muat, dan `maks_baris` dihitung dari
+    # _DASH_TITLE_MAX_H_IN // tinggi_baris - jadi begitu font mengecil, batas barisnya justru
+    # MELONGGAR (22pt boleh 2 baris, 17pt boleh 3) dan blok judul malah makin tinggi. Terukur:
+    # satu kalimat 0,62in -> 0,74in, dua kalimat 0,84in -> 0,97in - kebalikan dari yang diminta.
+    # Sekarang: coba muat 1 baris dulu (turunkan font bertahap), baru terima 2 baris. Batas 2
+    # baris KERAS, tidak ikut melonggar saat font mengecil.
+    _MAKS_BARIS_JUDUL = 2
+    # TINGGI BLOK yang jadi target, bukan ukuran font. Setelah zona bebas logo dilebarkan
+    # (2,6 -> 3,10in, perbaikan logo ketutupan) lebar teks berkurang 0,5in, dan headline satu
+    # kalimat pun sudah butuh DUA baris pada 22pt - memaksanya kembali satu baris menuntut
+    # font ~14pt, terlalu kecil untuk judul halaman. Yang bisa dikurangi tinggal TINGGI
+    # bloknya: dipilih font TERBESAR yang bloknya masih <= _TINGGI_TARGET_JUDUL_IN.
+    # Terukur: 22pt/2baris = 0,844in (yang dikeluhkan "kegedean"), 18,7pt/2baris = 0,73in.
+    # Batas 2 baris KERAS - tidak ikut melonggar saat font mengecil seperti rumus lama
+    # (_DASH_TITLE_MAX_H_IN // tinggi_baris), yang justru membuat blok makin tinggi karena
+    # font kecil "boleh" 3 baris.
+    _TINGGI_TARGET_JUDUL_IN = 0.75
+    _tingkat = (base_pt, base_pt * 0.95, base_pt * 0.9, base_pt * 0.85,
+                base_pt * 0.8, base_pt * 0.76, base_pt * 0.72)
+    _kandidat = []
+    for _try in _tingkat:
+        _nb = wrap_line_count(teks, lebar_px, _try, _DASH_TITLE_FAKTOR_LEBAR)
+        if _nb <= _MAKS_BARIS_JUDUL:
+            _kandidat.append((_try, _nb * _try * 1.25 / 72.0 + _DASH_TITLE_PAD_IN))
+    _muat = [k for k in _kandidat if k[1] <= _TINGGI_TARGET_JUDUL_IN]
+    if _muat:
+        pt = max(_muat, key=lambda k: k[0])[0]
+    elif _kandidat:
+        # tidak ada yang mencapai target: ambil yang bloknya paling pendek
+        pt = min(_kandidat, key=lambda k: k[1])[0]
     else:
-        # Di ukuran terkecil pun tidak muat: barisnya yang bertambah, teksnya TIDAK dibuang.
+        # Di ukuran terkecil pun tidak muat 2 baris: barisnya yang bertambah, teksnya TIDAK
+        # dibuang (batasan tetap: tidak ada teks yang boleh terpotong).
         pt = base_pt * 0.72
     line_h_in = pt * 1.25 / 72.0
     n_baris = max(1, wrap_line_count(teks, lebar_px, pt, _DASH_TITLE_FAKTOR_LEBAR))
@@ -1030,6 +1646,50 @@ def warna_teks_label(hex_bentuk: str) -> str:
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     r, g, b = gelapkan_untuk_latar_terang(r, g, b, _LUMINANCE_MAKS_TEKS)
     return "#%02x%02x%02x" % (r, g, b)
+
+
+# ---- PITA KEPALA PANEL: TINT DARI TEMA AKTIF, BUKAN WARNA TETAP ------------------------
+# KOREKSI USER atas versi sebelumnya: pita kepala sempat dihardcode "#EEF1F4" + teks "#16241C".
+# Itu salah arah - app ini multi-tema (THEME_PALETTES: green/navy/dark/gold/teal, dipilih user
+# lewat "Theme Color"), dan pita jadi SATU-SATUNYA elemen di halaman yang tidak ikut berubah
+# saat temanya diganti. Yang ditiru dari dek acuan BUKAN warna abu-abunya (itu warna tetap
+# milik klien lain), melainkan RELASINYA: latar terang + teks gelap SENADA, bobot visual rendah
+# dibanding headline halaman. Jadi tint-nya diturunkan DARI warna tema yang sedang aktif.
+#
+# Aturan warnanya tinggal DI SINI, satu tempat, persis seperti gelapkan_untuk_latar_terang/
+# warna_teks_label di atas ("Jangan dua fungsi yang memutuskan warna secara terpisah - kita
+# baru saja membayar mahal untuk pelajaran itu di geometri judul"). Exporter cuma mengonversi
+# tipe warnanya (hex utk PDF, RGBColor utk PPT).
+_LUMINANCE_PITA_LATAR = 0.93   # latar pita: sangat terang, hampir putih tapi masih bernuansa
+_LUMINANCE_PITA_GARIS = 0.82   # garis tepi pita: cukup terlihat, tidak menjadi bingkai tebal
+
+
+def terangkan_ke_luminance(r: int, g: int, b: int, target: float) -> tuple:
+    """Campur warna ke PUTIH sampai luminance mencapai `target` - hue tetap.
+
+    Pasangan arah-berlawanan dari gelapkan_untuk_latar_terang, memakai definisi luminance yang
+    SAMA. Karena putih berluminance 1 dan pencampuran ini linier per komponen, luminance hasil
+    = lum + k*(1-lum); jadi k yang dibutuhkan bisa dihitung langsung, tidak perlu iterasi."""
+    lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    if lum >= target or lum >= 1.0:
+        return (r, g, b)
+    k = (target - lum) / (1.0 - lum)
+    return (round(r + (255 - r) * k), round(g + (255 - g) * k), round(b + (255 - b) * k))
+
+
+def warna_pita_panel(hex_tema: str) -> tuple:
+    """(latar, garis, teks) pita kepala panel - SEMUANYA diturunkan dari warna tema aktif.
+
+    Teks memakai warna_teks_label(), yaitu stop TERGELAP dari ramp warna yang sama - konvensi
+    yang sudah dipakai untuk label yang menempel pada bentuk berwarna. Hasilnya senada dengan
+    latarnya, bukan hitam polos yang sama untuk semua tema."""
+    h = str(hex_tema or "").lstrip("#")
+    if len(h) != 6:
+        h = "16241C"
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    latar = "#%02x%02x%02x" % terangkan_ke_luminance(r, g, b, _LUMINANCE_PITA_LATAR)
+    garis = "#%02x%02x%02x" % terangkan_ke_luminance(r, g, b, _LUMINANCE_PITA_GARIS)
+    return (latar, garis, warna_teks_label("#" + h))
 
 
 def label_menempel_pada_bentuk(chart_style: str | None) -> bool:
@@ -1226,11 +1886,13 @@ def tinggi_kaki_legenda(tile: dict, col_w_in: float, is_en: bool = False) -> flo
         baris += wrap_line_count(legenda, lebar_px, _KAKI_PT, 0.80)
         baris += wrap_line_count(_KAKI_TERNORM_EN if is_en else _KAKI_TERNORM_ID,
                                  lebar_px, _KAKI_PT, 0.80)
-    else:
-        sumbu = ("relative to highest - highest %s" if is_en else
-                 "relatif terhadap tertinggi - tertinggi %s") % _fmt_angka_ringkas(
-            max(tile.get("values") or [0]) or 0)
-        baris += wrap_line_count(sumbu, lebar_px, _KAKI_PT, 0.80)
+    # ranked_bar_ternormalisasi TIDAK lagi menggambar kaki legenda (teksnya duplikat dgn pita
+    # kepala - lihat catatan di _ranked_bar_ternorm_html), jadi ia tidak memesan tinggi apa
+    # pun di sini. Perencana & penggambar HARUS sepakat: kalau di sini masih dipesan
+    # sementara penggambar tidak memakainya, chart kehilangan ruang yang tidak dipakai siapa
+    # pun; kalau sebaliknya, kaki tergambar di luar jatah.
+    if baris <= 0:
+        return 0.0
     return baris * (_KAKI_PT * 1.25 / 72.0) + 0.06
 
 
@@ -1553,11 +2215,17 @@ def note_box_height_in(w_in: float, butir) -> float:
     baris = [str(b).strip() for b in (butir or []) if str(b or "").strip()]
     if not baris:
         return 0.0
-    lebar_kar = max(20, int((w_in * 96 - 46) / (10 * 0.62 * 96 / 72)))
+    lebar_px = max(60.0, w_in * 96 - 46)
     tinggi = 0.14 + 0.24
     for b in baris:
-        n = max(1, -(-len(b) // lebar_kar))
-        tinggi += n * (10 * 1.25 / 72) + 0.05
+        # Baris baru eksplisit dipecah DULU: wrap_line_count mengukur pembungkusan, bukan
+        # pemisah yang sudah ada di teksnya. Nama entitas di data nyata bisa membawa "\n"
+        # sendiri (hasil pemecahan baris di dokumen sumber) - tanpa ini, butir yang memuatnya
+        # dihitung 1 baris padahal tergambar 2, dan butir berikutnya menimpanya.
+        n = 0
+        for potongan in str(b).splitlines() or [""]:
+            n += max(1, wrap_line_count(potongan, lebar_px, 10.0, 0.62))
+        tinggi += max(1, n) * (10 * 1.25 / 72) + 0.05
     return tinggi + 0.1
 
 
@@ -1580,16 +2248,35 @@ def kumpulkan_catatan_halaman(catatan_per_kolom: list) -> list:
     kolom urutan aslinya dipertahankan, krn catatan_agregat sudah menyusun dari yang paling
     informatif."""
     kolom = [list(k or []) for k in (catatan_per_kolom or [])]
-    hasil, terlihat = [], set()
+    hasil, terlihat, kalimat_terlihat = [], set(), set()
     for i in range(max((len(k) for k in kolom), default=0)):
         for k in kolom:
             if i >= len(k):
                 continue
             butir = k[i]
             kunci = str(butir).strip()
-            if kunci and kunci not in terlihat:
-                terlihat.add(kunci)
-                hasil.append(butir)
+            if not kunci or kunci in terlihat:
+                continue
+            # DEDUP PER KALIMAT, bukan cuma per butir. Tiap butir catatan_agregat sekarang
+            # membawa klausa implikasi ("Volume tersebar cukup merata, sehingga...") yang
+            # ditentukan oleh AMBANG, jadi dua kolom dgn karakter sebaran serupa menghasilkan
+            # kalimat penutup yang SAMA PERSIS - dan kotak Catatan kembali berisi kalimat
+            # berpola berulang, persis keluhan yang mau diperbaiki. Yang dibuang cuma kalimat
+            # yang sudah muncul; angka pembukanya (yang memang berbeda tiap kolom) tetap.
+            _kal = [x.strip() for x in re.split(r"(?<=[.;])\s+", kunci) if x.strip()]
+            # Prefix subjek ("Durasi Hari per Vendor: ") dilepas SEBELUM dibandingkan.
+            # Tanpa ini dedup selalu lolos: kalimat yang isinya sama persis terlihat berbeda
+            # hanya karena subjek di depannya berbeda, dan kotak Catatan kembali berisi
+            # kalimat berulang - terukur di render, satu halaman memuat 3 kalimat korelasi
+            # yang identik kata demi kata di belakang subjeknya masing-masing.
+            def _inti(x):
+                return x.split(": ", 1)[1].lower().strip() if ": " in x[:60] else x.lower().strip()
+            _sisa = [x for x in _kal if _inti(x) not in kalimat_terlihat]
+            if not _sisa:
+                continue
+            kalimat_terlihat.update(_inti(x) for x in _sisa)
+            terlihat.add(kunci)
+            hasil.append(" ".join(_sisa))
     return hasil
 
 
@@ -2008,13 +2695,16 @@ def _kepala_seksi_h_in(col: dict, col_w_in: float | None = None) -> float:
             _jbaris = wrap_line_count(judul, _w_px, _p, 0.80)
             if _jbaris <= 1:
                 break
-        pita_h = max(_DASH_COLS_TITLE_H_IN, _jbaris * (_jp * 1.25 / 72.0) + 0.06)
+        pita_h = max(_DASH_COLS_TITLE_H_IN,
+                     _jbaris * (_jp * 1.25 / 72.0) + _DASH_COLS_TITLE_PAD_IN)
     else:
         pita_h = _DASH_COLS_TITLE_H_IN
     h = pita_h
     if str(col.get("cara_baca") or "").strip():
         h += _DASH_COLS_CARA_BACA_H_IN
-    h += 0.04  # jeda tetap setelah title/cara-baca - SELALU ada, lihat catatan di atas
+    # jeda setelah blok judul - SELALU ada. Besarnya bergantung apakah baris cara-baca
+    # sudah memisahkan pita dari isi; lihat catatan di _DASH_COLS_JUDUL_GAP_IN.
+    h += 0.04 if str(col.get("cara_baca") or "").strip() else _DASH_COLS_JUDUL_GAP_IN
     if col.get("kpi_summary"):
         h += _DASH_COLS_KPI_H_IN + 0.10  # +0.10: jeda tetap sesudah KPI di kode penggambar
     return h
@@ -2132,6 +2822,39 @@ def alokasi_kolom_bertumpuk(seksi_list: list, col_w_in: float, tinggi_kolom_in: 
                         r["cards_y"] = h["r"]["chart_h"] + _gap_ck
                         r["note_y"] = r["cards_y"] + cards_h + 0.08
                         sisa -= ambil
+
+    # TAHAP 3: SISA YANG TIDAK TERPAKAI DIKEMBALIKAN KE CHART -----------------------------
+    # MASALAH (dilaporkan user: panel berisi sedikit item menganga di bawahnya). Terukur dari
+    # alokasi - bukan dari deteksi piksel, yang pada percobaan pertama memberi angka
+    # menyesatkan karena salah mengenali panel: kolom berisi SATU seksi menyisakan sampai
+    # 1,19in (23% tinggi kolom) yang tidak diambil siapa pun.
+    # _layout_dashboard_column_content punya "langkah 3" persis untuk ini, tapi fungsi ini
+    # sengaja tidak memanggilnya lagi (lihat TAHAP 2: memanggilnya dgn budget gabungan
+    # menggembungkan chart memakai ruang milik kartu) - jadi untuk kolom yang dialokasikan DI
+    # SINI, sisanya memang tidak pernah dikembalikan.
+    # DUA BATAS supaya ini bukan "asal digedein" (chart yang genuinely sudah pas jangan
+    # dipaksa besar):
+    #   - chart tidak pernah lebih tinggi dari LEBAR kolomnya sendiri - bentuk tetap seperti
+    #     radar/donat dibatasi sisi terpendek, jadi melebihi itu cuma menambah ruang kosong
+    #     kiri-kanan, bukan memperbesar gambarnya;
+    #   - pertumbuhan dibatasi 1,8x jatah yang sudah dihitung, supaya chart minimalis tidak
+    #     melonjak jadi raksasa hanya karena kolomnya kebetulan lapang.
+    # Sisa dibagi RATA antar chart yang masih bisa memanfaatkannya.
+    if sisa > 0.05:
+        _bisa = [h for h in hasil if h.get("tile") and h["r"]["chart_h"] > 0]
+        if _bisa:
+            _bagi = sisa / len(_bisa)
+            for h in _bisa:
+                r = h["r"]
+                _batas = min(col_w_in, r["chart_h"] * 1.8)
+                _ambil = min(_bagi, max(0.0, _batas - r["chart_h"]))
+                if _ambil <= 0.02:
+                    continue
+                r["chart_h"] += _ambil
+                if r.get("cards"):
+                    r["cards_y"] = r.get("cards_y", 0.0) + _ambil
+                r["note_y"] = r.get("note_y", 0.0) + _ambil
+                sisa -= _ambil
 
     keluar = []
     for h in hasil:
@@ -3254,9 +3977,42 @@ def _r_stacked(sig):
 # 0.09in. Nilai exporter dipakai di sini & diberi nama sendiri sampai duplikasinya
 # dibereskan; JANGAN pakai _DASH_COL_GAP_IN untuk perhitungan lebar kolom.
 _DASH_COLS_GAP_IN = 0.0   # A1: panel menempel - HARUS sama dgn kedua exporter.
-_DASH_COLS_TITLE_H_IN = 0.20      # pita kepala panel
+# PITA KEPALA: LANTAI saja. Tinggi sesungguhnya = tinggi teks judul (setelah wrap, pada
+# ukuran font yang benar-benar dipakai) + _DASH_COLS_TITLE_PAD_IN - lihat catatan di
+# konstanta itu untuk kenapa angka acuan tidak bisa disalin sbg tinggi tetap.
+_DASH_COLS_TITLE_H_IN = 0.20      # LANTAI tinggi pita kepala panel
 _DASH_COLS_CARA_BACA_H_IN = 0.18  # baris cara-baca italic di bawahnya
-_DASH_COLS_KPI_H_IN = 0.95        # baris kartu KPI
+# KARTU KPI: acuan 0.88in per kartu (2x2 kartu angka besar slide 3, W=2.39 H=0.88).
+# Sebelumnya 0.95in - 0.07in lebih tinggi dari perlunya, diambil dari jatah chart.
+_DASH_COLS_KPI_H_IN = 0.88        # baris kartu KPI
+# PADDING DALAM KARTU: acuan 0.08in tiap sisi (kartu domain slide 3 di L=0.16, teksnya mulai
+# L=0.24 - konsisten di keempat kartu). Isi kolom (judul, cara-baca, KPI, CHART, kartu)
+# digambar di dalam inset ini; yang tetap selebar penuh cuma badan panel & pita kepalanya.
+# Sebelumnya: teks di-inset 0.06in, tapi CHART & kartu sama sekali TIDAK di-inset (digambar
+# di left=x width=col_w penuh) sehingga bar/donat/treemap menyentuh garis tepi panel.
+_DASH_COLS_PAD_IN = 0.08
+# PADDING DALAM PITA KEPALA (jarak teks judul ke tepi atas+bawah pitanya, TOTAL).
+# Acuan tidak memberi satu 'tinggi pita' yang bisa disalin mentah - ia memberi DUA:
+# 0.34in untuk pita berisi judul chart 1 baris, dan 0.70in untuk pita kartu domain yang
+# memuat judul + angka skor besar + badge level (3 baris). Menyalin 0.34in sbg tinggi
+# tetap SALAH TRANSFER: acuan mengukurnya pada fontnya sendiri (~11pt), sementara judul
+# di sini mengecil sampai 5.5pt supaya muat - pita 0.34in utk teks 6.5pt jadi 3x tinggi
+# teksnya. Diuji terhadap KEDUA angka acuan: model 'padding TETAP' cocok (prediksi 0.331
+# vs 0.34, dan 0.713 vs 0.70 - meleset <=0.013in), model 'rasio tetap' TIDAK (1.78x vs
+# 1.22x). Jadi yang menyimpang bukan lantai _DASH_COLS_TITLE_H_IN, melainkan padding ini:
+# 0.06in, kurang dari separuh acuan - judul menempel tepi atas & bawah pitanya sendiri.
+_DASH_COLS_TITLE_PAD_IN = 0.14
+# JEDA pita kepala -> isi. Acuan mengukur 0.12in untuk pita yang LANGSUNG diikuti chart
+# (pita kolom kiri slide 2 berakhir 1.33, chart mulai 1.45). Di sini pita bisa diikuti
+# baris cara-baca italic 0.18in lebih dulu, dan baris itu sendiri sudah memisahkan pita
+# dari isi lebih jauh dari acuan (0.18 + 0.04 = 0.22in), jadi 0.12in ini dipakai HANYA
+# untuk kasus tanpa cara-baca - yang tanpa ini cuma dapat 0.04in. Terukur: memakainya di
+# KEDUA kasus menaikkan kepala tiap seksi 0.08in & memecah penumpukan kolom (bentuk
+# [[2,1,1],[2,2,2]] jatuh jadi [[1,1,1],[1,1,2],[1,2]], 2 halaman jadi 3 dgn separuh tiap
+# kolom kosong). HARUS dibaca sama oleh exporter & perencana (_kepala_seksi_h_in): kalau
+# berbeda, footprint seksi ter-underestimate & seksi berikutnya mulai terlalu cepat
+# (kelas bug tumpang-tindih yang sudah menggigit di laporan 186/187/189/190).
+_DASH_COLS_JUDUL_GAP_IN = 0.12
 _DASH_COLS_NOTE_H_IN = 1.02       # kotak catatan selebar halaman
 # Tumpukan kepala kolom yang TETAP sebelum badan isi: pita kepala + baris cara-baca +
 # baris KPI, plus jeda antar-bagian. Dipakai utk menaksir tinggi isi kolom SEBELUM
@@ -4081,13 +4837,27 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
         return en_txt if _ien else id_txt
 
     def _ket_teratas(lbl, val, tot, satuan=""):
-        """Satu kalimat, angkanya dari agregasi yang SAMA dgn yang digambar - bukan prosa AI."""
+        """Satu kalimat, angkanya dari agregasi yang SAMA dgn yang digambar - bukan prosa AI.
+
+        BUG AKURASI DIPERBAIKI (ditemukan lewat audit: tiap klaim narasi dihitung ulang dari
+        parsed_data dgn pandas, terpisah dari kode ini). Pemanggil mengoper `tot = sum(values)`,
+        yaitu jumlah nilai yang TERGAMBAR saja - chart cuma menampilkan top-N. Kalimatnya lalu
+        berbunyi "dari total 22.823 (18%)" padahal 22.823 itu total 6 unit kerja teratas;
+        seluruh 7 unit berjumlah 26.068 dan porsi sebenarnya 16,0%. Kata "total" membuat
+        pembaca menghitung terhadap keseluruhan, jadi angkanya terbaca lebih besar dari yang
+        sebenarnya - persis kelas kesalahan yang paling berbahaya di laporan manajemen:
+        terdengar meyakinkan dan tidak ada tandanya kalau salah.
+        Populasi PENUH sudah dibawa `keputusan` (total_entitas_penuh, dihitung sebelum
+        pemotongan top-N), jadi dipakai kalau tersedia."""
         if not lbl or not tot:
             return None
+        _tot_penuh = float(keputusan.get("total_entitas_penuh") or 0)
+        if _tot_penuh > tot:
+            tot = _tot_penuh
         return _ket(f"{lbl} tertinggi dengan {_num(val)}{satuan} dari total "
-                    f"{_num(tot)} ({fmt_persen(val, tot)}).",
+                    f"{_num(tot)} ({fmt_persen(val, tot, decimals=1)}).",
                     f"{lbl} is highest at {_num(val)}{satuan} of {_num(tot)} "
-                    f"total ({fmt_persen(val, tot)}).")
+                    f"total ({fmt_persen(val, tot, decimals=1)}).")
 
     if bentuk == "ranked_bar":
         # Bisa lahir dari pasangan (kategori, metrik) MAUPUN (kategori, metrik_a, metrik_b) -
@@ -4099,7 +4869,13 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
         return {"tile_kind": "risk_heatmap", "mode": "category",
                 "kicker": _judul("DISTRIBUSI DATA", "DATA DISTRIBUTION"),
                 "title": _judul(f"{met} per {kat}", f"{met} by {kat}"),
-                "cat_col_name": kat,
+                # `met_col_name` mendampingi `cat_col_name`: kategori SAJA tidak cukup untuk
+                # menarasikan panel ini. catatan_pola dulu memakai kolom numerik PERTAMA
+                # dataset, jadi panel "Durasi Hari per Kategori Pengadaan" mendapat kalimat
+                # berisi angka nilai_kontrak (201.093.686.554) - aritmetikanya benar, tapi
+                # pembaca mengaitkannya ke durasi. Salah-label begini lebih berbahaya dari
+                # angka ngawur: tidak ada yang terlihat janggal.
+                "cat_col_name": kat, "met_col_name": met,
                 "bars": [{"label": l, "count": v, "pct": round(100 * v / (sum(values) or 1)),
                           "color": palet[i % len(palet)]}
                          for i, (l, v) in enumerate(zip(labels, values))],
@@ -4112,6 +4888,7 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "kicker": _judul("PANGSA PER ENTITAS", "SHARE PER ENTITY"),
                 "title": _judul(f"Pangsa {pasangan[-1]}", f"{pasangan[-1]} Share"),
                 "cat_col_name": pasangan[0] if pasangan else None,
+                "met_col_name": pasangan[-1] if pasangan else None,
                 "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
                                         sum(values))}
     if bentuk in ("donut", "stacked"):
@@ -4121,14 +4898,34 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "kicker": _judul("KOMPOSISI", "COMPOSITION"),
                 "title": _judul(f"Komposisi {pasangan[-1]}", f"{pasangan[-1]} Composition"),
                 "cat_col_name": pasangan[0] if pasangan else None,
+                "met_col_name": pasangan[-1] if pasangan else None,
                 "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
                                         sum(values))}
     if bentuk == "ranked_bar_ternormalisasi":
-        return {"tile_kind": "ranked_bar_ternormalisasi", "labels": labels, "values": values,
+        # `labels` di bentuk ini adalah nama METRIK (bukan nilai kategori), jadi ia tercetak
+        # apa adanya sbg label batang DAN mengalir jadi nama kartu bersarang. Dirapikan di
+        # sumber supaya keduanya konsisten dgn judul panel - lihat catatan di cabang radar.
+        _lbl_rapi = [rapikan_nama_kolom(x) for x in labels]
+        # `satuan_beragam` - batang di bentuk ini adalah METRIK BERBEDA (Rupiah, jumlah paket,
+        # hari), bukan kategori dari satu metrik. Itu sebabnya ia "ternormalisasi": panjang
+        # batang relatif thd yang tertinggi, karena angkanya TIDAK bisa dijumlahkan.
+        # CACAT NYATA YANG DIPERBAIKI (terbaca langsung di render): hilir fungsi ini
+        # memperlakukan `values` sbg satu populasi, jadi halaman mencetak "TOTAL
+        # 933.663.394.661" (Rupiah + 4.017 paket dijumlahkan) dan "TERATAS Nilai Kontrak
+        # (100,0000%)" - porsi yang selalu ~100% semata-mata karena Rupiah berorde jauh lebih
+        # besar, bukan karena ada temuan. Angka yang benar-benar dihitung tapi tidak bermakna
+        # justru lebih berbahaya dari angka yang salah: tidak ada yang mencurigainya.
+        _v0 = values[0] if values else 0
+        return {"tile_kind": "ranked_bar_ternormalisasi", "labels": _lbl_rapi, "values": values,
                 "kicker": _judul("PERINGKAT", "RANKING"),
                 "title": _judul(f"{pasangan[-1]} per {pasangan[0]}", f"{pasangan[-1]} by {pasangan[0]}"),
-                "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
-                                        sum(values))}
+                "satuan_beragam": True,
+                "caption": (_ket(
+                    f"{_lbl_rapi[0]} bernilai {_num(_v0)}; indikator lain digambar relatif "
+                    f"terhadapnya karena satuannya berbeda dan tidak bisa dijumlahkan.",
+                    f"{_lbl_rapi[0]} stands at {_num(_v0)}; the other indicators are drawn "
+                    f"relative to it because their units differ and cannot be summed.",
+                ) if _lbl_rapi else None)}
     if bentuk in ("grouped_bar", "grouped_bar_ternormalisasi") and len(pasangan) == 3:
         kat, ma, mb = pasangan
         g = df.groupby(df[kat].astype(str))[[ma, mb]].sum().sort_values(ma, ascending=False)[:6]
@@ -4142,6 +4939,7 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "series_a": [float(v) for v in g[ma].tolist()],
                 "series_b": [float(v) for v in g[mb].tolist()],
                 "label_a": str(ma), "label_b": str(mb), "cat_col_name": kat,
+                "met_col_name": str(ma),
                 "caption": _ket(
                     f"{ma} total {_num(g[ma].sum())}, {mb} total "
                     f"{_num(g[mb].sum())} pada {len(g)} {kat} teratas.",
@@ -4175,7 +4973,7 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
         return {"tile_kind": "scatter_bubble", "points": titik,
                 "kicker": _judul("SEBARAN DATA", "DATA SPREAD"),
                 "title": _judul(f"{ma} vs {mb}", f"{ma} vs {mb}"),
-                "x_label": str(ma), "cat_col_name": kat,
+                "x_label": str(ma), "cat_col_name": kat, "met_col_name": str(ma),
                 "caption": _ket(
                     f"{len(titik)} {kat} tersebar; {ma} dari {_num(min(t_['count'] for t_ in titik))} "
                     f"sampai {_num(max(t_['count'] for t_ in titik))}.",
@@ -4238,8 +5036,36 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                     f"{g.index[nilai.index(max(nilai))]} at {_num(max(nilai))}.")
                 if nilai else None}
     if bentuk == "radar":
-        return {"tile_kind": "kpi_radar", "axes": [str(x) for x in labels[:6]],
-                "values": [round(v, 1) for v in (keputusan.get("indikator") or values)[:6]],
+        # BUG AKURASI DIPERBAIKI (terlihat di render, dikonfirmasi dgn memeriksa tile):
+        # sumbu radar diisi AGREGAT MENTAH tiap kolom - [933.663.390.644, 4.017, 26.068] -
+        # yaitu Rupiah, jumlah paket, dan hari pada SATU sumbu yang sama. Akibatnya dua:
+        #  (1) poligonnya degenerate (satu sumbu mentok, sisanya menempel titik pusat), dan
+        #  (2) kartu KPI "RATA-RATA" mencetak 311.221.140.243 - rata-rata dari tiga satuan
+        #      berbeda, angka yang tidak berarti apa pun.
+        # Catatan radar & caption-nya SUDAH menjanjikan skala 0-100 ("rata-rata sbg
+        # persentase dari nilai maksimum tiap indikator"), jadi yang salah bukan janjinya -
+        # nilainya yang tidak pernah dinormalkan. `indikator` dari perencana juga tidak bisa
+        # dipakai apa adanya: ia menormalkan terhadap maksimum ANTAR-metrik, yang untuk
+        # satuan sejauh ini berbeda tetap menghasilkan [100, 0,0004, 0,003].
+        # Normalisasi PER-METRIK (rata-rata kolom dibagi maksimum kolom ITU SENDIRI) persis
+        # seperti yang dijanjikan catatan - dan hasilnya sebanding antar sumbu.
+        # NAMA KOLOM (utk lookup df) DIPISAH dari NAMA TAMPILAN (yang tercetak di sumbu):
+        # keduanya sempat satu variabel, dan merapikan namanya akan mematahkan lookup-nya.
+        _kol_radar = [str(x) for x in labels[:6]]
+        _nilai_radar = []
+        for _m in _kol_radar:
+            _kol = pd.to_numeric(df[_m], errors="coerce") if _m in df.columns else None
+            if _kol is None or _kol.notna().sum() == 0 or not (_kol.max() or 0):
+                _nilai_radar.append(0.0)
+            else:
+                _nilai_radar.append(round(100.0 * float(_kol.mean()) / float(_kol.max()), 1))
+        # Sumbu radar dirapikan di SINI, bukan di tiap perender: `axes` mengalir ke label
+        # sumbu chart, kartu KPI "TERTINGGI", dan kalimat catatan skor - merapikannya di satu
+        # tempat membuat ketiganya konsisten sekaligus (audit render menemukan 9 nama kolom
+        # mentah yang masih lolos justru karena perapian dulu dipasang di titik render saja).
+        _ax = [rapikan_nama_kolom(x) for x in _kol_radar]
+        return {"tile_kind": "kpi_radar", "axes": _ax,
+                "values": _nilai_radar,
                 "kicker": _judul("PERBANDINGAN INDIKATOR", "INDICATOR COMPARISON"),
                 "title": _judul("Perbandingan Multi-Indikator", "Multi-Indicator Comparison"),
                 "caption": _ket(f"{len(labels[:6])} indikator dibandingkan pada skala yang sama.",
@@ -4326,6 +5152,17 @@ def rencana_chart(parsed_data: list, maks: int | None = None,
 
 
 
+def _ratakan_spasi_label(x) -> str:
+    """Satu label = satu baris. Pemisah baris di dalam label diratakan jadi spasi.
+
+    Nilai data dari berkas sumber bisa MEMBAWA pemisah barisnya sendiri (mis. "Mediu|m",
+    "Complete|d", "Kantor|Pusat" - sisa pemecahan baris saat PDF sumber dibaca). HTML
+    meratakannya sendiri sehingga PDF mencetak satu baris, sementara PowerPoint memecahnya
+    jadi dua baris - label yang sama tampil berbeda di dua format untuk data yang sama.
+    Diratakan di titik label DIBENTUK supaya kedua format membaca nilai yang sama persis."""
+    return " ".join(str(x if x is not None else "").split())
+
+
 def pendekkan_label(labels: list) -> list:
     """Pendekkan tiap label dgn membuang SEGMEN yang dipakai bersama, bukan awalan bersama.
 
@@ -4347,6 +5184,7 @@ def pendekkan_label(labels: list) -> list:
       - TIDAK memakai elipsis: kalau setelah dipendekkan tetap tidak muat, itu keputusan
         PEMILIH CHART (bentuk ini tidak cocok), bukan keputusan pemotong teks.
     """
+    labels = [_ratakan_spasi_label(x) for x in (labels or [])]
     asli = [str(x) for x in (labels or [])]
     if len(asli) < 2:
         return asli
@@ -4616,14 +5454,70 @@ def _kpi_card_widths(cards: list, total_w_in: float, gap_in: float) -> list:
     n = len(cards)
     if n == 0:
         return []
-    weights = [max(10.0, len(c.get("label", "")) + len(str(c.get("value", ""))) * 1.6) for c in cards]
-    total_weight = sum(weights)
     avail = total_w_in - gap_in * (n - 1)
-    min_w = avail * 0.18
-    widths = [max(min_w, avail * w / total_weight) for w in weights]
-    scale = avail / sum(widths) if sum(widths) else 1.0
-    return [w * scale for w in widths]
+    # LEBAR DARI KONTEN, BUKAN DIREGANG MENGISI KOLOM (temuan user atas render: kotak
+    # "RATA-RATA: 311221140243,0" jauh lebih lebar dari teksnya, sisanya ruang kosong).
+    # Versi lama menghitung bobot proporsional lalu MENGEMBALIKANNYA ke lebar penuh lewat
+    # `scale = avail / sum(widths)` - jadi berapa pun pendek isinya, kartu selalu memenuhi
+    # kolom. Sekarang lebar dihitung dari perkiraan lebar teks pada ukuran font yang
+    # benar-benar dipakai perender (label 8pt berspasi, nilai maks _KPI_VALUE_MAX_PT),
+    # ditambah padding kiri+kanan kartu; total cuma DISUSUTKAN kalau melebihi ruang, tidak
+    # pernah diregangkan kalau kurang. Acuan memakai pola yang sama: kotak "Scheduled
+    # downtime"/"Unplanned downtime" mengikuti panjang isinya, bukan selebar kolom.
+    _PAD_IN = 24.0 / 72.0          # padding kiri+kanan kartu (12pt tiap sisi)
+    _LABEL_PT, _SPASI_PT = 8.0, 0.75   # label uppercase + letter-spacing 1px
+    _NILAI_PT = _KPI_VALUE_MAX_PT
+    butuh = []
+    for c in cards:
+        lab = str(c.get("label", ""))
+        val = str(c.get("value", ""))
+        w_lab = len(lab) * (_LABEL_PT * 0.62 + _SPASI_PT) / 72.0
+        w_val = len(val) * _NILAI_PT * 0.62 / 72.0
+        butuh.append(max(w_lab, w_val) + _PAD_IN)
+    # LANTAI per kartu: lebar minimum supaya nilainya masih terbaca setelah perender
+    # mengecilkan fontnya sampai batas bawah (9,5pt) DAN membungkusnya sampai 2 baris.
+    # BUG NYATA DIPERBAIKI (terlihat di render saat halaman jadi 4 kolom): tanpa lantai ini
+    # penyusutan proporsional bisa memberi kartu 1,01in untuk nilai yang butuh 1,48in pada
+    # font terkecil - nilainya lalu dipotong diam-diam oleh overflow:hidden ("311221140243,0"
+    # tercetak "3112211402"). Memotong angka jauh lebih berbahaya daripada memotong nama:
+    # yang terpotong TERBACA SEBAGAI ANGKA LAIN yang masuk akal, dan pembaca tidak punya
+    # petunjuk apa pun bahwa ada digit yang hilang.
+    # Lantai dihitung dari KATA TERPANJANG, bukan dari panjang seluruh teks dibagi jumlah
+    # baris: pembungkusan cuma bisa memecah di spasi/"/"/"-", jadi satu token panjang tanpa
+    # pemisah ("311221140243,0", "(933663390644)") TIDAK PERNAH terpecah berapa pun sempit
+    # kartunya - ia melebar sampai terpotong. Asumsi "boleh 2 baris" yang dipakai versi
+    # pertama perbaikan ini justru membuat lantainya separuh dari yang sebenarnya perlu.
+    _MIN_PT = 9.5
+    lantai = []
+    for c in cards:
+        val = str(c.get("value", ""))
+        _token = max((len(w) for w in val.split()), default=len(val))
+        w_min = _token * _MIN_PT * 0.62 / 72.0 + _PAD_IN
+        lantai.append(min(max(0.85, w_min), avail / n))
+    butuh = [max(l, b) for l, b in zip(lantai, butuh)]
+    total = sum(butuh)
+    if total > avail and total:
+        # susutkan HANYA bagian di atas lantai; lantai dikorbankan cuma kalau jumlahnya
+        # sendiri sudah melebihi ruang (dan saat itu tidak ada pilihan yang tidak buruk).
+        lantai_total = sum(lantai)
+        if lantai_total >= avail:
+            butuh = [l * avail / lantai_total for l in lantai]
+        else:
+            ekstra = [b - l for b, l in zip(butuh, lantai)]
+            te = sum(ekstra) or 1.0
+            sisa = avail - lantai_total
+            butuh = [l + e * sisa / te for l, e in zip(lantai, ekstra)]
+    return butuh
 
+
+# PLAFON UKURAN NILAI KARTU KPI. Temuan user: angka/label besar di kartu "TERATAS"
+# ("Selesai (30%)", "critical (27%)") terlalu menonjol untuk elemen SEKUNDER - kartu KPI
+# itu info pendukung, bukan headline. Sebelumnya 20pt, yaitu 2,5x ukuran labelnya sendiri
+# (8pt) dan nyaris sebesar headline halaman. 15pt menjaga angkanya tetap yang paling
+# menonjol DI DALAM kartu (1,9x label) tanpa bersaing dengan headline. Auto-shrink untuk
+# teks panjang tetap jalan seperti sebelumnya. Dipakai bersama oleh perender kartu (kedua
+# exporter) DAN oleh _kpi_card_widths yang memperkirakan lebar teks nilai.
+_KPI_VALUE_MAX_PT = 15.0
 
 _INSIGHT_LAYER_GAP_IN = 0.2
 
@@ -4769,7 +5663,7 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
                 ))
             second_item = tile.get("second_item")
             if second_item and total:
-                second_pct = fmt_persen(second_item["count"], total)
+                second_pct = fmt_persen(second_item["count"], total, decimals=1)
                 notes.append(_L(
                     report,
                     f"Di posisi kedua, {second_item['value']} mencatat {_fmt_count(second_item['count'], _ien)} data ({second_pct}).",
@@ -4781,8 +5675,8 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
                 "kpi_summary": [
                     # lewat fmt_persen: "100%"/"0%" hanya kalau memang persis, selain itu
                     # desimalnya ditambah - bukan dari `pct` yang SUDAH dibulatkan.
-                    {"label": _L(report, "PENCAPAIAN", "ACHIEVEMENT"), "value": fmt_persen(top_count, total)},
-                    {"label": _L(report, "SISA", "REMAINING"), "value": fmt_persen(max(0, (total or 0) - (top_count or 0)), total)},
+                    {"label": _L(report, "PENCAPAIAN", "ACHIEVEMENT"), "value": fmt_persen(top_count, total, decimals=1)},
+                    {"label": _L(report, "SISA", "REMAINING"), "value": fmt_persen(max(0, (total or 0) - (top_count or 0)), total, decimals=1)},
                 ],
                 "category_details": [],
                 "main_chart_tile": tile,  # gauge: lihat catatan di return utama fungsi ini
@@ -4804,11 +5698,21 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
     _dim_label = humanize_label(tile.get("cat_col_name") or "", None) if tile.get("cat_col_name") else None
     if not tile.get("source_topic_title") and not _title_matches_displayed(headline, [n for n, _ in items], _dim_label):
         headline = _synth_insight_title(report, _dim_label, items, total)
-    kpi_summary = [
-        {"label": _L(report, "TOTAL", "TOTAL"), "value": _fmt_count(total, _ien)},
-        {"label": _L(report, "TERATAS", "TOP"), "value": f"{items[0][0]} ({fmt_persen(items[0][1], total)})"},
-        {"label": _L(report, "KATEGORI", "CATEGORIES"), "value": str(len(items))},
-    ]
+    if tile.get("satuan_beragam"):
+        # Tanpa cabang ini strip KPI mencetak jumlah & persentase lintas satuan. Yang tersisa
+        # di sini semuanya masih angka asli dari tile yang sama - cuma tidak ada lagi yang
+        # memperlakukan Rupiah dan jumlah paket sbg satu populasi. Lihat "satuan_beragam".
+        kpi_summary = [
+            {"label": _L(report, "TERTINGGI", "HIGHEST"), "value": str(items[0][0])},
+            {"label": _L(report, "NILAINYA", "ITS VALUE"), "value": _fmt_count(items[0][1], _ien)},
+            {"label": _L(report, "INDIKATOR", "INDICATORS"), "value": str(len(items))},
+        ]
+    else:
+        kpi_summary = [
+            {"label": _L(report, "TOTAL", "TOTAL"), "value": _fmt_count(total, _ien)},
+            {"label": _L(report, "TERATAS", "TOP"), "value": f"{items[0][0]} ({fmt_persen(items[0][1], total, decimals=1)})"},
+            {"label": _L(report, "KATEGORI", "CATEGORIES"), "value": str(len(items))},
+        ]
 
     cat_col = tile.get("cat_col_name")
     if cat_col and cat_col == severity_col:
@@ -4839,7 +5743,11 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
             sub_items = multi_metric_by_label[name]
         category_details.append({
             "name": display_name, "score": _fmt_count(val, _ien),
-            "badge": _classify_relative_tier(frac, report),
+            # Badge "Tinggi/Rendah" lahir dari val/max. Lintas satuan itu memberi vonis yang
+            # tidak dimaksudkan: "Jumlah Paket - Rendah" (4.017 vs 933 miliar Rupiah) terbaca
+            # sbg penilaian atas jumlah paketnya, padahal cuma akibat beda orde satuan.
+            "badge": None if tile.get("satuan_beragam") else _classify_relative_tier(frac, report),
+            "satuan_beragam": bool(tile.get("satuan_beragam")),
             "sub_items": sub_items,
             # "raw_name"/"value" TIDAK dipakai render (cuma "name"/"score" yang dipakai) -
             # dipertahankan mentah (sebelum _strip_common_affix/_fmt_count) khusus utk
@@ -4849,9 +5757,21 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
             "raw_name": name, "value": val,
         })
 
-    notes = catatan_agregat(items, min(len(items), _NESTED_CARD_MAX_TOTAL), unit, report,
-                            tile.get("n_entitas_penuh"), tile.get("total_entitas_penuh"),
-                            tile.get("nilai_penuh"))
+    # catatan_agregat seluruhnya berbicara soal PORSI dari total ("menyumbang X dari Y").
+    # Premisnya satu populasi satu satuan, jadi ia dilewati utk panel beda-satuan - bukan
+    # diakali angkanya. Kalimat POLA di bawah tetap jalan: ia membaca kolom apa adanya.
+    notes = [] if tile.get("satuan_beragam") else catatan_agregat(
+        items, min(len(items), _NESTED_CARD_MAX_TOTAL), unit, report,
+        tile.get("n_entitas_penuh"), tile.get("total_entitas_penuh"),
+        tile.get("nilai_penuh"))
+    # Subjek ditempel DI SINI, di titik butir lahir - di kotak Catatan halaman butir dari
+    # semua panel bercampur & tanpa subjek tidak bisa dibedakan. Lihat beri_subjek_catatan.
+    _jp_kartu = judul_pendek_kolom(tile, report)
+    # POLA lebih dulu, baru agregat: kalimat pola menjelaskan APA YANG TERJADI di data,
+    # sementara catatan_agregat menjelaskan apa yang tidak tergambar di chart. Yang pertama
+    # lebih berguna bagi audiens presentasi, jadi ia yang mendapat tempat kalau ruang terbatas.
+    notes = catatan_pola(parsed_data, tile, report) + notes
+    notes = beri_subjek_catatan(notes, _jp_kartu)
     return {
         "kind": "management_insight_page", "title": headline,
         "kpi_summary": kpi_summary, "category_details": category_details, "notes": notes,
@@ -4863,11 +5783,14 @@ def _build_insight_page(tile: dict, report, sec_domain: bool, parsed_data: list,
         # chart-nya - dan kartu TETAP ikut, chart & kartu tidak saling meniadakan.
         "main_chart_tile": tile,
         "cara_baca": (tile or {}).get("cara_baca") or "",
+        # Label pendek utk pita kepala panel - TERPISAH dari `title` yang tetap kalimat
+        # temuan (dipakai headline halaman). Lihat judul_pendek_kolom.
+        "judul_pendek": _jp_kartu,
         "source_topic_title": tile.get("source_topic_title"),
     }
 
 
-def _build_chart_insight_page(tile: dict, report) -> dict | None:
+def _build_chart_insight_page(tile: dict, report, parsed_data: list | None = None) -> dict | None:
     """Varian halaman insight KHUSUS tile "space-hungry" (kpi_radar/time_heatmap/
     period_compare, lihat _SPACE_HUNGRY_TILE_KINDS) — PERMINTAAN USER ("hapus jalur
     management_visual_dashboard, arahkan semuanya ke jalur insight"): 3 jenis tile ini TIDAK
@@ -4984,8 +5907,8 @@ def _build_chart_insight_page(tile: dict, report) -> dict | None:
         peak_val = grid[peak_r][peak_c]
         notes = [_L(
             report,
-            f"Kombinasi {day_labels[peak_r]} pukul {hour_labels[peak_c]} paling padat, {_fmt_count(peak_val, _ien)} dari {_fmt_count(total, _ien)} data ({fmt_persen(peak_val, total)}).",
-            f"{day_labels[peak_r]} at {hour_labels[peak_c]} is the busiest combination, {_fmt_count(peak_val, _ien)} of {_fmt_count(total, _ien)} records ({fmt_persen(peak_val, total)}).",
+            f"Kombinasi {day_labels[peak_r]} pukul {hour_labels[peak_c]} paling padat, {_fmt_count(peak_val, _ien)} dari {_fmt_count(total, _ien)} data ({fmt_persen(peak_val, total, decimals=1)}).",
+            f"{day_labels[peak_r]} at {hour_labels[peak_c]} is the busiest combination, {_fmt_count(peak_val, _ien)} of {_fmt_count(total, _ien)} records ({fmt_persen(peak_val, total, decimals=1)}).",
         )]
         # PERMINTAAN USER (density): sebut total tiap HARI scr eksplisit (bukan cuma 1 sel
         # terpadat) - angka ASLI yang sama dgn baris grid yang digambar heatmap-nya.
@@ -4995,8 +5918,8 @@ def _build_chart_insight_page(tile: dict, report) -> dict | None:
                 continue
             notes.append(_L(
                 report,
-                f"{day_label} mencatat {_fmt_count(day_total, _ien)} data ({fmt_persen(day_total, total)} dari total).",
-                f"{day_label} recorded {_fmt_count(day_total, _ien)} records ({fmt_persen(day_total, total)} of the total).",
+                f"{day_label} mencatat {_fmt_count(day_total, _ien)} data ({fmt_persen(day_total, total, decimals=1)} dari total).",
+                f"{day_label} recorded {_fmt_count(day_total, _ien)} records ({fmt_persen(day_total, total, decimals=1)} of the total).",
             ))
     else:
         # KEPUTUSAN EKSPLISIT, bukan fallback diam (pola yang sama dipakai kedua exporter):
@@ -5007,11 +5930,15 @@ def _build_chart_insight_page(tile: dict, report) -> dict | None:
         logger.warning("tile_kind %r ada di _SPACE_HUNGRY_TILE_KINDS tapi tidak punya cabang "
                        "di _build_chart_insight_page - tile tidak jadi halaman", kind)
         return None
+    _jp_chart = judul_pendek_kolom(tile, report)
+    notes = catatan_pola(parsed_data, tile, report) + notes
+    notes = beri_subjek_catatan(notes, _jp_chart)
     return {
         "kind": "management_insight_page", "title": headline,
         "kpi_summary": kpi_summary, "category_details": [], "notes": notes,
         "main_chart_tile": tile,
         "cara_baca": (tile or {}).get("cara_baca") or "",
+        "judul_pendek": _jp_chart,
         # PERMINTAAN USER (pengecualian kepadatan berbasis DATA, bukan JENIS chart - "radar
         # dgn 8 kategori tetap harus penuh"): jumlah kategori/sumbu ASLI yang mendasari chart
         # ini, dipakai tes kepadatan menilai apakah halaman ini LAYAK jadi pengecualian
@@ -5239,6 +6166,9 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
             blocks[i] = {
                 "kind": "management_insight_page",
                 "title": b.get("title") or "",
+                # judul blok peringkat MEMANG sudah label pendek ("Kategori Pengadaan
+                # Paling Sering Muncul"), jadi dipakai langsung sbg pita kepala.
+                "judul_pendek": b.get("title") or "",
                 # KPI SENGAJA pendek: nama entitas ditaruh di kartu peringkat di bawahnya,
                 # bukan diulang sbg nilai KPI - nilai sepanjang itu di kartu selebar kolom
                 # membungkus & terlihat sesak sekalipun ukurannya sudah otomatis mengecil.
@@ -5297,6 +6227,12 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
         # "kartu diregangkan hampa". Sekarang kartu yang KOSONG saja yang diisi, tanpa
         # menyentuh kartu yang sudah punya isi.
         _cards = col.get("category_details") or []
+        _met_kartu = str(((col.get("main_chart_tile") or {}).get("met_col_name")) or "").strip()
+        # Jaring pengaman yang SAMA dgn kalimat Catatan: nama kolom yang jelas terpecah
+        # ("Duras i (men it)") tidak layak dicetak sbg label. Tanpa ini, perbaikan "sebut
+        # metriknya" justru memasukkan nama rusak ke kartu - terukur di render laporan 195.
+        if _met_kartu and nama_kolom_pecah(_met_kartu):
+            _met_kartu = ""
         if _cards and any(not c.get("sub_items") for c in _cards):
             _vals = [c.get("value") for c in _cards if isinstance(c.get("value"), (int, float))]
             if len(_vals) >= 2:
@@ -5307,6 +6243,12 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
                         continue
                     if not isinstance(c.get("value"), (int, float)):
                         continue
+                    if c.get("satuan_beragam"):
+                        # Rata-rata lintas satuan: kedua kartu mencetak pembanding yang sama
+                        # (466.831.697.330,5 = rata-rata Rupiah & jumlah paket), dan kartu
+                        # "Jumlah Paket 4.017" dibandingkan ke angka Rupiah. Lebih baik kartu
+                        # tanpa sub-item daripada sub-item yang menyesatkan.
+                        continue
                     # BUG NYATA DIPERBAIKI (terukur di laporan 188): angka yang dicetak di
                     # samping "vs rata-rata" adalah nilai KARTU ITU SENDIRI, jadi pembaca
                     # melihat "1.097.595 / vs rata-rata 1.097.595" - tiga kartu berturut-turut
@@ -5314,8 +6256,17 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
                     # tak bermakna. Rata-ratanya sendiri hanya ada sbg garis target tanpa
                     # angka. Yang dicetak sekarang RATA-RATA populasinya (pembanding), batang
                     # tetap sepanjang nilai kartu, garis target tetap di rata-rata.
+                    # Nama METRIK disebut kalau diketahui. AUDIT YANG MEMICU INI (permintaan
+                    # user soal "angka beda 10 antar-halaman"): kartu menampilkan "apm2
+                    # 405.080" tanpa menyebut besaran apa, sementara narasi di halaman lain
+                    # menyebut "405.090 requests". Dua-duanya BENAR - yang satu Legal
+                    # Requests, yang lain Requests, dan selisih 10 itu justru Illegal
+                    # Requests - tapi tanpa nama metrik keduanya terbaca sbg angka yang
+                    # sama dan saling bertentangan. Judul panel di jalur ini datang dari
+                    # topik AI ("Overview of Daily Traffic") yang tidak menyebut kolom.
                     c["sub_items"] = [{
-                        "label": _L(report, "vs rata-rata", "vs average"),
+                        "label": (_L(report, "vs rata-rata ", "vs average ") + rapikan_nama_kolom(_met_kartu)
+                                  if _met_kartu else _L(report, "vs rata-rata", "vs average")),
                         "value": round(_avg, 1) if _avg % 1 else int(_avg),
                         "frac": c["value"] / _top,
                         "target_frac": _avg / _top,
@@ -5432,6 +6383,52 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
             _judul_kalimat = _judul_topik
         else:
             _judul_kalimat = f"{_judul_topik}: {_temuan}"
+
+        # ---- A7: HEADLINE = PARAGRAF ANALITIK, bukan satu kalimat temuan ----------------
+        # Acuan menyambung BEBERAPA fakta terkait jadi satu kesimpulan, sementara versi lama
+        # berhenti di temuan panel PERTAMA - halaman berisi 3-4 panel tapi judulnya cuma
+        # bicara satu.
+        #
+        # DUA PERMINTAAN YANG SALING TARIK, DIREKONSILIASI DI SINI:
+        #  - "perkaya headline" (gabungkan insight beberapa panel), dan
+        #  - "headline jangan kegedean" (batas 2 baris).
+        # Menyambung caption PENUH panel lain melanggar yang kedua: terukur lewat
+        # metrik_judul_dashboard, headline dua kalimat penuh jatuh ke 3 baris / 0,905in -
+        # LEBIH tinggi daripada 0,844in yang dikeluhkan. Jadi yang disambung bukan kalimatnya,
+        # melainkan RINGKASAN-nya: label entitas teratas + porsinya ("Selesai 30%, low 22%").
+        # Terukur muat 2 baris pada 17,6pt / 0,691in - lebih pendek daripada headline satu
+        # kalimat sekalipun, karena fontnya ikut menyesuaikan.
+        #
+        # AKURASI: label & persen TIDAK dihitung ulang di sini - keduanya disalin dari caption
+        # panel itu sendiri, yang dirakit _ket_teratas dari agregasi pandas (dan sudah
+        # diperbaiki supaya penyebutnya populasi penuh, bukan subset top-N). Kalau polanya
+        # tidak cocok, panel itu DILEWATI - lebih baik headline pendek daripada angka yang
+        # asal-usulnya tidak bisa dipastikan.
+        _rx_ket = re.compile(r"^(.+?)(?: tertinggi dengan | is highest at ).+?\((\d[\d.,]*%)\)")
+        _ringkas = []
+        for _c2 in cols[1:]:
+            _cap2 = str((_c2.get("main_chart_tile") or {}).get("caption") or "").strip()
+            if not _cap2:
+                continue
+            _m2 = _rx_ket.match(_shorten_to_caption(_cap2, max_sentences=1))
+            if not _m2:
+                continue
+            _lbl2, _pct2 = _m2.group(1).strip(), _m2.group(2)
+            if _mengulang(_judul_kalimat, _lbl2) or any(_lbl2 == r[0] for r in _ringkas):
+                continue
+            _ringkas.append((_lbl2, _pct2))
+            if len(_ringkas) >= 2:
+                break
+        if _ringkas:
+            _sep = "" if _judul_kalimat.rstrip().endswith(".") else "."
+            _daftar = ", ".join("%s %s" % r for r in _ringkas)
+            _gabung = _L(report,
+                         f"{_judul_kalimat.rstrip()}{_sep} Disusul {_daftar}.",
+                         f"{_judul_kalimat.rstrip()}{_sep} Followed by {_daftar}.")
+            # Dinilai dgn fungsi yang SAMA yang dipakai kedua exporter menggambar judul, jadi
+            # keputusan "muat/tidak" tidak bisa meleset dari hasil render.
+            if metrik_judul_dashboard(_gabung, 13.333 - 2 * _DASH_MARGIN_X_IN)["n_baris"] <= 2:
+                _judul_kalimat = _gabung
         packed.append((group[0], {
             "kind": "management_dashboard_columns",
             "title": _judul_kalimat,
@@ -5855,7 +6852,8 @@ def humanize_label(label: str, source_cols: dict | None = None) -> str:
     return label.replace("_", " ").replace("category ", "Kategori ").strip().title()
 
 
-def build_key_findings(ai_summary: dict, report_stats: dict, open_count: int, sanitize_func=None, report=None) -> list:
+def build_key_findings(ai_summary: dict, report_stats: dict, open_count: int, sanitize_func=None,
+                       report=None, persen_lokal: bool = False) -> list:
     """`sanitize_func` opsional — fallback ke `sanitize_text` yang sudah diimpor di modul ini
     kalau pemanggil tidak mengisinya (pemanggil lama yang masih passing positional tetap
     kompatibel apa adanya)."""
@@ -5870,7 +6868,13 @@ def build_key_findings(ai_summary: dict, report_stats: dict, open_count: int, sa
         total_sev = sum(sev.values())
         if total_sev:
             top, count = max(sev.items(), key=lambda kv: kv[1])
-            pct = round(count / total_sev * 100, 1)
+            # `round()` + f-string selalu memakai TITIK sbg pemisah desimal, jadi laporan
+            # Indonesia mencetak "29.8%" - pembaca Indonesia membacanya sbg dua puluh sembilan
+            # koma delapan yang ditulis salah. fmt_persen menangani pemisah & jumlah desimal
+            # sekaligus. Lewat parameter OPSIONAL karena fungsi ini dipakai KEDUA jalur:
+            # default False = perilaku lama persis, supaya tampilan Descriptive nol dampak.
+            pct = (fmt_persen(count, total_sev, decimals=1).rstrip("%") if persen_lokal
+                   else round(count / total_sev * 100, 1))
             findings.append(_L(
                 report,
                 f"Proporsi {SEVERITY_LABEL.get(top, top.capitalize())} paling tinggi, {count} event ({pct}%)." if is_security_domain(report)
@@ -5916,6 +6920,92 @@ def build_key_findings(ai_summary: dict, report_stats: dict, open_count: int, sa
             f"There are {open_count} items still open/unresolved that require immediate follow-up.",
         ))
     return findings[:6]
+
+
+# Judul section BAWAAN dalam dua bahasa. Sumbernya sama dgn section_suggester.py, disalin
+# ke sini karena dipakai pada titik yang berbeda: di sana saat MENGUSULKAN, di sini saat
+# MERENDER - dan keduanya bisa memakai bahasa yang berbeda (lihat judul_section_bawaan).
+_JUDUL_SECTION_BAWAAN = {
+    "category_distribution": ("Distribusi Kategori/Unit", "Category/Unit Distribution"),
+    "status_distribution": ("Distribusi Status", "Status Distribution"),
+    "kpi_radar": ("Radar Skor Multi-Indikator", "Multi-Indicator Score Radar"),
+    "time_heatmap": ("Pola Kejadian per Hari & Jam", "Day/Hour Activity Pattern"),
+    "period_compare": ("Perbandingan Antar Paruh Periode", "Period-over-Period Comparison"),
+    "asset_cards": ("Entitas/Aset Paling Sering Muncul", "Most Frequent Entities/Assets"),
+    "key_findings": ("Temuan Utama", "Key Findings"),
+    "critical_table": ("Tabel Insiden/Item Prioritas Tinggi", "High-Priority Incident/Item Table"),
+    "severity_distribution": ("Distribusi Severity", "Severity Distribution"),
+}
+
+
+def judul_section_bawaan(key: str, judul_tersimpan: str = "") -> str:
+    """Judul section bawaan MENGIKUTI BAHASA LAPORAN, bukan bahasa saat diusulkan.
+
+    BUG NYATA DIPERBAIKI (permintaan user soal konsistensi bahasa): usulan section dibuat di
+    Step 1 Upload memakai bahasa DEFAULT PROFIL user, sementara bahasa laporan baru dipilih
+    di Step 2. Kalau keduanya berbeda, judul yang tersimpan di included_sections ikut bahasa
+    yang salah SELAMANYA - terukur di laporan 195 (language='Indonesian') yang panel-panelnya
+    berjudul "Category/Unit Distribution", "Status Distribution", "Day/Hour Activity Pattern".
+    Untuk section BAWAAN judulnya tidak perlu diterjemahkan: kuncinya tetap, jadi teksnya bisa
+    diambil ulang dari tabel dua bahasa di atas pada saat render. (Judul section usulan AI
+    tidak bisa diperlakukan begitu - tidak ada kunci tetap yang bisa dipetakan.)"""
+    pasangan = _JUDUL_SECTION_BAWAAN.get(str(key or "").strip().lower())
+    if not pasangan:
+        return judul_tersimpan
+    return pasangan[1] if render_is_en() else pasangan[0]
+
+
+# Tile mana milik section BAWAAN yang mana. Hanya bentuk yang genuinely mewakili sebuah
+# section bawaan yang dipetakan - bentuk yang lahir dari topik AI (custom_topic, metric_mix,
+# metric_share, ranked_bar_*, scatter_bubble, trend_chart) TIDAK punya kunci bawaan dan
+# tidak boleh ikut disaring.
+_TILE_KE_SECTION = {
+    "time_heatmap": "time_heatmap",
+    "kpi_radar": "kpi_radar",
+    "period_compare": "period_compare",
+    "status_funnel": "status_distribution",
+}
+
+
+def kunci_section_tile(tile: dict) -> str:
+    """Kunci section bawaan yang diwakili tile ini, atau "" kalau bukan milik section bawaan."""
+    k = str((tile or {}).get("tile_kind") or "")
+    if k == "risk_heatmap":
+        # satu bentuk, dua subjek - severity vs kategori punya centang yang berbeda
+        return "severity_analysis" if (tile or {}).get("mode") == "severity" else "category_distribution"
+    return _TILE_KE_SECTION.get(k, "")
+
+
+def _chart_labels_tile(tile: dict) -> list:
+    """Label yang akan jadi sumbu/segmen chart tile ini - dipakai memeriksa kelayakannya."""
+    t = tile or {}
+    return ([b.get("label") for b in (t.get("bars") or [])]
+            or list(t.get("labels") or [])
+            or list(t.get("categories") or [])
+            or list(t.get("day_labels") or [])
+            or ((t.get("chart") or {}).get("categories") or []))
+
+
+def saring_tile_per_section(tiles: list, included) -> tuple:
+    """Buang tile yang section bawaannya TIDAK dicentang.
+
+    BUG NYATA DIPERBAIKI (permintaan user, kontrak tegas "tidak dicentang = wajib tidak
+    muncul"): tile jalur Management dibangun oleh rencana_chart_terarah yang digerakkan
+    DAFTAR TOPIK AI, bukan centang section bawaan - jadi is_included() untuk
+    category_distribution/status_distribution/kpi_radar/time_heatmap/period_compare/
+    critical_table hanya menjaga daftar tile LAMA yang sudah tidak dipakai lagi. Terukur
+    lewat uji sistematis (mematikan satu kunci lalu membandingkan isi laporan): 6 dari 7
+    kunci NOL pengaruh, dan tile time_heatmap tetap muncul walau seluruh kunci lain dimatikan.
+    Penyaringan ditaruh di HILIR perencana - bukan di dalamnya - supaya pemilihan bentuk
+    chart tetap urusan tanda tangan data, persis seperti yang sudah diputuskan sebelumnya."""
+    simpan, dibuang = [], []
+    for t in (tiles or []):
+        k = kunci_section_tile(t)
+        if k and not is_section_included(k, included):
+            dibuang.append((t.get("tile_kind"), k))
+            continue
+        simpan.append(t)
+    return simpan, dibuang
 
 
 def is_section_included(key: str, included_sections) -> bool:
@@ -7378,6 +8468,22 @@ def build_management_report_blocks(report) -> list[dict]:
     total_sev = sum(severity.values())
     top_categories = report_stats.get("top_categories") or {}
     recommendations = normalize_recommendations(ai_summary.get("recommendations"))
+    # LAPISAN KEDUA akurasi angka (permintaan user). Teks rekomendasi datang dari AI dan
+    # diteruskan apa adanya - satu-satunya tempat di jalur ini yang angkanya TIDAK dihitung
+    # pandas. Lapisan pertama (instruksi di prompts.py: "hanya boleh menyebut angka yang ada
+    # di STATISTIK TERHITUNG") tidak bisa dipaksakan; dibuktikan dgn menanam klaim mustahil
+    # yang lolos utuh ke laporan. Di sini klaim yang angkanya tidak ada di blok statistik yang
+    # SAMA dgn yang dikirim ke AI dibuang kalimatnya. Lihat saring_angka_tak_terverifikasi.
+    _angka_sah = angka_statistik_terhitung(report_stats, report)
+    if _angka_sah:
+        _bersih = []
+        for _rec in recommendations:
+            _r = dict(_rec)
+            _r["title"] = (saring_angka_tak_terverifikasi(_r.get("title") or "", _angka_sah)
+                           or (_r.get("title") or ""))
+            _r["detail"] = saring_angka_tak_terverifikasi(_r.get("detail") or "", _angka_sah)
+            _bersih.append(_r)
+        recommendations = _bersih
     is_id = (getattr(report, "language", "Indonesian") or "Indonesian").strip().lower() == "indonesian"
 
     def L(id_text: str, en_text: str) -> str:
@@ -7419,7 +8525,7 @@ def build_management_report_blocks(report) -> list[dict]:
             elif val is False:
                 resolved_count += 1
     resolved_pct = round(resolved_count / max(total_records, 1) * 100)
-    key_findings = build_key_findings(ai_summary, report_stats, open_count, sanitize_text, report=report)
+    key_findings = build_key_findings(ai_summary, report_stats, open_count, sanitize_text, report=report, persen_lokal=True)
 
     blocks = []
 
@@ -7435,7 +8541,18 @@ def build_management_report_blocks(report) -> list[dict]:
         # PDF/PPT utk template "Management Report" gagal dgn KeyError begitu blok cover dirender.
         "kicker": L("LAPORAN MANAJEMEN", "MANAGEMENT REPORT"),
         "title": report.title,
-        "subtitle": L("Laporan Eksekutif — Management Report", "Executive Report — Management Report"),
+        # PERMINTAAN USER (dua tahap, jangan digabung jadi satu aturan):
+        # (1) subtitle GENERIK bawaan dihapus - teksnya cuma mengulang jenis template
+        #     ("Laporan Eksekutif - Management Report"), nol informasi buat pembaca.
+        # (2) REGRESI YANG DIPERBAIKI: tahap (1) dulu dikerjakan dgn memaku "" di sini, jadi
+        #     subtitle yang DIISI SENDIRI oleh user di pengaturan report ikut terbuang -
+        #     terukur di laporan 195, header_subtitle berisi "Laporan Analisis Bulan
+        #     Juli-Agustus 2026" tapi cover-nya kosong. Yang generik memang tidak boleh
+        #     kembali; yang ditulis user harus tampil. Jalur Descriptive sudah begini sejak
+        #     awal (lihat blok cover-nya), jadi ini menyamakan, bukan menambah aturan baru.
+        # Field-nya tetap ADA walau kosong: kedua exporter mengindeksnya langsung lewat
+        # block["subtitle"], jadi menghapus key-nya = KeyError.
+        "subtitle": sanitize_text(report.header_subtitle) or "",
         "date": format_report_date(report.created_at, report.language),
         "period": _mgmt_period_text,
         "period_text": _mgmt_period_text,
@@ -7552,7 +8669,14 @@ def build_management_report_blocks(report) -> list[dict]:
     # nilai 14/6/6 di skala 0-100 lolos mulus, poligon datanya cuma 0.10 x 0.15in di dalam grid
     # 1.54 x 1.34in - sekitar 0.7% luas grid, praktis tak terlihat & tidak membandingkan apa pun.
     _RADAR_MIN_PEAK = 25
+    _radar_puncak_rendah = None
     if radar_data and max(radar_data.get("values") or [0]) < _RADAR_MIN_PEAK:
+        # KEPUTUSAN LAMA DIPERTAHANKAN: radar pada nilai serendah ini poligonnya cuma ~0,7%
+        # luas grid - tidak berguna digambar. TAPI kalau user MENCENTANG sectionnya, ia tidak
+        # boleh senyap total: puncaknya disimpan supaya bisa dijelaskan sbg teks, jadi
+        # kontrak "dicentang = ada representasi" tetap dipegang (representasinya teks, bukan
+        # chart). Lihat pemakaiannya di daftar narasi di bawah.
+        _radar_puncak_rendah = max(radar_data.get("values") or [0])
         radar_data = None
     if radar_data and is_included("kpi_radar"):
         top_axis_idx = max(range(len(radar_data["values"])), key=lambda i: radar_data["values"][i])
@@ -7583,12 +8707,15 @@ def build_management_report_blocks(report) -> list[dict]:
             "tile_kind": "status_funnel",
             "kicker": L("STATUS PENANGANAN", "HANDLING STATUS"),
             "title": L("Alur Status Penanganan", "Handling Status Flow"),
-            "categories": [it["value"] for it in order],
+            # Diratakan jadi satu baris - nilai status dari berkas sumber bisa membawa
+            # pemisah baris sendiri ("Complete|d"), dan PowerPoint memecahnya jadi dua baris
+            # sementara PDF tidak. Lihat _ratakan_spasi_label.
+            "categories": [_ratakan_spasi_label(it["value"]) for it in order],
             "values": [it["count"] for it in order],
             "cat_col_name": status_col,
             "caption": L(
-                f"{top_status['value']} mendominasi alur ini ({top_status['count']} dari {status_total} data, {fmt_persen(top_status['count'], status_total)}).",
-                f"{top_status['value']} dominates this flow ({top_status['count']} of {status_total} records, {fmt_persen(top_status['count'], status_total)}).",
+                f"{top_status['value']} mendominasi alur ini ({top_status['count']} dari {status_total} data, {fmt_persen(top_status['count'], status_total, decimals=1)}).",
+                f"{top_status['value']} dominates this flow ({top_status['count']} of {status_total} records, {fmt_persen(top_status['count'], status_total, decimals=1)}).",
             ),
         })
 
@@ -7877,6 +9004,21 @@ def build_management_report_blocks(report) -> list[dict]:
         for _j, _st, _alasan in _lap_seksi:
             logger.info("SEKSI | %-38s %-20s %s", _j[:38], _st, _alasan)
     narrative_items = []
+    # Section yang dicentang tapi chartnya sengaja dilewati tetap diberi jejak tertulis -
+    # lihat _radar_puncak_rendah di atas.
+    if _radar_puncak_rendah is not None and is_included("kpi_radar"):
+        narrative_items.append({
+            "title": judul_section_bawaan("kpi_radar"),
+            "content": L(
+                f"Radar tidak ditampilkan karena nilai puncak indikator terlalu rendah untuk "
+                f"digambarkan secara bermakna ({fmt_desimal(_radar_puncak_rendah, 1, False)}/100). "
+                f"Angkanya tetap dihitung, hanya bentuk radarnya yang tidak informatif pada "
+                f"skala serendah itu.",
+                f"The radar is not shown because the peak indicator value is too low to plot "
+                f"meaningfully ({fmt_desimal(_radar_puncak_rendah, 1, True)}/100). The figures "
+                f"are still computed; only the radar shape is uninformative at that scale.",
+            ),
+        })
     # BUG DIPERBAIKI (dilaporkan user, disertai perbandingan checklist Include Sections vs
     # laporan jadi — topik order 0 hilang total): SEBELUMNYA section PERTAMA (order 0) selalu
     # dilewati di sini dgn asumsi isinya "ringkasan eksekutif tingkat tinggi" yang sudah
@@ -8017,6 +9159,45 @@ def build_management_report_blocks(report) -> list[dict]:
                     len(_tiles_baru), sorted(t["tile_kind"] for t in _tiles_baru),
                     f" | keputusan tanpa tile: {_gagal}" if _gagal else "")
         if _tiles_baru:
+            # KONTRAK "Include Sections" ditegakkan DI SINI, sesudah perencana memilih bentuk
+            # dan sebelum tile dipakai - lihat saring_tile_per_section untuk alasannya.
+            _tiles_baru, _dibuang_sec = saring_tile_per_section(_tiles_baru, included)
+            if _dibuang_sec:
+                logger.info("Include Sections: %d tile dibuang krn sectionnya tidak dicentang: %s",
+                            len(_dibuang_sec), _dibuang_sec)
+            # SISI SEBALIKNYA dari kontrak yang sama: "dicentang = WAJIB muncul". Perencana
+            # menggantikan katalog tile lama SELURUHNYA, jadi section bawaan yang dicentang
+            # tapi tidak kebetulan terpilih perencana ikut hilang - terukur di laporan 194,
+            # "Multi-Indicator Score Radar" dicentang tapi tidak pernah tergambar. Tile lama
+            # utk section itu dikembalikan, BUKAN dipaksa jadi bentuk lain: bentuknya tetap
+            # ditentukan tanda tangan data, yang dikembalikan cuma subjeknya.
+            _kunci_ada = {kunci_section_tile(t) for t in _tiles_baru}
+            for _lama in (visual_tiles or []):
+                _kl = kunci_section_tile(_lama)
+                # Tile "space-hungry" TIDAK dikembalikan lewat jalur ini. Ketiganya butuh
+                # halaman sendiri (lihat _SPACE_HUNGRY_TILE_KINDS), sementara pengemas kolom
+                # membagi ruang murni berdasar tinggi dan tidak mengenal aturan itu - jadi
+                # tile yang dikembalikan tertumpuk bersama tile lain dan perkiraan tingginya
+                # meleset. TERUKUR: laporan 192 halaman 3, judul panel "Alur Status
+                # Penanganan" tergambar MENIMPA label "Paruh Awal"/"Paruh Akhir" milik panel
+                # lain (irisan 64%), tertangkap test_no_two_rendered_texts_overlap.
+                # Penyaringan (tidak dicentang -> hilang) TETAP berlaku untuk ketiganya;
+                # yang dibatasi hanya pengembaliannya.
+                if _kl in _SPACE_HUNGRY_TILE_KINDS:
+                    continue
+                # Tile dgn KURANG DARI 2 segmen juga tidak dikembalikan. Perencana kolom
+                # memang melewatinya ("segmen yang lolos ambang label < 2"), jadi
+                # mengembalikannya cuma menghasilkan tile yang tergambar di PDF tapi tidak
+                # pernah digambar di PPTX - terukur di laporan 195 & 197: status_funnel
+                # dgn 1 kategori dilaporkan "1 dari 1 label TIDAK digambar".
+                if len(_chart_labels_tile(_lama)) < 2:
+                    continue
+                if _kl and _kl not in _kunci_ada and is_section_included(_kl, included):
+                    _tiles_baru.append(_lama)
+                    _kunci_ada.add(_kl)
+                    logger.info("Include Sections: tile %r dikembalikan - section %r dicentang "
+                                "tapi tidak dihasilkan perencana", _lama.get("tile_kind"), _kl)
+        if _tiles_baru:
             visual_tiles = _tiles_baru
         else:
             # Tidak ada pasangan kolom yang layak (26 dari 131 laporan pada profil terakhir).
@@ -8026,7 +9207,7 @@ def build_management_report_blocks(report) -> list[dict]:
 
     for tile in visual_tiles:
         if tile["tile_kind"] in _SPACE_HUNGRY_TILE_KINDS:
-            page = _build_chart_insight_page(tile, report)
+            page = _build_chart_insight_page(tile, report, parsed_data)
         else:
             page = _build_insight_page(
                 tile, report, sec_domain, parsed_data, severity_col, status_col,
@@ -8075,18 +9256,44 @@ def build_management_report_blocks(report) -> list[dict]:
             critical_rows += [row for row in parsed_data if _classify_severity_value(str(row.get(severity_col, ""))) == "high"]
         critical_rows = critical_rows[:12]
         if critical_rows:
+            # BUG NYATA DIPERBAIKI (dilaporkan user, terkonfirmasi di render: tabel "12 Item
+            # Prioritas Tinggi" punya DUA kolom berjudul "Severity", satu berisi "critical"
+            # huruf kecil & satu "Critical"). Sebabnya kolom kategori dipilih TANPA
+            # mengecualikan kolom severity - kalau pick_category kebetulan menjatuhkan pilihan
+            # pada kolom severity itu sendiri, kolomnya digambar dua kali: sekali sbg
+            # "kategori" (nilai mentah) dan sekali sbg "Severity" (nilai ter-normalisasi).
+            # Isinya pun tidak berguna: kedua kolom sama & seluruh 12 baris bernilai sama,
+            # karena tabel ini memang MEMFILTER baris critical/high.
+            # Kolom kategori HARUS beda dari kolom severity: dicari penggantinya dulu dari
+            # kandidat yang ada; kalau tidak ada yang beda, kolomnya DILEWATI - tabel 3 kolom
+            # yang jujur lebih baik daripada 4 kolom dgn satu kolom duplikat.
+            # CATATAN: build_report_blocks (jalur Descriptive) punya blok kembar dgn bug yang
+            # SAMA, TIDAK diperbaiki di sini - jalur itu di luar lingkup & tidak boleh berubah.
+            _ct_cat_key = category_pick[0] if category_pick else None
+            _ct_cat_col = source_cols.get(_ct_cat_key) if _ct_cat_key else None
+            if _ct_cat_col and _norm_col_name(_ct_cat_col) == _norm_col_name(severity_col):
+                _ct_cat_key = _ct_cat_col = None
+                for _k, _items in (top_categories or {}).items():
+                    _c = source_cols.get(_k)
+                    if not _c or not _items:
+                        continue
+                    if _norm_col_name(_c) in (_norm_col_name(severity_col),
+                                              _norm_col_name(status_col or "")):
+                        continue
+                    _ct_cat_key, _ct_cat_col = _k, _c
+                    break
             ct_headers = [L("No", "No")]
-            if category_pick:
-                ct_headers.append(humanize_label(category_pick[0], source_cols))
+            if _ct_cat_key:
+                ct_headers.append(humanize_label(_ct_cat_key, source_cols))
             ct_headers.append("Severity")
             if status_col:
                 ct_headers.append(L("Status", "Status"))
-            cat_col_name = source_cols.get(category_pick[0]) if category_pick else None
+            cat_col_name = _ct_cat_col
             ct_rows = []
             ct_highlight_idx = []
             for idx, row in enumerate(critical_rows):
                 row_vals = [str(idx + 1)]
-                if category_pick:
+                if _ct_cat_key:
                     row_vals.append(str(row.get(cat_col_name, "-")) if cat_col_name else "-")
                 row_vals.append(_classify_severity_value(str(row.get(severity_col, ""))).capitalize())
                 if status_col:
@@ -8260,10 +9467,14 @@ def build_management_report_blocks(report) -> list[dict]:
         if _raw_mgmt_conclusion:
             mgmt_conclusion_text = _raw_mgmt_conclusion
             if total_sev and status_col:
-                mgmt_resolved_pct = round((total_sev - open_count) / total_sev * 100, 1)
+                # Dirakit lewat fmt_persen, BUKAN round()+f-string: yang terakhir melewati
+                # dua aturan sekaligus - pemisah desimal ikut bahasa laporan (koma untuk
+                # Indonesia) dan jumlah desimal seragam. Terlihat di render sbg "100.0% data
+                # tertangani" dgn TITIK, satu-satunya persen bertitik di halaman itu.
+                mgmt_resolved_pct = fmt_persen(total_sev - open_count, total_sev, decimals=1)
                 mgmt_pills.append(L(
-                    f"{mgmt_resolved_pct}% event tertangani" if sec_domain else f"{mgmt_resolved_pct}% data tertangani",
-                    f"{mgmt_resolved_pct}% of events resolved",
+                    f"{mgmt_resolved_pct} event tertangani" if sec_domain else f"{mgmt_resolved_pct} data tertangani",
+                    f"{mgmt_resolved_pct} of events resolved",
                 ))
             if category_pick:
                 mgmt_pills.append(L(
