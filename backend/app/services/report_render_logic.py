@@ -809,6 +809,11 @@ def sebut_kolom(nama, tak_layak, generik_id: str, generik_en: str = "") -> str:
 
 # Nilai yang berarti "tidak ada kategori" setelah astype(str) - dikumpulkan di satu tempat
 # supaya setiap pola yang mengelompokkan data memakai daftar yang sama.
+# Ambang "sebaran lebar" untuk kalimat median & rentang di catatan_agregat. Dua sinyal
+# supaya titik buta masing-masing saling tertutup - lihat catatan di tempat pemakaiannya.
+_LEBAR_RENTANG_MEDIAN = 2.0
+_LEBAR_PUNCAK_DASAR = 4.0
+
 _NILAI_KOSONG = {"", "none", "nan", "nat", "null", "-", "n/a", "na"}
 
 
@@ -1256,14 +1261,27 @@ def catatan_agregat(items: list, n_digambar: int, unit: str, report,
     # R3 - SEBARAN: median & rentang. Chart top-N menyembunyikan keduanya.
     med = statistics.median(_pop)
     if _pop_n >= 5 and max(_pop) > min(_pop):
-        # IMPLIKASI dari rasio rentang thd median - dihitung, bukan diasumsikan.
+        # IMPLIKASI dari sebaran itu sendiri - dihitung, bukan diasumsikan. DUA sinyal,
+        # digabung "atau", karena satu sinyal saja punya titik buta masing-masing:
         #
-        # Median 0 ditangani TERPISAH, tidak ikut jatuh ke cabang "rapat". `med > 0` semula
-        # cuma penjaga bagi-nol, tapi efek sampingnya: setiap sebaran bermedian 0 dilaporkan
-        # "jaraknya rapat" - termasuk "median 0, rentang 0-11" di laporan 195. Median 0
-        # artinya separuh entitas tidak punya volume sama sekali, jadi begitu puncaknya di
-        # atas nol jaraknya lebar menurut definisi, bukan rapat.
-        _lebar = ((max(_pop) - min(_pop)) / med >= 2) if med > 0 else max(_pop) > 0
+        #   rentang/median  buta kalau mediannya tinggi. "Median 576,5, rentang 180-1.080"
+        #                   rasionya cuma 1,56 dan dilaporkan "rapat", padahal puncaknya 6x
+        #                   dasarnya.
+        #   puncak/dasar    buta kalau dasarnya nol atau mendekati nol.
+        #
+        # Ambang 4,0 pada puncak/dasar diambil dari sebaran NYATA 17 populasi yang dipakai
+        # kalimat ini di 4 laporan produksi + 2 dataset tipis: enam populasi yang dulu
+        # divonis rapat punya puncak/dasar 3,8x-10,4x, dan cuma yang 3,8x (rentang 28-107,
+        # IQR/median 0,80) yang benar-benar terbaca sbg tingkat sebanding. Ambang lama (2,0
+        # pada rentang/median) DIPERTAHANKAN, bukan diganti, supaya kasus yang selama ini
+        # sudah benar tidak ikut berubah.
+        #
+        # Median 0 tetap ditangani lewat jalur tak-hingga: separuh entitas tidak punya volume
+        # sama sekali, jadi begitu puncaknya di atas nol jaraknya lebar menurut definisi.
+        _lo, _hi = min(_pop), max(_pop)
+        _r_med = ((_hi - _lo) / med) if med > 0 else float("inf")
+        _puncak = (_hi / _lo) if _lo > 0 else float("inf")
+        _lebar = _r_med >= _LEBAR_RENTANG_MEDIAN or _puncak >= _LEBAR_PUNCAK_DASAR
         _imp_id = (" Jaraknya lebar, jadi angka rata-rata menutupi perbedaan antar entitas "
                    "dan median lebih mewakili kondisi umum."
                    if _lebar else
