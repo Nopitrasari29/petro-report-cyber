@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 from app.models.report import Report
+from app.services.parser.wrap_repair import perbaiki_parsed_data
 from app.schemas.report import ReportCreate, ReportUpdate
 
 logger = logging.getLogger(__name__)
@@ -68,13 +69,19 @@ def get_parsed_data(db_report: Report) -> list:
     parsed_data_path — jadi baca dari file dulu, fallback ke kolom DB untuk
     laporan lama (dibuat sebelum Fix #2 ada).
     """
+    # Penggalan wrap sel tabel PDF diperbaiki DI SINI, satu titik untuk semua pemakai
+    # (analisis, chart, validasi, dan kedua jalur export) - supaya nama kolom yang benar
+    # mengalir ke label chart, kartu, judul, dan narasi sekaligus. Berkas yang sudah tersimpan
+    # tidak ditulis ulang: perbaikannya hanya di memori, jadi tidak ada migrasi data.
+    # Perbaikan di hulu (pdf_parser._clean_cell) hanya menolong unggahan BARU; laporan yang
+    # sudah ada terlanjur menyimpan bentuk rusaknya dan berkas sumbernya tidak disimpan.
     if db_report.parsed_data_path:
         try:
             with open(db_report.parsed_data_path, "r", encoding="utf-8") as pf:
-                return json.load(pf)
+                return perbaiki_parsed_data(json.load(pf))
         except Exception:
             pass
-    return db_report.parsed_data or []
+    return perbaiki_parsed_data(db_report.parsed_data or [])
 
 def get_owned_report(db: Session, report_id: int, user_id: int):
     """

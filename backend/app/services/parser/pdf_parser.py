@@ -7,6 +7,9 @@ from app.services.parser.base import BaseParser
 from app.services.period_detector import find_date_column, _parse_dates
 
 
+from app.services.parser.wrap_repair import perbaiki_sel
+
+
 def _strip_decorative_symbols(text: str) -> str:
     """Buang simbol dekoratif (▼ ▲ ▣ ■ • dst — biasanya penanda urut/bullet VISUAL di header
     tabel PDF/aplikasi web, mis. ikon sort "▼" nempel di judul kolom "Illegal Requests",
@@ -226,9 +229,17 @@ class PDFParser(BaseParser):
             # DALAM satu sel (bukan whitespace di awal/akhir, yang sudah ditangani .strip())
             # cuma artefak wrap baris tabel, bukan makna semantik yang perlu dipertahankan —
             # diratakan jadi 1 spasi.
-            if c is None:
-                return ""
-            return re.sub(r"\s+", " ", str(c)).strip()
+            #
+            # LANJUTAN PERBAIKAN: meratakan SEMUA whitespace jadi satu spasi ternyata
+            # menangani setengah masalah saja. Newline yang jatuh di antara dua KATA memang
+            # harus jadi spasi ("Rate\nControlled" -> "Rate Controlled"), tapi sel yang lebih
+            # sempit daripada satu kata dipenggal di TENGAH KATA, dan di situ spasinya justru
+            # merusak: "Ticke\nt ID" jadi "Ticke t ID", "Hardwar\ne" jadi "Hardwar e".
+            # Terbukti di laporan 195/197 - 11 nama kolom & 519 sel rusak, ikut terbawa ke
+            # label chart, kartu, judul, dan kalimat narasi. Keputusan sambung-atau-spasi
+            # dipindah ke wrap_repair.perbaiki_sel (sengaja konservatif - lihat catatan di
+            # sana soal nilai yang rusak kalau aturannya terlalu berani).
+            return perbaiki_sel(c)
 
         try:
             with pdfplumber.open(cast(Any, file_content)) as pdf:
