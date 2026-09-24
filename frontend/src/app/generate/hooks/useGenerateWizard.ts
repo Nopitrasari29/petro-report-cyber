@@ -358,8 +358,21 @@ export function useGenerateWizard() {
   // (cepat, hitungan detik), sedangkan usulan section AI bisa beberapa menit. Kalau digabung
   // jadi satu permintaan, field periode yang harusnya sudah bisa terisi duluan ikut tertahan
   // menunggu AI selesai.
-  const detectPeriodFromFile = async (file: File) => {
-    // Batalkan permintaan file SEBELUMNYA yang mungkin masih berjalan sebelum mulai yang baru.
+  //
+  // BUG DIPERBAIKI (dilaporkan user): fungsi ini dulu menerima SATU File dan pemanggilnya
+  // mengirim `newFiles[0]`, jadi ketika user memilih beberapa berkas sekaligus (mis. data
+  // Juli + data Agustus untuk satu laporan) rentang tanggal berkas kedua dst TIDAK PERNAH
+  // ikut terbaca - Report Period di Step 2 cuma mencakup bulan berkas pertama.
+  // Endpoint backend menerima satu berkas per panggilan, jadi penggabungannya dilakukan di
+  // sini: semua berkas ditembak PARALEL (bukan berurutan - deteksi ini murni parsing, dan
+  // menunggu satu per satu memperlambat tanpa alasan), lalu diambil tanggal paling awal &
+  // paling akhir dari yang berhasil terdeteksi. Berkas yang gagal dideteksi diabaikan, bukan
+  // membatalkan keseluruhan - lebih baik periode dari sebagian berkas daripada kosong.
+  const detectPeriodFromFiles = async (fileList: File[]) => {
+    const daftar = (fileList || []).filter(Boolean);
+    if (daftar.length === 0) return;
+
+    // Batalkan permintaan SEBELUMNYA yang mungkin masih berjalan sebelum mulai yang baru.
     periodAbortRef.current?.abort();
     const controller = new AbortController();
     periodAbortRef.current = controller;
@@ -367,23 +380,38 @@ export function useGenerateWizard() {
     setPeriodDetecting(true);
     setPeriodAutoDetected(false);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
+      const hasil = await Promise.all(
+        daftar.map(async (file) => {
+          const fd = new FormData();
+          fd.append("file", file);
+          try {
+            const res = await fetch(`${API_BASE_URL}/api/v1/upload/detect-period`, {
+              method: "POST",
+              headers: authHeaders(),
+              body: fd,
+              signal: controller.signal,
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            if (data.detected && data.period_start && data.period_end) {
+              return { start: data.period_start as string, end: data.period_end as string };
+            }
+          } catch (err: any) {
+            if (err?.name === "AbortError") throw err; // biar ditangani catch luar
+            console.warn("[PERIOD DETECT] Satu berkas gagal dideteksi:", err);
+          }
+          return null;
+        })
+      );
 
-      const res = await fetch(`${API_BASE_URL}/api/v1/upload/detect-period`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: fd,
-        signal: controller.signal,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.detected && data.period_start && data.period_end) {
-          setPeriodStart(data.period_start);
-          setPeriodEnd(data.period_end);
-          setPeriodAutoDetected(true);
-        }
+      const terdeteksi = hasil.filter(Boolean) as { start: string; end: string }[];
+      if (terdeteksi.length > 0) {
+        // Format backend selalu "YYYY-MM-DD", jadi urutan leksikografis = urutan kronologis.
+        const mulai = terdeteksi.map((x) => x.start).sort()[0];
+        const akhir = terdeteksi.map((x) => x.end).sort().slice(-1)[0];
+        setPeriodStart(mulai);
+        setPeriodEnd(akhir);
+        setPeriodAutoDetected(true);
       }
     } catch (err: any) {
       if (err?.name === "AbortError") return; // dibatalkan krn file diganti — bukan error
@@ -400,7 +428,7 @@ export function useGenerateWizard() {
   };
 
   // Usulan section AI + deteksi domain/kop header — bagian yang LAMBAT (bisa beberapa menit,
-  // lihat section_suggester.py), sengaja dipanggil terpisah dari detectPeriodFromFile di atas.
+  // lihat section_suggester.py), sengaja dipanggil terpisah dari detectPeriodFromFiles di atas.
   const suggestSectionsFromFile = async (file: File) => {
     // Batalkan permintaan file SEBELUMNYA yang mungkin masih berjalan sebelum mulai yang baru
     // (request ini bisa beberapa menit krn panggilan AI, jauh lebih rawan kena race ini).
@@ -530,7 +558,9 @@ export function useGenerateWizard() {
     if (isFirstBatch) {
       // Ditembak BERSAMAAN (bukan salah satu menunggu yang lain) — lihat komentar di
       // masing-masing fungsi kenapa keduanya sengaja dipisah jadi 2 permintaan independen.
-      detectPeriodFromFile(newFiles[0]);
+      // Periode dari SELURUH berkas batch ini (lihat detectPeriodFromFiles), usulan section
+      // tetap dari satu berkas representatif - itu soal memilih topik, bukan rentang tanggal.
+      detectPeriodFromFiles(newFiles);
       suggestSectionsFromFile(newFiles[0]);
     }
   };

@@ -542,12 +542,23 @@ def test_management_dashboard_pages_are_densely_filled():
             pdf_bytes = ep.PDFExporter.generate_pdf_report(report)
             ppt_bytes = eppt.PPTXExporter.generate_ppt_report(report)
             dash_sizes = [len(b.get("columns") or []) for b in blocks if b.get("kind") in _DASHBOARD_PAGE_KINDS]
-            expected_sizes = _expected_column_sizes(sum(dash_sizes))
-            if dash_sizes and sorted(dash_sizes, reverse=True) != expected_sizes:
-                failures.append(
-                    f"report {rid} pembagian kolom {sorted(dash_sizes, reverse=True)} "
-                    f"!= seharusnya {expected_sizes} utk {sum(dash_sizes)} topik"
-                )
+            # EKSPEKTASI DIPERBARUI (keputusan user): pembagian rata [n,n,n,n] adalah
+            # peninggalan desain LAMA, sebelum keputusan "kolom diisi sampai penuh berdasar
+            # bobot" diambil (lihat komentar "HALAMAN ADALAH AKIBAT, BUKAN TARGET" di
+            # report_render_logic.py). Dgn desain sekarang, [6,4,2] justru hasil yang benar:
+            # halaman diisi sampai tingginya habis, sisanya mengalir ke halaman berikutnya.
+            #
+            # Yang MASIH harus dijaga adalah sifat "diisi berurutan sampai penuh": sebuah
+            # halaman tidak boleh lebih kosong daripada halaman SESUDAHNYA. Pola [2,6] berarti
+            # halaman pertama ditinggalkan setengah kosong padahal masih ada topik yang bisa
+            # naik - itu yang genuinely salah, dan itulah yang diuji di sini.
+            for _i in range(len(dash_sizes) - 1):
+                if dash_sizes[_i] < dash_sizes[_i + 1]:
+                    failures.append(
+                        f"report {rid} halaman dasbor ke-{_i + 1} berisi {dash_sizes[_i]} topik "
+                        f"padahal halaman sesudahnya berisi {dash_sizes[_i + 1]} - halaman "
+                        f"lebih awal ditinggalkan lebih kosong (urutan {dash_sizes})"
+                    )
             table_pages = {
                 idx for idx, b in enumerate(blocks)
                 if any((p or {}).get("panel_kind") == "critical_table" for p in (b.get("panels") or []))
@@ -564,7 +575,14 @@ def test_management_dashboard_pages_are_densely_filled():
                 )
             for i, kind, n_el, n_ch in pdf_density:
                 if kind in _DASHBOARD_PAGE_KINDS:
-                    n_cols = len(blocks[i].get("columns") or []) if i < len(blocks) else 3
+                    # Ambang dihitung per KOLOM VISUAL, bukan per topik. Sejak kolom diisi
+                    # sampai penuh (lihat "HALAMAN ADALAH AKIBAT" di report_render_logic.py),
+                    # satu kolom visual bisa memuat beberapa topik bertumpuk - menuntut 30
+                    # elemen untuk SETIAP topik berarti menuntut halaman 6-topik punya 180
+                    # elemen di ruang fisik yang sama dgn halaman 3-topik. Yang dilihat
+                    # pembaca adalah strip kolomnya, jadi itu yang diukur.
+                    _blk = blocks[i] if i < len(blocks) else {}
+                    n_cols = len(_blk.get("bentuk_kolom") or _blk.get("columns") or []) or 3
                     ambang = _DENSITY_DASHBOARD_MIN_PER_COLUMN * max(1, n_cols)
                     if n_el < ambang:
                         failures.append(

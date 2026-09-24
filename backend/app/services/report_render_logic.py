@@ -813,6 +813,35 @@ def _kelompok_nyata(df, kat: str):
     return df[~kolom.str.lower().isin(_NILAI_KOSONG)]
 
 
+def _kolom_nomor_urut(seri) -> bool:
+    """Kolom angka yang sebenarnya NOMOR URUT baris, bukan besaran yang bisa dijumlahkan.
+
+    CACAT AKURASI DICEGAH (ditemukan lewat pengukuran, bukan dugaan): di laporan 192 satu-
+    satunya kolom numerik adalah "No" yang isinya persis 1..42. Pola tren waktu memakai
+    kolom numerik pertama sebagai cadangan, lalu menjumlahkannya per paruh periode dan
+    menyimpulkan "naik 2,4x" - padahal yang bertambah cuma nomor barisnya, bukan besaran apa
+    pun. Angkanya benar dihitung tapi tidak berarti apa-apa, dan kalimat seperti itu justru
+    paling berbahaya: terdengar seperti temuan.
+
+    Penandanya: nilainya bilangan bulat, semuanya unik, dan membentuk deret berurutan penuh
+    mulai 0 atau 1 - ciri penomoran, bukan pengukuran."""
+    try:
+        v = pd.to_numeric(seri, errors="coerce").dropna()
+    except Exception:
+        return False
+    n = len(v)
+    if n < 3 or v.nunique() != n:
+        return False
+    try:
+        bulat = v.astype("int64")
+    except Exception:
+        return False
+    if not (bulat == v).all():
+        return False
+    awal = int(bulat.min())
+    return awal in (0, 1) and int(bulat.max()) == awal + n - 1
+
+
 def catatan_pola(parsed_data: list, tile: dict, report) -> list:
     """Kalimat POLA yang dibaca dari kolom yang SUDAH ADA di data - bukan sebab yang dikarang.
 
@@ -837,7 +866,9 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
     if df.empty:
         return []
     keluar = []
-    num = [c for c in df.columns if df[c].dtype.kind in "if"]
+    # Nomor urut baris DIKELUARKAN dari daftar metrik cadangan - lihat _kolom_nomor_urut.
+    num = [c for c in df.columns
+           if df[c].dtype.kind in "if" and not _kolom_nomor_urut(df[c])]
     kat = str((tile or {}).get("cat_col_name") or "").strip()
     kat = kat if kat in df.columns else None
     # Metrik panel ini sendiri; num[0] cuma cadangan utk tile yang genuinely tidak punya
@@ -853,150 +884,186 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
     # pengulangan yang sedang diperbaiki. Sekarang kalimatnya lahir dari kolom milik panel itu
     # sendiri, jadi berbeda dengan sendirinya antar panel.
 
-    # ---- 1. PERBANDINGAN ANTAR KELOMPOK: kategori dgn proporsi status paling menonjol ---
-    if kat:
-        # Kandidat DIPILIH, bukan diambil yang pertama ketemu: kolom pertama yang kebetulan
-        # kategorikal sering justru penanda struktur file (lihat _PEMISAH_DEGENERATE).
-        _kandidat = [c for c in df.columns
-                     if c != kat and df[c].dtype.kind not in "if"
-                     and 2 <= df[c].nunique() <= 8]
-        _stat, _ct, _rata = None, None, None
-        for _c in _kandidat:
-            _ct_c = pd.crosstab(df[kat], df[_c], normalize="index")
-            if _ct_c.empty:
-                continue
-            # Berapa banyak kelompok yang terpisah SEMPURNA (100% di satu nilai)? Kalau
-            # sebagian besar begitu, kolom ini memilah data, bukan menggambarkan hasilnya -
-            # kalimat apa pun dari situ akan selalu berbunyi "100,0%" dan tidak berarti apa2.
-            _sempurna = float((_ct_c.max(axis=1) >= 0.999).mean())
-            if _sempurna > _PEMISAH_DEGENERATE:
-                logger.info("pola perbandingan: kolom %r dilewati - %.0f%% kelompok terpisah "
-                            "sempurna (penanda struktur, bukan hasil)", _c, _sempurna * 100)
-                continue
-            _stat, _ct = _c, _ct_c
-            _rata = df[_c].value_counts(normalize=True)
-            break
-        if _stat is not None:
-            _terbaik = None
-            for _nilai in _ct.columns:
-                _dasar = float(_rata.get(_nilai, 0))
-                if _dasar <= 0:
+    def _pola1():
+        # ---- 1. PERBANDINGAN ANTAR KELOMPOK: kategori dgn proporsi status paling menonjol ---
+        if kat:
+            # Kandidat DIPILIH, bukan diambil yang pertama ketemu: kolom pertama yang kebetulan
+            # kategorikal sering justru penanda struktur file (lihat _PEMISAH_DEGENERATE).
+            _kandidat = [c for c in df.columns
+                         if c != kat and df[c].dtype.kind not in "if"
+                         and 2 <= df[c].nunique() <= 8]
+            _stat, _ct, _rata = None, None, None
+            for _c in _kandidat:
+                _ct_c = pd.crosstab(df[kat], df[_c], normalize="index")
+                if _ct_c.empty:
                     continue
-                _kol = _ct[_nilai]
-                _selisih = float(_kol.max()) - _dasar
-                if _terbaik is None or _selisih > _terbaik[2]:
-                    _terbaik = (_kol.idxmax(), _nilai, _selisih, float(_kol.max()), _dasar)
-            if _terbaik and _terbaik[2] >= 0.08:
-                _grp, _nilai, _sel, _pct, _dasar = _terbaik
-                keluar.append(_L(
-                    report,
-                    f"{_grp} paling menonjol pada {sebut_kolom(_stat, _tl, 'salah satu kategori')} '{_nilai}' "
-                    f"({fmt_desimal(_pct * 100, 1, _ien)}% dari barisnya, dibanding "
-                    f"{fmt_desimal(_dasar * 100, 1, _ien)}% rata-rata seluruh "
-                    f"{sebut_kolom(kat, _tl, 'kelompok lain')}) - selisih inilah yang membedakannya dari "
-                    f"kelompok lain.",
-                    f"{_grp} stands out on {sebut_kolom(_stat, _tl, 'salah satu kategori', 'one category')} '{_nilai}' "
-                    f"({fmt_desimal(_pct * 100, 1, _ien)}% of its rows versus "
-                    f"{fmt_desimal(_dasar * 100, 1, _ien)}% across all "
-                    f"{sebut_kolom(kat, _tl, 'kelompok lain', 'other groups')}) - that gap is what sets it apart.",
-                ))
+                # Berapa banyak kelompok yang terpisah SEMPURNA (100% di satu nilai)? Kalau
+                # sebagian besar begitu, kolom ini memilah data, bukan menggambarkan hasilnya -
+                # kalimat apa pun dari situ akan selalu berbunyi "100,0%" dan tidak berarti apa2.
+                _sempurna = float((_ct_c.max(axis=1) >= 0.999).mean())
+                if _sempurna > _PEMISAH_DEGENERATE:
+                    logger.info("pola perbandingan: kolom %r dilewati - %.0f%% kelompok terpisah "
+                                "sempurna (penanda struktur, bukan hasil)", _c, _sempurna * 100)
+                    continue
+                _stat, _ct = _c, _ct_c
+                _rata = df[_c].value_counts(normalize=True)
+                break
+            if _stat is not None:
+                _terbaik = None
+                for _nilai in _ct.columns:
+                    _dasar = float(_rata.get(_nilai, 0))
+                    if _dasar <= 0:
+                        continue
+                    _kol = _ct[_nilai]
+                    _selisih = float(_kol.max()) - _dasar
+                    if _terbaik is None or _selisih > _terbaik[2]:
+                        _terbaik = (_kol.idxmax(), _nilai, _selisih, float(_kol.max()), _dasar)
+                if _terbaik and _terbaik[2] >= 0.08:
+                    _grp, _nilai, _sel, _pct, _dasar = _terbaik
+                    return (_L(
+                        report,
+                        f"{_grp} paling menonjol pada {sebut_kolom(_stat, _tl, 'salah satu kategori')} '{_nilai}' "
+                        f"({fmt_desimal(_pct * 100, 1, _ien)}% dari barisnya, dibanding "
+                        f"{fmt_desimal(_dasar * 100, 1, _ien)}% rata-rata seluruh "
+                        f"{sebut_kolom(kat, _tl, 'kelompok lain')}) - selisih inilah yang membedakannya dari "
+                        f"kelompok lain.",
+                        f"{_grp} stands out on {sebut_kolom(_stat, _tl, 'salah satu kategori', 'one category')} '{_nilai}' "
+                        f"({fmt_desimal(_pct * 100, 1, _ien)}% of its rows versus "
+                        f"{fmt_desimal(_dasar * 100, 1, _ien)}% across all "
+                        f"{sebut_kolom(kat, _tl, 'kelompok lain', 'other groups')}) - that gap is what sets it apart.",
+                    ))
 
-    # ---- 2. KONSENTRASI: teratas berapa kali lipat RATA-RATA yang lain ------------------
-    if kat and (_met or num) and len(keluar) < 2:
-        _mk = _met or num[0]
-        _dfk = _kelompok_nyata(df, kat)
-        _g = _dfk.groupby(_dfk[kat].astype(str))[_mk].sum().sort_values(ascending=False)
-        if len(_g) >= 3:
-            _atas = float(_g.iloc[0])
-            _sisa = _g.iloc[1:]
-            _rata_sisa = float(_sisa.mean()) if len(_sisa) else 0.0
-            if _rata_sisa > 0 and _atas / _rata_sisa >= 1.3:
-                keluar.append(_L(
-                    report,
-                    # Satuan angkanya disebut EKSPLISIT di kalimat, tidak menumpang pada
-                    # awalan subjek - supaya angka ini tidak bisa terbaca sbg besaran lain
-                    # seandainya awalan itu berubah atau hilang.
-                    f"{_g.index[0]} menyumbang {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x "
-                    f"rata-rata {sebut_kolom(kat, _tl, 'kelompok')} lainnya pada "
-                    f"{sebut_kolom(_mk, _tl, 'indikator utama', 'the main indicator')} "
-                    f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - "
-                    f"perhatian yang diarahkan ke sini menjangkau porsi terbesar.",
-                    f"{_g.index[0]} contributes {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x the "
-                    f"average of the other {sebut_kolom(kat, _tl, 'kelompok', 'groups')} on "
-                    f"{sebut_kolom(_mk, _tl, 'indikator utama', 'the main indicator')} "
-                    f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - "
-                    f"attention directed here covers the largest share.",
-                ))
+        return None
 
-    # ---- 3. KORELASI - HANYA utk tile yang memang membandingkan DUA metrik --------------
-    # Dipakai metrik milik TILE ITU (label_a/label_b/x_label yang sudah dibawa tile), bukan
-    # dua kolom numerik pertama dataset: kalau memakai yang terakhir, semua panel - termasuk
-    # yang topiknya sama sekali lain - mendapat kalimat korelasi yang sama persis.
-    if len(keluar) < 2:
-        _pair = [c for c in (str((tile or {}).get("label_a") or ""),
-                             str((tile or {}).get("label_b") or ""),
-                             str((tile or {}).get("x_label") or ""))
-                 if c in df.columns and df[c].dtype.kind in "if"]
-        _pair = list(dict.fromkeys(_pair))
-        if len(_pair) >= 2:
-            _a, _b = _pair[0], _pair[1]
-            _dd = df[[_a, _b]].dropna()
-            if len(_dd) >= _POLA_MIN_BARIS and _dd[_a].std() > 0 and _dd[_b].std() > 0:
-                _r = float(_dd[_a].corr(_dd[_b]))
-                if _r == _r:
-                    _abs = abs(_r)
-                    if _abs >= _POLA_KORELASI_LEMAH:
-                        keluar.append(_L(
-                            report,
-                            f"{rapikan_nama_kolom(_a)} dan {rapikan_nama_kolom(_b)} "
-                            f"{'naik bersama' if _r > 0 else 'berlawanan arah'} dengan kaitan "
-                            f"{'erat' if _abs >= _POLA_KORELASI_KUAT else 'sedang'} "
-                            f"(r={fmt_desimal(_r, 2, _ien)}).",
-                            f"{rapikan_nama_kolom(_a)} and {rapikan_nama_kolom(_b)} "
-                            f"{'move together' if _r > 0 else 'move in opposite directions'} with a "
-                            f"{'strong' if _abs >= _POLA_KORELASI_KUAT else 'moderate'} "
-                            f"association (r={fmt_desimal(_r, 2, _ien)}).",
-                        ))
-                    else:
-                        keluar.append(_L(
-                            report,
-                            f"{rapikan_nama_kolom(_a)} dan {rapikan_nama_kolom(_b)} praktis tidak "
-                            f"berkaitan (r={fmt_desimal(_r, 2, _ien)}) - besarnya yang satu tidak "
-                            f"bisa dipakai memperkirakan yang lain.",
-                            f"{rapikan_nama_kolom(_a)} and {rapikan_nama_kolom(_b)} are effectively "
-                            f"unrelated (r={fmt_desimal(_r, 2, _ien)}) - the size of one says "
-                            f"nothing about the other.",
-                        ))
+    def _pola2():
+        # ---- 2. KONSENTRASI: teratas berapa kali lipat RATA-RATA yang lain ------------------
+        if kat:
+            # Tanpa kolom angka yang layak, JUMLAH BARIS dipakai sbg besarannya. Itu agregat
+            # nyata (menghitung baris), bukan angka karangan - dan tanpa ini dataset yang
+            # kolom angkanya cuma nomor urut (mis. laporan 192, lihat _kolom_nomor_urut)
+            # kehilangan pola ini sama sekali, lalu seluruh halaman jatuh ke satu jenis
+            # kalimat yang sama. Satuannya disebut eksplisit supaya tidak tertukar.
+            _mk = _met or (num[0] if num else None)
+            _dfk = _kelompok_nyata(df, kat)
+            _grup = _dfk.groupby(_dfk[kat].astype(str))
+            _g = (_grup[_mk].sum() if _mk else _grup.size()).sort_values(ascending=False)
+            if len(_g) >= 3:
+                _atas = float(_g.iloc[0])
+                _sisa = _g.iloc[1:]
+                _rata_sisa = float(_sisa.mean()) if len(_sisa) else 0.0
+                if _rata_sisa > 0 and _atas / _rata_sisa >= 1.3:
+                    return (_L(
+                        report,
+                        # Satuan angkanya disebut EKSPLISIT di kalimat, tidak menumpang pada
+                        # awalan subjek - supaya angka ini tidak bisa terbaca sbg besaran lain
+                        # seandainya awalan itu berubah atau hilang.
+                        f"{_g.index[0]} menyumbang {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x "
+                        f"rata-rata {sebut_kolom(kat, _tl, 'kelompok')} lainnya pada "
+                        f"{sebut_kolom(_mk, _tl, 'indikator utama') if _mk else 'jumlah data'} "
+                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - "
+                        f"perhatian yang diarahkan ke sini menjangkau porsi terbesar.",
+                        f"{_g.index[0]} contributes {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x the "
+                        f"average of the other {sebut_kolom(kat, _tl, 'kelompok', 'groups')} on "
+                        f"{sebut_kolom(_mk, _tl, 'indikator utama', 'the main indicator') if _mk else 'record count'} "
+                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - "
+                        f"attention directed here covers the largest share.",
+                    ))
 
-    # ---- 4. POLA WAKTU: arah & besaran perubahan antar paruh periode --------------------
-    # Paling generik (tidak bergantung tile), jadi ditaruh terakhir - dedup per-kalimat di
-    # kumpulkan_catatan_halaman memastikan ia cuma tercetak sekali per halaman.
-    if len(keluar) < 2 and (_met or num):
-        _kol_w, _ser_w = _pola_kolom_waktu(df)
-        if _kol_w is not None:
-            _m = _met or num[0]
-            _d = pd.DataFrame({"w": _ser_w, "v": df[_m]}).dropna().sort_values("w")
-            if len(_d) >= _POLA_MIN_BARIS:
-                _tengah = len(_d) // 2
-                _awal, _akhir = _d.iloc[:_tengah]["v"].sum(), _d.iloc[_tengah:]["v"].sum()
-                if _awal > 0 and _akhir > 0:
-                    _rasio = _akhir / _awal
-                    _naik, _turun = _rasio >= 1.15, _rasio <= 0.87
-                    if _naik or _turun:
-                        _kali = _rasio if _naik else (1.0 / _rasio)
-                        _p1, _p2 = _d.iloc[0]["w"], _d.iloc[-1]["w"]
-                        keluar.append(_L(
-                            report,
-                            f"Sepanjang {_p1:%b %Y}-{_p2:%b %Y}, {rapikan_nama_kolom(_m)} paruh "
-                            f"kedua {'naik' if _naik else 'turun'} {fmt_desimal(_kali, 1, _ien)}x "
-                            f"dibanding paruh pertama ({_fmt_count(_awal, _ien)} -> "
-                            f"{_fmt_count(_akhir, _ien)}); beban "
-                            f"{'bergeser ke akhir periode' if _naik else 'mengendur menjelang akhir periode'}.",
-                            f"Across {_p1:%b %Y}-{_p2:%b %Y}, {rapikan_nama_kolom(_m)} in the second "
-                            f"half {'rose' if _naik else 'fell'} {fmt_desimal(_kali, 1, _ien)}x versus "
-                            f"the first half ({_fmt_count(_awal, _ien)} -> {_fmt_count(_akhir, _ien)}); "
-                            f"the load {'shifts toward the end' if _naik else 'eases toward the end'}.",
-                        ))
+        return None
+
+    def _pola3():
+        # ---- 3. KORELASI - HANYA utk tile yang memang membandingkan DUA metrik --------------
+        # Dipakai metrik milik TILE ITU (label_a/label_b/x_label yang sudah dibawa tile), bukan
+        # dua kolom numerik pertama dataset: kalau memakai yang terakhir, semua panel - termasuk
+        # yang topiknya sama sekali lain - mendapat kalimat korelasi yang sama persis.
+        if True:
+            _pair = [c for c in (str((tile or {}).get("label_a") or ""),
+                                 str((tile or {}).get("label_b") or ""),
+                                 str((tile or {}).get("x_label") or ""))
+                     if c in df.columns and df[c].dtype.kind in "if"]
+            _pair = list(dict.fromkeys(_pair))
+            if len(_pair) >= 2:
+                _a, _b = _pair[0], _pair[1]
+                _dd = df[[_a, _b]].dropna()
+                if len(_dd) >= _POLA_MIN_BARIS and _dd[_a].std() > 0 and _dd[_b].std() > 0:
+                    _r = float(_dd[_a].corr(_dd[_b]))
+                    if _r == _r:
+                        _abs = abs(_r)
+                        if _abs >= _POLA_KORELASI_LEMAH:
+                            return (_L(
+                                report,
+                                f"{rapikan_nama_kolom(_a)} dan {rapikan_nama_kolom(_b)} "
+                                f"{'naik bersama' if _r > 0 else 'berlawanan arah'} dengan kaitan "
+                                f"{'erat' if _abs >= _POLA_KORELASI_KUAT else 'sedang'} "
+                                f"(r={fmt_desimal(_r, 2, _ien)}).",
+                                f"{rapikan_nama_kolom(_a)} and {rapikan_nama_kolom(_b)} "
+                                f"{'move together' if _r > 0 else 'move in opposite directions'} with a "
+                                f"{'strong' if _abs >= _POLA_KORELASI_KUAT else 'moderate'} "
+                                f"association (r={fmt_desimal(_r, 2, _ien)}).",
+                            ))
+                        else:
+                            return (_L(
+                                report,
+                                f"{rapikan_nama_kolom(_a)} dan {rapikan_nama_kolom(_b)} praktis tidak "
+                                f"berkaitan (r={fmt_desimal(_r, 2, _ien)}) - besarnya yang satu tidak "
+                                f"bisa dipakai memperkirakan yang lain.",
+                                f"{rapikan_nama_kolom(_a)} and {rapikan_nama_kolom(_b)} are effectively "
+                                f"unrelated (r={fmt_desimal(_r, 2, _ien)}) - the size of one says "
+                                f"nothing about the other.",
+                            ))
+
+        return None
+
+    def _pola4():
+        # ---- 4. POLA WAKTU: arah & besaran perubahan antar paruh periode --------------------
+        # Paling generik (tidak bergantung tile), jadi ditaruh terakhir - dedup per-kalimat di
+        # kumpulkan_catatan_halaman memastikan ia cuma tercetak sekali per halaman.
+        if (_met or num):
+            _kol_w, _ser_w = _pola_kolom_waktu(df)
+            if _kol_w is not None:
+                _m = _met or num[0]
+                _d = pd.DataFrame({"w": _ser_w, "v": df[_m]}).dropna().sort_values("w")
+                if len(_d) >= _POLA_MIN_BARIS:
+                    _tengah = len(_d) // 2
+                    _awal, _akhir = _d.iloc[:_tengah]["v"].sum(), _d.iloc[_tengah:]["v"].sum()
+                    if _awal > 0 and _akhir > 0:
+                        _rasio = _akhir / _awal
+                        _naik, _turun = _rasio >= 1.15, _rasio <= 0.87
+                        if _naik or _turun:
+                            _kali = _rasio if _naik else (1.0 / _rasio)
+                            _p1, _p2 = _d.iloc[0]["w"], _d.iloc[-1]["w"]
+                            return (_L(
+                                report,
+                                f"Sepanjang {_p1:%b %Y}-{_p2:%b %Y}, {rapikan_nama_kolom(_m)} paruh "
+                                f"kedua {'naik' if _naik else 'turun'} {fmt_desimal(_kali, 1, _ien)}x "
+                                f"dibanding paruh pertama ({_fmt_count(_awal, _ien)} -> "
+                                f"{_fmt_count(_akhir, _ien)}); beban "
+                                f"{'bergeser ke akhir periode' if _naik else 'mengendur menjelang akhir periode'}.",
+                                f"Across {_p1:%b %Y}-{_p2:%b %Y}, {rapikan_nama_kolom(_m)} in the second "
+                                f"half {'rose' if _naik else 'fell'} {fmt_desimal(_kali, 1, _ien)}x versus "
+                                f"the first half ({_fmt_count(_awal, _ien)} -> {_fmt_count(_akhir, _ien)}); "
+                                f"the load {'shifts toward the end' if _naik else 'eases toward the end'}.",
+                            ))
+
+        return None
+
+    # Urutan mencoba DIPUTAR menurut identitas tile - lihat catatan di scratchpad/patch_variasi.
+    # Tanpa ini tipe 1 (syaratnya paling longgar) selalu menang di hampir semua panel, dan
+    # halaman dasbor berkolom banyak jadi berisi kalimat yang strukturnya sama persis.
+    _urut = [_pola1, _pola2, _pola3, _pola4]
+    _tanda = "|".join(str(x or "") for x in (
+        (tile or {}).get("cat_col_name"), (tile or {}).get("met_col_name"),
+        (tile or {}).get("title"), (tile or {}).get("tile_kind")))
+    _geser = (sum(ord(c) for c in _tanda) % 4) if _tanda else 0
+    for _f in _urut[_geser:] + _urut[:_geser]:
+        if len(keluar) >= 2:
+            break
+        try:
+            _kal = _f()
+        except Exception:
+            _kal = None
+        if _kal:
+            keluar.append(_kal)
 
     return keluar[:2]
 
@@ -2844,9 +2911,20 @@ def alokasi_kolom_bertumpuk(seksi_list: list, col_w_in: float, tinggi_kolom_in: 
         _bisa = [h for h in hasil if h.get("tile") and h["r"]["chart_h"] > 0]
         if _bisa:
             _bagi = sisa / len(_bisa)
+            # Bentuk yang TERKUNCI sisi terpendek: radar & gauge digambar dalam kotak persegi,
+            # jadi tinggi melebihi lebar kolom cuma menambah ruang kosong kiri-kanan. Bentuk
+            # lain (batang, heatmap, corong) bebas lebih tinggi dari lebarnya.
+            _BENTUK_SISI_PENDEK = {"kpi_radar", "kpi_gauge"}
+            _sendirian = len(hasil) == 1
             for h in _bisa:
                 r = h["r"]
-                _batas = min(col_w_in, r["chart_h"] * 1.8)
+                _kind = str((r.get("tile") or {}).get("tile_kind") or "")
+                _batas_bentuk = col_w_in if _kind in _BENTUK_SISI_PENDEK else tinggi_kolom_in
+                # Rasio 1,8x menjaga kolom BERTUMPUK: di sana chart yang melonjak memakan
+                # ruang milik seksi lain. Kolom berisi satu seksi tidak punya tetangga yang
+                # dirugikan - membatasinya di situ hanya menghasilkan dasar kolom yang kosong
+                # (terukur: sisa 2,91in pada chart yang berhenti di 2,16in).
+                _batas = _batas_bentuk if _sendirian else min(_batas_bentuk, r["chart_h"] * 1.8)
                 _ambil = min(_bagi, max(0.0, _batas - r["chart_h"]))
                 if _ambil <= 0.02:
                     continue
@@ -2855,6 +2933,19 @@ def alokasi_kolom_bertumpuk(seksi_list: list, col_w_in: float, tinggi_kolom_in: 
                     r["cards_y"] = r.get("cards_y", 0.0) + _ambil
                 r["note_y"] = r.get("note_y", 0.0) + _ambil
                 sisa -= _ambil
+
+    # Pembukuan sisa vs footprint SEBENARNYA. Keduanya harus bertemu; kalau tidak, ruang
+    # kosong di dasar kolom lahir dari selisih itu - bukan dari batas pertumbuhan chart.
+    _footprint = sum(
+        h["kepala"] + h["r"]["chart_h"]
+        + ((0.10 + h["r"]["cards_h"]) if h["r"].get("cards") else 0.0)
+        for h in hasil
+    ) + _DASH_TILE_GAP_IN * max(0, len(hasil) - 1)
+    _selisih = tinggi_kolom_in - _footprint
+    if _selisih > 0.35:
+        logger.info("alokasi kolom: jatah %.2fin, footprint %.2fin, SISA NYATA %.2fin "
+                    "(sisa terbukukan %.2fin) - %d seksi",
+                    tinggi_kolom_in, _footprint, _selisih, sisa, len(hasil))
 
     keluar = []
     for h in hasil:
@@ -6020,6 +6111,11 @@ def _compute_merged_page_extra_notes(category_details: list, report) -> list:
             ratios.append((c["name"], subs[0]["label"], subs[1]["label"], subs[0]["value"] / subs[1]["value"]))
     if len(ratios) >= 2:
         top_name, num_label, den_label, top_ratio = max(ratios, key=lambda r: r[3])
+        # Nama kolom dirapikan sebelum dikutip - tanpa ini kalimatnya mencetak nama mentah
+        # ("rasio nilai_kontrak:durasi_hari"), tidak konsisten dgn seluruh narasi lain yang
+        # sudah memakai rapikan_nama_kolom.
+        num_label = rapikan_nama_kolom(num_label)
+        den_label = rapikan_nama_kolom(den_label)
         notes.append(_L(
             report,
             f"{top_name} mencatat rasio {num_label}:{den_label} tertinggi ({fmt_desimal(top_ratio, 2, False)}) di antara seluruh entitas yang ditampilkan.",
@@ -6035,8 +6131,14 @@ def _compute_merged_page_extra_notes(category_details: list, report) -> list:
         if subs and subs[0].get("target_frac") is not None:
             dev = subs[0]["frac"] - subs[0]["target_frac"]
             deviations.append((c["name"], subs[0]["label"], dev))
-    if len(deviations) >= 2:
+    # Simpangan yang membulat ke 0% bukan temuan: kalimat "menyimpang PALING JAUH ... 0% di
+    # bawah rata-rata" saling bertentangan di dalam dirinya sendiri, dan itu yang terjadi kalau
+    # seluruh entitas praktis sama besar (terukur pada data berkolom kategorikal 2 nilai).
+    # Ambang 0,005 = setengah dari satuan terkecil yang dicetak (1%), jadi yang lolos pasti
+    # tercetak >= 1%.
+    if len(deviations) >= 2 and abs(max(deviations, key=lambda d: abs(d[2]))[2]) >= 0.005:
         top_name, metric_label, top_dev = max(deviations, key=lambda d: abs(d[2]))
+        metric_label = rapikan_nama_kolom(metric_label)
         arah = _L(report, "di atas", "above") if top_dev > 0 else _L(report, "di bawah", "below")
         notes.append(_L(
             report,
@@ -6133,6 +6235,60 @@ def _potong_di_batas_kata(teks: str, maks: int) -> str:
     if spasi >= maks * 0.5:
         potong = potong[:spasi]
     return potong.rstrip(" ,.-") + "…"
+
+
+# Penanda kalimat per JENIS pola (lihat catatan_pola). Dipakai mengenali butir sejenis antar
+# kolom di satu halaman - dari frasanya, bukan dari posisi butir yang bisa bergeser.
+_TANDA_POLA = (
+    ("banding", ("selisih inilah yang membedakannya dari kelompok lain",
+                 "that gap is what sets it apart")),
+    ("konsentrasi", ("x rata-rata", "x the average")),
+    ("korelasi", ("(r=",)),
+    ("waktu", ("paruh kedua", "in the second half")),
+)
+
+
+def _tanda_pola(teks) -> str:
+    """Jenis pola yang melahirkan kalimat ini, atau "" kalau bukan kalimat pola."""
+    t = str(teks or "").lower()
+    for nama, frasa in _TANDA_POLA:
+        if any(f in t for f in frasa):
+            return nama
+    return ""
+
+
+def _ragamkan_pola_halaman(cols: list) -> tuple:
+    """Kurangi keseragaman jenis kalimat antar kolom SATU HALAMAN.
+
+    Dikembalikan (jumlah_ditukar, jumlah_dibuang). Urutan dibaca kiri-ke-kanan: kolom
+    pertama yang memakai sebuah jenis mempertahankannya, kolom berikutnya yang kebetulan
+    memakai jenis yang sama dicoba digeser ke butir lain yang jenisnya belum terpakai.
+    Kalau tidak punya butir lain sama sekali, dibiarkan - bukan dikosongkan."""
+    terpakai, ditukar, dibuang = set(), 0, 0
+    for c in (cols or []):
+        butir = [str(x) for x in (c.get("notes") or []) if str(x or "").strip()]
+        if not butir:
+            continue
+        tanda = [_tanda_pola(b) for b in butir]
+        if not tanda[0] or tanda[0] not in terpakai:
+            if tanda[0]:
+                terpakai.add(tanda[0])
+            continue
+        # butir pertama berjenis yang SUDAH dipakai kolom lain - cari pengganti
+        # Penggantinya HARUS kalimat pola berjenis lain. Butir tanpa jenis di sini adalah
+        # baris cakupan data ("N dari M entitas ...") - itu keterangan teknis yang memang
+        # boleh ada satu baris, tapi menaikkannya ke depan justru membuat seluruh halaman
+        # berisi disclaimer alih-alih temuan. Terukur: percobaan pertama yang membolehkan
+        # butir tanpa jenis membuat 4 dari 5 kolom laporan 195 dipimpin baris cakupan.
+        alt = next((i for i, t in enumerate(tanda) if i and t and t not in terpakai), None)
+        if alt is not None:
+            butir = [butir[alt]] + [b for i, b in enumerate(butir) if i != alt]
+            terpakai.add(tanda[alt])
+            c["notes"] = butir
+            ditukar += 1
+        # Tidak ada pengganti sejenis-lain: DIBIARKAN. Mengulang satu jenis kalimat masih
+        # lebih berguna daripada menggantinya dengan baris cakupan.
+    return ditukar, dibuang
 
 
 def _pack_insight_pages_into_columns(blocks: list, report) -> list:
@@ -6429,6 +6585,14 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
             # keputusan "muat/tidak" tidak bisa meleset dari hasil render.
             if metrik_judul_dashboard(_gabung, 13.333 - 2 * _DASH_MARGIN_X_IN)["n_baris"] <= 2:
                 _judul_kalimat = _gabung
+        # Kurangi pengulangan struktur kalimat antar kolom SEHALAMAN - lihat
+        # _kurangi_pola_seragam. Dilakukan di sini, sesudah kolom dikelompokkan jadi halaman,
+        # karena "berulang" itu sifat halaman: satu kolom memakai tipe 1 sama sekali bukan
+        # masalah, lima kolom memakainya bersamaan barulah terbaca mekanis.
+        _tukar, _buang = _ragamkan_pola_halaman(cols)
+        if _tukar or _buang:
+            logger.info("catatan halaman: %d butir ditukar & %d dibuang supaya jenis kalimat "
+                        "antar %d kolom tidak seragam", _tukar, _buang, len(cols))
         packed.append((group[0], {
             "kind": "management_dashboard_columns",
             "title": _judul_kalimat,
@@ -6984,6 +7148,38 @@ def _chart_labels_tile(tile: dict) -> list:
             or list(t.get("categories") or [])
             or list(t.get("day_labels") or [])
             or ((t.get("chart") or {}).get("categories") or []))
+
+
+def _sidik_jari_tile(tile: dict) -> tuple:
+    """Identitas ISI sebuah tile - dipakai mengenali tile kembar (lihat _buang_tile_kembar)."""
+    t = tile or {}
+    def _n(x):
+        return tuple(str(v) for v in (x or []))
+    return (
+        str(t.get("tile_kind") or ""),
+        _n(t.get("day_labels")), _n(t.get("hour_labels")),
+        _n(t.get("labels")), _n(t.get("categories")),
+        _n([b.get("label") for b in (t.get("bars") or [])]),
+        _n(t.get("axes")),
+        _n(t.get("values")),
+    )
+
+
+def _buang_tile_kembar(tiles: list) -> tuple:
+    """Buang tile yang ISINYA sama persis dengan tile sebelumnya. Kembalikan (sisa, dibuang).
+
+    Dibandingkan atas isi, bukan judul: judul tile ini lahir dari datanya sendiri, jadi dua
+    tile yang berbeda bisa berjudul sama dan sebaliknya. Terukur di laporan 197: dua
+    time_heatmap ber-label identik menempati dua kolom bersebelahan."""
+    lihat, simpan, dibuang = set(), [], []
+    for t in (tiles or []):
+        sj = _sidik_jari_tile(t)
+        if sj in lihat:
+            dibuang.append(str(t.get("title") or t.get("tile_kind")))
+            continue
+        lihat.add(sj)
+        simpan.append(t)
+    return simpan, dibuang
 
 
 def saring_tile_per_section(tiles: list, included) -> tuple:
@@ -9161,6 +9357,12 @@ def build_management_report_blocks(report) -> list[dict]:
         if _tiles_baru:
             # KONTRAK "Include Sections" ditegakkan DI SINI, sesudah perencana memilih bentuk
             # dan sebelum tile dipakai - lihat saring_tile_per_section untuk alasannya.
+            # Kembar dibuang DULU - lihat _buang_tile_kembar. Dikerjakan sebelum penyaring
+            # section supaya jumlah tile yang dihitung kontrak "dicentang = muncul" tidak
+            # ikut menghitung duplikat.
+            _tiles_baru, _kembar = _buang_tile_kembar(_tiles_baru)
+            if _kembar:
+                logger.info("tile kembar dibuang (%d): %s", len(_kembar), _kembar[:4])
             _tiles_baru, _dibuang_sec = saring_tile_per_section(_tiles_baru, included)
             if _dibuang_sec:
                 logger.info("Include Sections: %d tile dibuang krn sectionnya tidak dicentang: %s",

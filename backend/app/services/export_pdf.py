@@ -3971,6 +3971,13 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             _alokasi[id(_c)] = _h
             _y += _footprint + _DASH_TILE_GAP_IN
     for idx, (_kol_i, col, _y_awal, _bawah_seksi) in enumerate(_slot):
+        # BATAS KERAS ke garis kotak Catatan - kembaran penjaga yang sama di export_ppt.py.
+        # Akumulasi footprint seksi bisa melampaui anggaran; tanpa batas ini isi kolom
+        # digambar MELEWATI kotak Catatan dan tertutup olehnya. Di PDF gejalanya lebih halus
+        # daripada di PPTX: tidak ada yang terlihat tabrakan, teksnya cuma lenyap di bawah
+        # kotak. Terukur di laporan uji 2-berkas: 'Lainnya (4)' & '105' tergambar di y377-386
+        # sementara kotak Catatan mulai y356 - tertangkap test_no_two_rendered_texts_overlap.
+        _bawah_seksi = min(_bawah_seksi, avail_h_in)
         x = _kol_i * (col_w + _DASH_COLS_GAP_IN)
         x_isi = x + _DASH_COLS_PAD_IN
         y = _y_awal

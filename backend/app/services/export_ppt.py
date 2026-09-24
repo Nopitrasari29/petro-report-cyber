@@ -1675,7 +1675,8 @@ def add_treemap_shapes(slide, x, y, cx, cy, labels, values, colors=None, text_co
             _set_font(p2, BODY_FONT, Pt(8.5), color=text_color or WHITE)
 
 
-def add_stacked_proportion_bar(slide, x, y, w, values, colors=None, height=Inches(0.5), labels=None):
+def add_stacked_proportion_bar(slide, x, y, w, values, colors=None, height=Inches(0.5),
+                               labels=None, dasar_in: float | None = None):
     """Alternatif visual KETIGA (selain add_native_bar_chart/add_native_doughnut_chart) — satu
     batang penuh dibagi proporsional per kategori (gaya "100% stacked bar").
 
@@ -1688,6 +1689,16 @@ def add_stacked_proportion_bar(slide, x, y, w, values, colors=None, height=Inche
     label_h_in = 0.32 if labels else 0.0
     top_in = Emu(y).inches
     bar_y_in = top_in + label_h_in
+    # Batang digeser ke bawah oleh baris label di atasnya, jadi JEJAKNYA = label + tinggi
+    # batang - lebih tinggi dari `height` yang dioper pemanggil. CACAT NYATA (terukur di data
+    # berkolom kategorikal 2 nilai): pemanggil sudah memotong `height` agar muat di slotnya,
+    # tapi pergeseran label membuat batang tetap berakhir 0,32in di bawah kotak Catatan.
+    # `dasar_in` = garis yang tidak boleh dilewati; batang dipendekkan, bukan digeser naik,
+    # supaya labelnya tetap menempel di atas batangnya sendiri.
+    if dasar_in is not None:
+        _sisa_bar_in = dasar_in - bar_y_in
+        if Emu(height).inches > _sisa_bar_in:
+            height = Inches(max(0.08, _sisa_bar_in))
     cur_x_in = Emu(x).inches
     dd_labels = _dedupe_truncated_labels(labels, 14) if labels else None
     for i, val in enumerate(values):
@@ -4261,6 +4272,11 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
         _bk.line.width = Pt(0.75)
         _no_shadow(_bk)
     x0_in, y0_in = x_in + margin_in, y_in + margin_in
+    # DASAR SLOT: tidak ada elemen chart yang boleh digambar melewati garis ini. Dihitung dari
+    # y_in + h_in (jatah yang diberikan pemanggil), BUKAN dari cy_in yang punya lantai sendiri
+    # - lantai itulah yang membuat batang bertumpuk tetap 0,44in walau slotnya lebih pendek,
+    # lalu menembus kotak Catatan (terukur 0,32in pada data berkolom kategorikal 2 nilai).
+    _dasar_slot_in = y_in + max(0.0, h_in)
     if kind == "kpi_radar":
         add_native_radar_chart(
             slide, Inches(x0_in), Inches(y0_in), Inches(chart_w_in), Inches(chart_w_in),
@@ -4333,7 +4349,14 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
             add_stacked_proportion_bar(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in),
                                        _values, labels=_labels,
                                        colors=_ramp_tema(len(_values)),
-                                       height=Inches(max(0.42, min(0.75, cy_in * 0.22))))
+                                       # Tinggi minimum 0,42in TIDAK boleh melewati slot yang
+                                       # tersedia. CACAT NYATA (terukur di data tipis, kolom
+                                       # kategorikal 2 nilai): slot chart menyusut jadi 0,12in
+                                       # sementara batang tetap digambar 0,44in, menembus
+                                       # kotak Catatan tepat 0,32in.
+                                       height=Inches(min(max(0.42, min(0.75, cy_in * 0.22)),
+                                                         max(0.12, _dasar_slot_in - y0_in - 0.04))),
+                                       dasar_in=_dasar_slot_in)
         else:
             add_native_bar_chart(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in), Inches(cy_in),
                                  _labels, _values, colors=[t["main"]] * len(_values),
@@ -4398,11 +4421,16 @@ def _insight_main_chart(slide, tile: dict, x_in: float, y_in: float, w_in: float
             _swp.line.fill.background()
             _no_shadow(_swp)
     elif kind == "metric_mix":
-        _mm_h = Inches(max(0.44, min(0.8, cy_in * 0.24)))
+        # Tinggi minimum 0,44in dibatasi slot yang tersedia - lihat catatan pada batang
+        # bertumpuk di cabang custom_topic: tanpa batas ini, slot chart yang menyusut tetap
+        # digambar setinggi minimumnya dan menembus kotak Catatan (terukur 0,32in di data
+        # dgn kolom kategorikal 2 nilai).
+        _mm_h = Inches(min(max(0.44, min(0.8, cy_in * 0.24)),
+                       max(0.12, _dasar_slot_in - y0_in - 0.04)))
         _mm_ramp = _ramp_tema(len(tile.get("values") or []))
         add_stacked_proportion_bar(slide, Inches(x0_in), Inches(y0_in), Inches(cx_in),
                                    tile.get("values") or [], labels=tile.get("labels") or [],
-                                   colors=_mm_ramp, height=_mm_h)
+                                   colors=_mm_ramp, height=_mm_h, dasar_in=_dasar_slot_in)
         # BUG NYATA DIPERBAIKI (kembaran export_pdf.py): planner sudah menaruh
         # tile["catatan_lainnya"] saat segmen "Lainnya" sendiri terlalu tipis diberi label
         # DI ATAS batang - cabang ini TIDAK PERNAH membacanya, keterangannya dibuang diam2 &
@@ -4675,11 +4703,16 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
             # Penjaga yang sama dgn chart & kartu: strip KPI seksi kedua bisa jatuh di bawah
             # batas kotak Catatan. Diputuskan sebelum digambar, bukan sesudah.
             if y + _DASH_COLS_KPI_H_IN > _bawah_seksi + 0.02:
+                # DILEWATI berarti tidak memakai ruang. CACAT NYATA: sebelumnya tinggi strip
+                # tetap dikurangkan dari `y` walau stripnya tidak digambar, jadi chart di
+                # bawahnya kehabisan tempat dan ikut dilewati - satu elemen yang tidak muat
+                # menyeret elemen lain yang sebenarnya masih muat. Terukur di laporan uji
+                # 2-berkas: "chart kolom dilewati: sisa ruang -0,17in".
                 logger.info("strip KPI kolom dilewati: butuh sampai %.2fin, batas seksi %.2fin",
                             y + _DASH_COLS_KPI_H_IN, _bawah_seksi)
-                kpi = []
-            _insight_kpi_row(slide, kpi, x_isi, col_w_isi, _DASH_COLS_KPI_H_IN, y, theme=ctx.theme)
-            y += _DASH_COLS_KPI_H_IN + 0.10
+            else:
+                _insight_kpi_row(slide, kpi, x_isi, col_w_isi, _DASH_COLS_KPI_H_IN, y, theme=ctx.theme)
+                y += _DASH_COLS_KPI_H_IN + 0.10
 
 
         # Lantai tinggi DIHAPUS (lihat catatan panjang di scratchpad/patch_body_h): grid kartu
@@ -4754,7 +4787,10 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 # Muat atau tidak, DIPUTUSKAN sebelum digambar - aturan yang sama dgn kotak
                 # catatan kolom di atas. Tanpa ini strip kartu seksi kedua tergambar menembus
                 # kotak Catatan halaman (terukur: laporan 195 slide 4, 5 shape menembus).
-                _ruang_kartu = _bawah_seksi - y - 0.02
+                # Margin 0,06in (bukan 0,02): baris sub-item di dalam kartu punya tinggi
+                # sendiri yang dibulatkan saat digambar, dan sisa 0,02in terbukti masih
+                # menyisakan luberan 0,04in ke kotak Catatan pada data tipis.
+                _ruang_kartu = _bawah_seksi - y - 0.06
                 if cards_h > _ruang_kartu:
                     if _ruang_kartu >= 0.30:
                         logger.info("kartu kolom dipepatkan: %.2fin -> %.2fin", cards_h, _ruang_kartu)
