@@ -4119,6 +4119,29 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             # kotak selebar halaman di dasar (lihat akhir fungsi). Dua jalur menggambar
             # catatan yang sama membuat kotaknya bertumpuk (terukur: uji tumpang-tindih
             # menemukan dua "CATATAN:" persis bertindih di laporan 186/187/189).
+            # PENJAGA BATAS - kembaran aturan yang sama di export_ppt.py.
+            # CACAT NYATA (terukur pada data 2-berkas): kursor kolom bisa melewati dasar
+            # seksinya sendiri sebelum chart ditempatkan - y=4,075in sementara batas seksi
+            # 3,921in dan kotak Catatan mulai 3,981in. Chart lalu digambar DI BAWAH kotak
+            # Catatan dan tertutup olehnya: isinya ada, tapi tidak pernah terlihat pembaca.
+            # Gejalanya berbeda dari PPTX (di sana terlihat menabrak), jadi lama tidak
+            # ketahuan - yang menangkapnya uji tumpang-tindih level span.
+            # Dipepatkan dulu; dilewati HANYA kalau ruang tersisa terlalu sempit untuk
+            # digambar sama sekali. Sengaja TIDAK memakai overflow:hidden - keputusan
+            # sebelumnya membuangnya justru supaya salah-hitung tinggi terlihat, bukan
+            # memotong label diam-diam.
+            _ruang_chart = _bawah_seksi - y
+            if _chart_h > _ruang_chart:
+                if _ruang_chart >= 0.30:
+                    logger.info("chart kolom dipepatkan (PDF): %.2fin -> %.2fin (batas seksi "
+                                "%.2fin)", _chart_h, _ruang_chart, _bawah_seksi)
+                    _chart_h = _ruang_chart
+                else:
+                    logger.info("chart kolom dilewati (PDF): sisa ruang %.2fin di bawah 0,30in "
+                                "(y=%.2f, batas seksi %.2f)", _ruang_chart, y, _bawah_seksi)
+                    _tile = None
+                    _chart_h = 0.0
+        if _tile:
             inner, _nc = _insight_main_chart_html(
                 _tile, ctx, col_w_isi, _chart_h, notes=None, report=ctx.report,
             )
