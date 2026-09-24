@@ -3913,7 +3913,13 @@ def _nama_muat(labels: list, kolom_w_in: float | None = None) -> bool:
 
 
 _SIG_TGL_RE = re.compile(r"tanggal|date|waktu|time|periode|bulan", re.I)
-_SIG_ID_RE = re.compile(r"^(no|nomor|id|kode|code|index|urut)([_\s.-]|$)", re.I)
+# Kata kunci identitas dikenali di AWAL ("No Urut", "ID Aset") MAUPUN di AKHIR nama
+# ("CR ID", "Ticket ID", "PM ID", "Batch No"). Versi berjangkar-awal saja meloloskan
+# nomor tiket jadi sumbu kategori - lihat scratchpad/patch_identitas. Pemisah sebelum
+# kata kunci akhir WAJIB, supaya kata yang kebetulan berakhiran "id"/"no" (mis. "Bid",
+# "Ukuran Bruto") tidak ikut tertangkap.
+_SIG_ID_RE = re.compile(r"^(no|nomor|id|kode|code|index|urut)([_\s.-]|$)"
+                        r"|[_\s.-](no|nomor|id|kode|code|index|urut)$", re.I)
 
 
 def _kolom_identifier(s) -> bool:
@@ -4415,7 +4421,13 @@ def bentuk_yang_cocok(sig: dict) -> list:
 
 
 _SIG_TGL_RE = re.compile(r"tanggal|date|waktu|time|periode|bulan", re.I)
-_SIG_ID_RE = re.compile(r"^(no|nomor|id|kode|code|index|urut)([_\s.-]|$)", re.I)
+# Kata kunci identitas dikenali di AWAL ("No Urut", "ID Aset") MAUPUN di AKHIR nama
+# ("CR ID", "Ticket ID", "PM ID", "Batch No"). Versi berjangkar-awal saja meloloskan
+# nomor tiket jadi sumbu kategori - lihat scratchpad/patch_identitas. Pemisah sebelum
+# kata kunci akhir WAJIB, supaya kata yang kebetulan berakhiran "id"/"no" (mis. "Bid",
+# "Ukuran Bruto") tidak ikut tertangkap.
+_SIG_ID_RE = re.compile(r"^(no|nomor|id|kode|code|index|urut)([_\s.-]|$)"
+                        r"|[_\s.-](no|nomor|id|kode|code|index|urut)$", re.I)
 
 
 # Kosakata ordinal yang URUTANNYA BERMAKNA. Disusun dari pengukuran, bukan dikarang: dari 85
