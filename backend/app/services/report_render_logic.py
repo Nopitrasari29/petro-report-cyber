@@ -1216,9 +1216,15 @@ def catatan_agregat(items: list, n_digambar: int, unit: str, report,
     if 0 < _n80 < _pop_n:
         # IMPLIKASI, bukan sebab yang dikarang: apakah volume TERPUSAT atau TERSEBAR adalah
         # kesimpulan langsung dari rasio _n80/_pop_n itu sendiri - tidak ada informasi luar
-        # yang dipakai. Ambang sepertiga: kalau <=1/3 entitas sudah menutup 80% volume,
-        # sebarannya timpang; kalau perlu lebih dari itu, relatif merata.
-        _terpusat = _n80 <= max(1, _pop_n // 3)
+        # yang dipakai.
+        #
+        # Pembandingnya SEBARAN RATA, bukan pecahan pilihan sendiri: kalau volume terbagi
+        # rata, menutup 80% volume butuh ~80% entitas. Jadi begitu separuh entitas atau
+        # kurang sudah cukup, volumenya terpusat. Versi sebelumnya memakai `_pop_n // 3`
+        # dan pembagian bulatnya menipu - utk _pop_n=5 ambangnya jatuh ke 1 entitas,
+        # sehingga "2 dari 5 entitas mencakup 100,0%" (3 sisanya NOL) tetap dilaporkan
+        # "tersebar cukup merata". Terbaca di render laporan 195.
+        _terpusat = _n80 <= 0.5 * _pop_n
         _imp_id = (" Sebagian besar volume tertahan di kelompok kecil ini, sehingga perubahan "
                    "pada mereka paling besar pengaruhnya ke total."
                    if _terpusat else
@@ -1241,7 +1247,13 @@ def catatan_agregat(items: list, n_digambar: int, unit: str, report,
     med = statistics.median(_pop)
     if _pop_n >= 5 and max(_pop) > min(_pop):
         # IMPLIKASI dari rasio rentang thd median - dihitung, bukan diasumsikan.
-        _lebar = med > 0 and (max(_pop) - min(_pop)) / med >= 2
+        #
+        # Median 0 ditangani TERPISAH, tidak ikut jatuh ke cabang "rapat". `med > 0` semula
+        # cuma penjaga bagi-nol, tapi efek sampingnya: setiap sebaran bermedian 0 dilaporkan
+        # "jaraknya rapat" - termasuk "median 0, rentang 0-11" di laporan 195. Median 0
+        # artinya separuh entitas tidak punya volume sama sekali, jadi begitu puncaknya di
+        # atas nol jaraknya lebar menurut definisi, bukan rapat.
+        _lebar = ((max(_pop) - min(_pop)) / med >= 2) if med > 0 else max(_pop) > 0
         _imp_id = (" Jaraknya lebar, jadi angka rata-rata menutupi perbedaan antar entitas "
                    "dan median lebih mewakili kondisi umum."
                    if _lebar else
