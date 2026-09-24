@@ -6853,6 +6853,15 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
         if len(cols) == 1:
             cols[0]["notes"] = [n for n in (cols[0].get("notes") or [])
                                 if not _note_is_readable_from_visual(n, cols[0])]
+            # Dedup MAKNA berlaku di sini juga. Halaman bertopik tunggal tidak melewati
+            # kumpulkan_catatan_halaman (yang cuma dipakai kotak catatan halaman berkolom),
+            # jadi butir yang mengulang fakta butir lain dari sisi berlawanan tetap lolos -
+            # terukur di laporan 195/197 sesudah pengelompokan koherensi memindahkan topik
+            # "Peta Distribusi Prioritas per Severity" ke halamannya sendiri.
+            cols[0]["notes"], _kembar1 = _buang_fakta_kembar(cols[0]["notes"])
+            if _kembar1:
+                logger.info("catatan topik tunggal: %d butir dibuang krn mengulang fakta "
+                            "butir lain: %s", len(_kembar1), [k[:70] for k in _kembar1[:2]])
             packed.append((group[0], cols[0]))
             continue
         for c in cols:
