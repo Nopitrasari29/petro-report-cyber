@@ -777,22 +777,32 @@ def nama_kolom_pecah(nama) -> bool:
     return False
 
 
-def kolom_tak_layak_kutip(df) -> bool:
-    """Seluruh header dataset ini tidak layak dikutip di narasi.
+def kolom_tak_layak_kutip(df) -> frozenset:
+    """Nama kolom mana saja yang tidak layak dikutip di narasi.
 
-    Satu kolom yang jelas terpecah sudah cukup jadi bukti: pemecahnya bekerja pada SELURUH
-    header sekaligus, jadi nama yang kebetulan terlihat wajar ("Tang Gal", "Subkat Egori")
-    adalah hasil pemecahan yang sama - cuma tidak meninggalkan potongan pendek. Memilih
-    per-nama akan meloloskan justru yang paling menyesatkan."""
+    DULU menilai seluruh dataset sekaligus: satu kolom terpecah membuat SEMUA kolom ikut
+    disensor, dengan alasan pemecahnya bekerja pada seluruh header sehingga nama yang
+    kebetulan terlihat wajar pun sebenarnya korban pemecahan yang sama.
+
+    Alasan itu gugur setelah penggalan wrap disambung di hulu (parser/wrap_repair) sebelum
+    data sampai ke sini - nama yang masih terpecah kini kasus satuan, bukan gejala kerusakan
+    menyeluruh. Terukur di laporan 195/197: 10 dari 11 nama pulih, dan satu sisanya
+    ('Statu s', sengaja tidak disambung karena akan bertabrakan dgn kolom 'Status' lain)
+    membuat 'Ticket ID', 'Kategori', 'Severity', 'Downtime' ikut disensor jadi "salah satu
+    kategori" - padahal semuanya sudah benar. Akibatnya 88,9% kalimat pola memakai frasa
+    generik; frasa itu jaring pengaman, bukan jawaban yang paling sering muncul."""
     try:
-        return any(nama_kolom_pecah(c) for c in list(df.columns))
+        return frozenset(c for c in list(df.columns) if nama_kolom_pecah(c))
     except Exception:
-        return False
+        return frozenset()
 
 
-def sebut_kolom(nama, tak_layak: bool, generik_id: str, generik_en: str = "") -> str:
-    """Nama kolom untuk DIKUTIP di kalimat - atau istilah generik kalau namanya tidak layak."""
-    if tak_layak:
+def sebut_kolom(nama, tak_layak, generik_id: str, generik_en: str = "") -> str:
+    """Nama kolom untuk DIKUTIP di kalimat - atau istilah generik kalau namanya tidak layak.
+
+    `tak_layak` adalah HIMPUNAN nama yang tidak layak (lihat kolom_tak_layak_kutip); bentuk
+    bool lama tetap diterima supaya pemanggil yang belum ikut berubah tidak salah arti."""
+    if tak_layak is True or (nama in tak_layak if hasattr(tak_layak, "__contains__") else bool(tak_layak)):
         return (generik_en or generik_id) if render_is_en() else generik_id
     return rapikan_nama_kolom(nama)
 
