@@ -2415,6 +2415,99 @@ def note_box_height_in(w_in: float, butir) -> float:
     return tinggi + 0.1
 
 
+_RE_BAGIAN_DARI = re.compile(r"(\d[\d.,]*)\s*(?:dari|of)\s+(\d[\d.,]*)", re.I)
+_RE_ANGKA = re.compile(r"\d[\d.,]*")
+
+
+def _angka_butir(t: str) -> float | None:
+    try:
+        return float(str(t).replace(".", "").replace(",", "."))
+    except Exception:
+        return None
+
+
+def _subjek_butir(teks: str) -> str:
+    """Awalan subjek butir ("Durasi Hari per Vendor: ") - penanda topik yang dibicarakan."""
+    t = str(teks or "")
+    return t.split(": ", 1)[0].strip().lower() if ": " in t[:60] else ""
+
+
+def _fakta_bagian(teks: str) -> set:
+    """Pasangan (bagian, keseluruhan) yang disebut butir ini, mis. "2 dari 5 entitas"."""
+    keluar = set()
+    for m in _RE_BAGIAN_DARI.finditer(str(teks or "")):
+        a, b = _angka_butir(m.group(1)), _angka_butir(m.group(2))
+        if a is not None and b is not None and b > 0 and a <= b:
+            keluar.add((a, b))
+    return keluar
+
+
+# Penanda bahwa sebuah butir menyatakan porsi DEGENERAT - satu pihak memegang seluruhnya
+# atau tidak memegang apa pun. Hanya di situ jumlah yang saling melengkapi membuktikan
+# pengulangan; tanpanya dua pembilang yang kebetulan berjumlah penyebut bisa saja menggambarkan
+# dua partisi yang sama sekali berbeda (lihat _fakta_setara).
+# "seluruh" hanya dihitung kalau diikuti ANGKA ("menyumbang seluruh 16"). Frasa biasa
+# "dari seluruh data" bukan pernyataan porsi degenerat - memasukkannya membuat butir
+# cakupan chart yang sah ikut terbuang (terukur: "7 dari 13 menutup 80,4%" vs "chart
+# menampilkan 6 dari 13, 7 sisanya 27,4%" - dua partisi berbeda, sempat tergabung).
+_RE_PORSI_PENUH = re.compile(
+    r"(?<![\d,.])100(?:[.,]0+)?\s*%|(?<![\d,.])0(?:[.,]0+)?\s*%"
+    r"|\bseluruh\s+\d|\ball of the\s+\d|\bentire\s+\d"
+    r"|\btercatat 0\b|\brecorded 0\b", re.I)
+
+
+def _porsi_degenerat(teks: str) -> bool:
+    return bool(_RE_PORSI_PENUH.search(str(teks or "")))
+
+
+def _fakta_setara(a: set, b: set) -> bool:
+    """Ada fakta yang SAMA, atau sama tapi dihitung dari ujung berlawanan (2/5 vs 3/5)."""
+    for x, n in a:
+        for y, m in b:
+            if n == m and (abs(x - y) < 1e-9 or abs(x + y - n) < 1e-9):
+                return True
+    return False
+
+
+def _buang_fakta_kembar(butir: list) -> tuple:
+    """Buang butir yang mengulang fakta butir lain dari sisi berlawanan. -> (sisa, dibuang).
+
+    Dibandingkan atas FAKTA, bukan teks: dua butir bisa tidak punya satu kata pun yang sama
+    dan tetap menyatakan hal yang sama ("2 dari 5 memegang seluruhnya" vs "3 dari 5 bernilai
+    nol"). Hanya butir dgn SUBJEK yang sama yang dibandingkan - angka yang kebetulan mirip
+    tentang topik berbeda adalah dua fakta berbeda.
+
+    Yang dipertahankan butir yang menyebut lebih banyak angka berbeda: dari dua cara
+    menyampaikan fakta yang sama, yang membawa lebih banyak besaran lebih tidak tergantikan.
+    """
+    simpan, dibuang = [], []
+    for b in butir:
+        fakta = _fakta_bagian(b)
+        if not fakta:
+            simpan.append(b)
+            continue
+        subjek = _subjek_butir(b)
+        # Syarat degenerat DIPERIKSA di sini, bukan di _fakta_setara: bukti pengulangan
+        # butuh DUA hal - pembilang yang cocok/melengkapi DAN salah satu sisi yang menyatakan
+        # porsi penuh/nol. Tanpa syarat kedua, "7 dari 13 menutup 80,4%" dan "chart
+        # menampilkan 6 dari 13, 7 sisanya 27,4%" ikut terbuang padahal dua partisi berbeda.
+        kena = next((i for i, s in enumerate(simpan)
+                     if _subjek_butir(s) == subjek
+                     and _fakta_setara(fakta, _fakta_bagian(s))
+                     and (_porsi_degenerat(b) or _porsi_degenerat(s))),
+                    None)
+        if kena is None:
+            simpan.append(b)
+            continue
+        _kaya = lambda t: len(set(_RE_ANGKA.findall(str(t))))
+        if _kaya(b) > _kaya(simpan[kena]):
+            dibuang.append(simpan[kena])
+            simpan[kena] = b
+        else:
+            dibuang.append(b)
+    return simpan, dibuang
+
+
 def kumpulkan_catatan_halaman(catatan_per_kolom: list) -> list:
     """Gabungkan catatan SELURUH kolom untuk satu kotak catatan halaman (A5).
 
@@ -2463,6 +2556,12 @@ def kumpulkan_catatan_halaman(catatan_per_kolom: list) -> list:
             kalimat_terlihat.update(_inti(x) for x in _sisa)
             terlihat.add(kunci)
             hasil.append(" ".join(_sisa))
+    # Dedup MAKNA dikerjakan terakhir, sesudah dedup teks: yang dicari di sini justru butir
+    # yang teksnya berbeda sama sekali tapi faktanya sama - lihat _buang_fakta_kembar.
+    hasil, _kembar = _buang_fakta_kembar(hasil)
+    if _kembar:
+        logger.info("catatan halaman: %d butir dibuang krn mengulang fakta butir lain: %s",
+                    len(_kembar), [k[:70] for k in _kembar[:3]])
     return hasil
 
 
