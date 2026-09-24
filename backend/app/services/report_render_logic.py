@@ -817,6 +817,16 @@ _LEBAR_PUNCAK_DASAR = 4.0
 _NILAI_KOSONG = {"", "none", "nan", "nat", "null", "-", "n/a", "na"}
 
 
+def _baris_terisi(df, kolom: str):
+    """Index baris yang GENUINELY punya nilai di kolom ini (bukan kosong/NaN/"-").
+
+    Dipakai untuk mengetahui kolom mana yang berasal dari TABEL SUMBER yang sama: di berkas
+    yang memuat beberapa tabel sekaligus, kolom milik tabel berbeda tidak pernah terisi di
+    baris yang sama. Memakai daftar _NILAI_KOSONG yang sama dgn _kelompok_nyata."""
+    kol = df[kolom].astype(str).str.strip()
+    return df.index[~kol.str.lower().isin(_NILAI_KOSONG)]
+
+
 def _kelompok_nyata(df, kat: str):
     """Baris yang GENUINELY punya nilai kategori - dipakai sebelum groupby.
 
@@ -5272,7 +5282,19 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                     f"{_num(g[mb].sum())} across the top {len(g)} {kat}.")}
     if bentuk == "matriks" and len(pasangan) == 2:
         a, b = pasangan
-        ct = pd.crosstab(df[a].astype(str), df[b].astype(str))
+        # HANYA baris yang punya KEDUA nilai. astype(str) mengubah sel kosong jadi kategori
+        # bernama "None", jadi ketidakhadiran ikut dihitung - dan di berkas berisi beberapa
+        # tabel sumber, sel "None x None" justru jadi sel terpadat. Terukur di laporan 195:
+        # panel "Hasil x Status" ber-caption "Sel terpadat None x None dengan 62 data dari 88".
+        # Kalau irisannya terlalu tipis, panelnya TIDAK dibangun: menyilangkan dua kolom yang
+        # hampir tidak pernah muncul bersama (mis. "Severity x Risiko" - incident vs change
+        # request, irisan nol baris) tidak menggambarkan apa pun.
+        _pakai = _baris_terisi(df, a).intersection(_baris_terisi(df, b))
+        if len(_pakai) < _POLA_MIN_BARIS:
+            logger.info("silang dimensi dilewati: %r x %r cuma beririsan %d baris (< %d)",
+                        a, b, len(_pakai), _POLA_MIN_BARIS)
+            return None
+        ct = pd.crosstab(df.loc[_pakai, a].astype(str), df.loc[_pakai, b].astype(str))
         if ct.empty:
             return None
         ct = ct.iloc[:8, :8]
