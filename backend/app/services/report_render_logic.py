@@ -3882,7 +3882,8 @@ def subjek_seksi(sec: dict, kolom_tersedia: list) -> set:
     return keluar
 
 
-def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | None = None) -> tuple:
+def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | None = None,
+                          gaya_disukai: set | None = None) -> tuple:
     """Seksi memilih SUBJEK, tanda tangan memilih BENTUK.
 
     KOREKSI USER atas instruksinya sendiri: melarang is_included menentukan BENTUK chart itu
@@ -3905,8 +3906,11 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
     laporan = []
 
     def _ambil(calon, judul):
+        _suka = gaya_disukai or set()
         for k in calon:
-            k["_skor"] = k["kekuatan"] + (_BOBOT_VARIASI if k["bentuk"] not in dipakai_bentuk else 0.0)
+            k["_skor"] = (k["kekuatan"]
+                          + (_BOBOT_VARIASI if k["bentuk"] not in dipakai_bentuk else 0.0)
+                          + (_BOBOT_PRESET if k["bentuk"] in _suka else 0.0))
         calon.sort(key=lambda k: (-k["_skor"], str(k["pasangan"])))
         for k in calon:
             if frozenset(k["pasangan"]) in terpakai_pasangan:
@@ -5172,6 +5176,12 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
 _PAKAI_PEMILIH_TANDA_TANGAN = True
 
 _BOBOT_VARIASI = 0.6
+
+# Bonus untuk kandidat yang BENTUKNYA sesuai style preset pilihan user. Sengaja sebesar
+# _BOBOT_VARIASI: preset berhak menentukan pemenang di antara kandidat yang sama-sama layak,
+# tapi tidak berhak mengalahkan kandidat yang jauh lebih kuat - chart harus tetap cocok dgn
+# datanya. Kandidat yang dinilai pun hanya yang sudah lolos _AMBANG_KEKUATAN.
+_BOBOT_PRESET = 0.6
 
 # AMBANG KEKUATAN MINIMUM - kandidat di bawah ini tidak digambar.
 #
@@ -9170,7 +9180,16 @@ def build_management_report_blocks(report) -> list[dict]:
     _lap_seksi: list = []
     _gagal: list = []
     if _PAKAI_PEMILIH_TANDA_TANGAN:
-        _keputusan, _lap_seksi = rencana_chart_terarah(parsed_data, dynamic_sections_all)
+        # Gaya pilihan user (style_preset -> visual_style) ikut membobot pemilihan bentuk.
+        # Hanya kalau user memilih preset EKSPLISIT: "auto" berarti menyerahkan sepenuhnya ke
+        # tanda tangan data, dan laporan lama tanpa preset tidak boleh berubah bentuk.
+        _gaya_user = None
+        if str(getattr(report, "style_preset", "") or "").strip().lower() in STYLE_PRESETS:
+            _vs_user = get_visual_style(report) or {}
+            _gaya_user = {str(_vs_user.get(k) or "").strip()
+                          for k in ("category_style", "status_style")} - {""}
+        _keputusan, _lap_seksi = rencana_chart_terarah(parsed_data, dynamic_sections_all,
+                                                       gaya_disukai=_gaya_user)
         _dibangun = [(k, bangun_tile(parsed_data, k, report)) for k in _keputusan]
         for _k, _t in _dibangun:
             if not _t:
