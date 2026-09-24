@@ -6552,6 +6552,93 @@ def _ragamkan_pola_halaman(cols: list) -> tuple:
     return ditukar, dibuang
 
 
+# Seberapa besar dua jejak baris harus bertindih supaya topiknya boleh sehalaman. Diukur
+# sbg |A irisan B| / min(|A|,|B|) - "sebagian besar baris yang sama", bukan Jaccard, supaya
+# topik bertabel kecil tetap bisa menemani topik bertabel besar dari tabel yang sama.
+# Di data nyata angkanya hampir selalu 1,0 (tabel sama) atau 0,0 (tabel beda), jadi ambang
+# di mana pun antara keduanya berperilaku sama; 0,5 dipilih sbg arti harfiah "sebagian besar".
+_KOHERENSI_MIN_IRISAN = 0.5
+
+
+def _kolom_topik(blok: dict) -> list:
+    """Nama kolom yang dipakai satu topik, sejauh yang dibawa tile-nya."""
+    t = blok.get("main_chart_tile") or {}
+    nama = [t.get("cat_col_name"), t.get("met_col_name"),
+            t.get("label_a"), t.get("label_b"), t.get("x_label")]
+    return [str(x) for x in nama if x and str(x).strip()]
+
+
+# Seberapa banyak nilai yang ditampilkan topik harus ditemukan di sebuah kolom sebelum
+# kolom itu disebut sumbernya. Tinggi dgn sengaja: salah menebak kolom sumber lebih buruk
+# drpd tidak tahu sama sekali, karena tebakan yang salah memecah halaman yang sebenarnya utuh.
+_KOHERENSI_MIN_COCOK_NILAI = 0.8
+
+
+def _nilai_tampil_topik(blok: dict) -> list:
+    """Nama entitas yang BENAR-BENAR digambar topik ini - dipakai melacak kolom asalnya."""
+    t = blok.get("main_chart_tile") or {}
+    nilai = [d.get("raw_name") or d.get("name") for d in (blok.get("category_details") or [])]
+    for kunci in ("labels", "categories", "day_labels", "hour_labels"):
+        nilai.extend(t.get(kunci) or [])
+    nilai.extend(b.get("label") for b in (t.get("bars") or []))
+    return [str(x).strip() for x in nilai if str(x or "").strip()]
+
+
+def _kolom_dari_nilai(blok: dict, df) -> list:
+    """Tebak kolom sumber sebuah topik dari NILAI yang ditampilkannya, bukan dari judulnya."""
+    nilai = {v.lower() for v in _nilai_tampil_topik(blok)}
+    if len(nilai) < 2:
+        return []
+    terbaik, skor_terbaik = None, 0.0
+    for c in getattr(df, "columns", []):
+        try:
+            punya = {str(v).strip().lower() for v in df[c].dropna().unique()}
+        except Exception:
+            continue
+        skor = len(nilai & punya) / len(nilai)
+        if skor > skor_terbaik:
+            terbaik, skor_terbaik = c, skor
+    return [terbaik] if terbaik is not None and skor_terbaik >= _KOHERENSI_MIN_COCOK_NILAI else []
+
+
+def _jejak_topik(blok: dict, df) -> frozenset | None:
+    """Baris tempat data topik ini genuinely berada, atau None kalau tidak diketahui."""
+    kol = [c for c in _kolom_topik(blok) if c in getattr(df, "columns", [])]
+    if not kol:
+        # Tile tidak membawa nama kolom (mis. blok peringkat entitas) - lacak dari nilainya.
+        kol = _kolom_dari_nilai(blok, df)
+    if not kol:
+        return None
+    jejak = None
+    for c in kol:
+        baris = frozenset(_baris_terisi(df, c))
+        jejak = baris if jejak is None else (jejak & baris)
+    return jejak or None
+
+
+def _topik_nyambung(a, b) -> bool:
+    """Dua jejak baris dianggap satu topik besar kalau sebagian besarnya bertindih."""
+    if a is None or b is None:
+        return True                       # tidak cukup informasi - jangan memecah halaman
+    kecil = min(len(a), len(b))
+    return bool(kecil) and (len(a & b) / kecil) >= _KOHERENSI_MIN_IRISAN
+
+
+def _kelompok_topik_nyambung(blok_urut: list, df) -> list:
+    """Pecah deret topik jadi kelompok yang anggotanya saling berhubungan.
+
+    Urutan aslinya dipertahankan; topik baru ikut kelompok berjalan hanya kalau nyambung dgn
+    SEMUA anggotanya - "nyambung dgn salah satu" bisa merantai A-B-C padahal A dan C asing."""
+    kelompok: list = []
+    for b in blok_urut:
+        jejak = _jejak_topik(b, df)
+        if kelompok and all(_topik_nyambung(jejak, j) for _, j in kelompok[-1]):
+            kelompok[-1].append((b, jejak))
+        else:
+            kelompok.append([(b, jejak)])
+    return [[b for b, _ in k] for k in kelompok]
+
+
 def _pack_insight_pages_into_columns(blocks: list, report) -> list:
     """PERMINTAAN USER (perombakan kepadatan): berhenti membuat 1 halaman utk 1 visual.
     Halaman insight berturut-turut dikemas jadi SATU halaman berisi 2-3 kolom topik.
@@ -6726,7 +6813,23 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
     _n_kol = _DASH_TOPICS_PER_PAGE          # kolom per halaman (lebar), bukan seksi per halaman
     _col_w = (13.333 - 2 * _DASH_MARGIN_X_IN - _DASH_COLS_GAP_IN * (_n_kol - 1)) / _n_kol
     _is_en = is_english(report)
-    _hal_kolom = _pack_tiles_into_columns([blocks[i] for i in idxs], _col_w, _n_kol, _is_en)
+    # KOHERENSI DULU, BARU KEPADATAN: topik dikelompokkan menurut keterkaitan datanya,
+    # lalu tiap kelompok dikemas SENDIRI-SENDIRI. Halaman tidak pernah memuat topik dari
+    # kelompok berbeda, walau ruangnya masih sisa - lihat _kelompok_topik_nyambung.
+    try:
+        _df_koh = pd.DataFrame(get_parsed_data(report) or [])
+    except Exception:
+        _df_koh = pd.DataFrame()
+    _kelompok = (_kelompok_topik_nyambung([blocks[i] for i in idxs], _df_koh)
+                 if not _df_koh.empty else [[blocks[i] for i in idxs]])
+    if len(_kelompok) > 1:
+        logger.info("koherensi topik: %d topik dipecah jadi %d kelompok tak berhubungan %s",
+                    len(idxs), len(_kelompok),
+                    [[str(b.get("judul_pendek") or b.get("title"))[:26] for b in k]
+                     for k in _kelompok])
+    _hal_kolom = []
+    for _k in _kelompok:
+        _hal_kolom.extend(_pack_tiles_into_columns(_k, _col_w, _n_kol, _is_en))
     # kembali ke indeks blok supaya sisa fungsi ini tidak berubah bentuk
     _idx_of = {id(blocks[i]): i for i in idxs}
     buckets = [[_idx_of[id(c)] for kol in hal for c in kol] for hal in _hal_kolom]
