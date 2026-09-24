@@ -842,6 +842,63 @@ def _kolom_nomor_urut(seri) -> bool:
     return awal in (0, 1) and int(bulat.max()) == awal + n - 1
 
 
+# ---- Ambang KALIMAT PENUTUP pola ------------------------------------------------------
+# Ekor tiap kalimat pola dipilih dari BESARAN yang sudah dihitung di kalimat itu sendiri -
+# bukan dirotasi menurut posisi butir. Ambangnya = tertil (q33/q67) dari sebaran NYATA besaran
+# yang benar-benar sampai ke kalimat Catatan pada 4 laporan produksi (192/194/195/197) + 2
+# dataset tipis, diukur dgn menjalankan pipeline lalu membaca angkanya kembali dari kalimat
+# jadi. Rekaman ukurannya:
+#   gap tipe 1   (n=12): 0,12 0,12 0,14 0,31 0,50 0,60 0,76 0,76 0,85 0,86 0,94 0,96
+#   rasio tipe 2 (n=16): 1,7 1,7 1,8 2,1 2,2 2,3 2,4 2,7 2,7 2,8 2,9 3,3 3,5 32 32 32
+# Dipakai tertil, bukan angka bulat yang "kelihatan masuk akal": ambang karangan biasanya
+# membuat salah satu ekor tidak pernah muncul di data nyata, dan kalimatnya kembali seragam.
+_EKOR_BANDING_SEDANG, _EKOR_BANDING_BESAR = 0.50, 0.76
+_EKOR_KONSENTRASI_SEDANG, _EKOR_KONSENTRASI_BESAR = 2.3, 2.9
+
+
+def _ekor_banding(report, ien, sel, pct, dasar, nilai, kat_id, kat_en) -> str:
+    """Penutup pola 1, dipilih dari LEBAR GAP-nya sendiri. Lihat _EKOR_BANDING_*."""
+    _pp = fmt_desimal(sel * 100, 1, ien)
+    if sel >= _EKOR_BANDING_BESAR and dasar > 0:
+        _kali = fmt_desimal(pct / dasar, 1, ien)
+        return _L(report,
+                  f"selisih {_pp} poin, sekitar {_kali}x kelaziman {kat_id}, membuat "
+                  f"'{nilai}' jadi ciri khasnya, bukan sekadar kecenderungan.",
+                  f"a {_pp}-point gap, about {_kali}x the norm across {kat_en}, makes "
+                  f"'{nilai}' a defining trait rather than a tendency.")
+    if sel >= _EKOR_BANDING_SEDANG:
+        return _L(report,
+                  f"selisih {_pp} poin terlalu lebar untuk disebut ragam biasa antar {kat_id}.",
+                  f"a {_pp}-point gap is too wide to pass as ordinary variation across {kat_en}.")
+    _luar = fmt_desimal(max(0.0, 1 - pct) * 100, 1, ien)
+    return _L(report,
+              f"selisih {_pp} poin sudah terbaca, tapi {_luar}% barisnya tetap di luar "
+              f"'{nilai}'.",
+              f"the {_pp}-point gap registers, yet {_luar}% of its rows still sit outside "
+              f"'{nilai}'.")
+
+
+def _ekor_konsentrasi(report, ien, rasio, atas, total, kedua, kat_id, kat_en) -> str:
+    """Penutup pola 2, dipilih dari TINGGI RASIO-nya sendiri. Lihat _EKOR_KONSENTRASI_*."""
+    if rasio >= _EKOR_KONSENTRASI_BESAR:
+        return _L(report,
+                  f"untuk menyamainya, rata-rata {kat_id} lain harus naik "
+                  f"{fmt_desimal((rasio - 1) * 100, 0, ien)}%.",
+                  f"to match it, the average of the other {kat_en} would have to rise "
+                  f"{fmt_desimal((rasio - 1) * 100, 0, ien)}%.")
+    if rasio >= _EKOR_KONSENTRASI_SEDANG and total > 0:
+        return _L(report,
+                  f"sendirian ia memegang {fmt_desimal(atas / total * 100, 1, ien)}% dari "
+                  f"seluruh angka yang dihitung.",
+                  f"on its own it holds {fmt_desimal(atas / total * 100, 1, ien)}% of "
+                  f"everything counted.")
+    _kedua = fmt_desimal((kedua / atas * 100) if atas > 0 else 0.0, 0, ien)
+    return _L(report,
+              f"jaraknya nyata tapi belum timpang, peringkat berikutnya masih di {_kedua}% "
+              f"dari angkanya.",
+              f"the gap is real but not lopsided; the runner-up still sits at {_kedua}% of it.")
+
+
 def catatan_pola(parsed_data: list, tile: dict, report) -> list:
     """Kalimat POLA yang dibaca dari kolom yang SUDAH ADA di data - bukan sebab yang dikarang.
 
@@ -920,17 +977,23 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
                         _terbaik = (_kol.idxmax(), _nilai, _selisih, float(_kol.max()), _dasar)
                 if _terbaik and _terbaik[2] >= 0.08:
                     _grp, _nilai, _sel, _pct, _dasar = _terbaik
+                    # Label dipakai di posisi "antar X"/"kelaziman X", jadi fallback-nya
+                    # 'kelompok' - bukan 'kelompok lain' seperti di kepala kalimat, yang di
+                    # posisi ini terbaca "ragam biasa antar kelompok lain".
+                    _ekor = _ekor_banding(
+                        report, _ien, _sel, _pct, _dasar, _nilai,
+                        sebut_kolom(kat, _tl, 'kelompok'),
+                        sebut_kolom(kat, _tl, 'kelompok', 'groups'))
                     return (_L(
                         report,
                         f"{_grp} paling menonjol pada {sebut_kolom(_stat, _tl, 'salah satu kategori')} '{_nilai}' "
                         f"({fmt_desimal(_pct * 100, 1, _ien)}% dari barisnya, dibanding "
                         f"{fmt_desimal(_dasar * 100, 1, _ien)}% rata-rata seluruh "
-                        f"{sebut_kolom(kat, _tl, 'kelompok lain')}) - selisih inilah yang membedakannya dari "
-                        f"kelompok lain.",
+                        f"{sebut_kolom(kat, _tl, 'kelompok lain')}) - {_ekor}",
                         f"{_grp} stands out on {sebut_kolom(_stat, _tl, 'salah satu kategori', 'one category')} '{_nilai}' "
                         f"({fmt_desimal(_pct * 100, 1, _ien)}% of its rows versus "
                         f"{fmt_desimal(_dasar * 100, 1, _ien)}% across all "
-                        f"{sebut_kolom(kat, _tl, 'kelompok lain', 'other groups')}) - that gap is what sets it apart.",
+                        f"{sebut_kolom(kat, _tl, 'kelompok lain', 'other groups')}) - {_ekor}",
                     ))
 
         return None
@@ -952,6 +1015,10 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
                 _sisa = _g.iloc[1:]
                 _rata_sisa = float(_sisa.mean()) if len(_sisa) else 0.0
                 if _rata_sisa > 0 and _atas / _rata_sisa >= 1.3:
+                    _ekor = _ekor_konsentrasi(
+                        report, _ien, _atas / _rata_sisa, _atas, float(_g.sum()),
+                        float(_g.iloc[1]), sebut_kolom(kat, _tl, 'kelompok'),
+                        sebut_kolom(kat, _tl, 'kelompok', 'groups'))
                     return (_L(
                         report,
                         # Satuan angkanya disebut EKSPLISIT di kalimat, tidak menumpang pada
@@ -960,13 +1027,11 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
                         f"{_g.index[0]} menyumbang {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x "
                         f"rata-rata {sebut_kolom(kat, _tl, 'kelompok')} lainnya pada "
                         f"{sebut_kolom(_mk, _tl, 'indikator utama') if _mk else 'jumlah data'} "
-                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - "
-                        f"perhatian yang diarahkan ke sini menjangkau porsi terbesar.",
+                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - {_ekor}",
                         f"{_g.index[0]} contributes {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x the "
                         f"average of the other {sebut_kolom(kat, _tl, 'kelompok', 'groups')} on "
                         f"{sebut_kolom(_mk, _tl, 'indikator utama', 'the main indicator') if _mk else 'record count'} "
-                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - "
-                        f"attention directed here covers the largest share.",
+                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - {_ekor}",
                     ))
 
         return None
@@ -995,11 +1060,14 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
                                 f"{rapikan_nama_kolom(_a)} dan {rapikan_nama_kolom(_b)} "
                                 f"{'naik bersama' if _r > 0 else 'berlawanan arah'} dengan kaitan "
                                 f"{'erat' if _abs >= _POLA_KORELASI_KUAT else 'sedang'} "
-                                f"(r={fmt_desimal(_r, 2, _ien)}).",
+                                f"(r={fmt_desimal(_r, 2, _ien)}) - hubungan sekuat itu mencakup "
+                                f"sekitar {fmt_desimal(_abs * _abs * 100, 0, _ien)}% ragam keduanya.",
                                 f"{rapikan_nama_kolom(_a)} and {rapikan_nama_kolom(_b)} "
                                 f"{'move together' if _r > 0 else 'move in opposite directions'} with a "
                                 f"{'strong' if _abs >= _POLA_KORELASI_KUAT else 'moderate'} "
-                                f"association (r={fmt_desimal(_r, 2, _ien)}).",
+                                f"association (r={fmt_desimal(_r, 2, _ien)}) - a link that strong "
+                                f"covers about {fmt_desimal(_abs * _abs * 100, 0, _ien)}% of their "
+                                f"shared variation.",
                             ))
                         else:
                             return (_L(
@@ -1031,6 +1099,17 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
                         _naik, _turun = _rasio >= 1.15, _rasio <= 0.87
                         if _naik or _turun:
                             _kali = _rasio if _naik else (1.0 / _rasio)
+                            _lipat = _kali >= 2.0
+                            _ekor4 = _L(
+                                report,
+                                ("lebih dari dua kali lipat di akhir periode" if _lipat
+                                 else "bergeser ke akhir periode") if _naik else
+                                ("tinggal kurang dari separuh menjelang akhir periode" if _lipat
+                                 else "mengendur menjelang akhir periode"),
+                                ("more than doubles by the end" if _lipat
+                                 else "shifts toward the end") if _naik else
+                                ("drops below half by the end" if _lipat
+                                 else "eases toward the end"))
                             _p1, _p2 = _d.iloc[0]["w"], _d.iloc[-1]["w"]
                             return (_L(
                                 report,
@@ -1038,11 +1117,11 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
                                 f"kedua {'naik' if _naik else 'turun'} {fmt_desimal(_kali, 1, _ien)}x "
                                 f"dibanding paruh pertama ({_fmt_count(_awal, _ien)} -> "
                                 f"{_fmt_count(_akhir, _ien)}); beban "
-                                f"{'bergeser ke akhir periode' if _naik else 'mengendur menjelang akhir periode'}.",
+                                f"{_ekor4}.",
                                 f"Across {_p1:%b %Y}-{_p2:%b %Y}, {rapikan_nama_kolom(_m)} in the second "
                                 f"half {'rose' if _naik else 'fell'} {fmt_desimal(_kali, 1, _ien)}x versus "
                                 f"the first half ({_fmt_count(_awal, _ien)} -> {_fmt_count(_akhir, _ien)}); "
-                                f"the load {'shifts toward the end' if _naik else 'eases toward the end'}.",
+                                f"the load {_ekor4}.",
                             ))
 
         return None
@@ -6250,8 +6329,7 @@ def _potong_di_batas_kata(teks: str, maks: int) -> str:
 # Penanda kalimat per JENIS pola (lihat catatan_pola). Dipakai mengenali butir sejenis antar
 # kolom di satu halaman - dari frasanya, bukan dari posisi butir yang bisa bergeser.
 _TANDA_POLA = (
-    ("banding", ("selisih inilah yang membedakannya dari kelompok lain",
-                 "that gap is what sets it apart")),
+    ("banding", ("% dari barisnya", "% of its rows")),
     ("konsentrasi", ("x rata-rata", "x the average")),
     ("korelasi", ("(r=",)),
     ("waktu", ("paruh kedua", "in the second half")),
