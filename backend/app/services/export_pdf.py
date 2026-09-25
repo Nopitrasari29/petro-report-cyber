@@ -3839,7 +3839,17 @@ def _build_management_insight_page_block(block: dict, ctx: _PdfBlockContext) -> 
     notes_html = ""
     if block.get("notes") and not notes_consumed:
         note_title = "Notes" if is_english(ctx.report) else "Catatan"
-        notes_html = _note_box_html(block["notes"], theme=ctx.theme, title=note_title)
+        # Sama dgn versi PPT (geometri kedua exporter dijaga identik): butir dipotong sesuai
+        # sisa tinggi halaman di bawah lapis isi. Di PPT kelebihan butir jatuh ke luar kanvas
+        # & lenyap; di sini ia mendorong isi melewati batas halaman, yang pernah membuat
+        # WeasyPrint gagal merender halaman itu sama sekali (lihat catatan soal gap di atas).
+        _sisa_note_in = avail_h_in - cur_y_in
+        _butir_ins, _tak_muat_ins = muat_catatan(total_w_in, block["notes"], _sisa_note_in)
+        if _tak_muat_ins:
+            logger.info("catatan halaman insight (PDF): %d dari %d butir tidak muat di sisa "
+                        "%.2fin", _tak_muat_ins, len(block["notes"]), _sisa_note_in)
+        if _butir_ins:
+            notes_html = _note_box_html(_butir_ins, theme=ctx.theme, title=note_title)
 
     inner = f'<div style="margin:-0.5in -0.25in 0 -0.25in;">{title_html}{absolute_layers_html}{notes_html}</div>'
     return (inner, False, None, False)

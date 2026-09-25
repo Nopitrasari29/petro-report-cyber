@@ -4514,7 +4514,19 @@ def _build_management_insight_page_slide(block: dict, ctx: _PptBlockContext):
         cur_y_in += layers["detail"]
     if block.get("notes") and not notes_consumed:
         note_title = "Notes" if is_english(ctx.report) else "Catatan"
-        add_note_box(slide, Inches(_DASH_MARGIN_X_IN), Inches(cur_y_in), Inches(total_w_in), block["notes"], theme=ctx.theme, title=note_title)
+        # Butir DIPOTONG sesuai sisa ruang di bawah lapis isi. Tanpa ini seluruh butir
+        # digambar dari cur_y_in apa adanya: terukur di laporan 166 slide 2, lapis isi
+        # menghabiskan tinggi sampai batas isi (7,40in) lalu 11 butir catatan digambar dari
+        # situ sampai 10,78in - di luar kanvas 7,5in, jadi isinya ada di berkas tapi tidak
+        # pernah terlihat pembaca. Kalau satu butir pun tidak muat, kotaknya tidak digambar:
+        # kotak kosong yang menjorok keluar lebih buruk drpd tidak ada kotak.
+        _sisa_note_in = _DASH_CONTENT_BOTTOM_IN - cur_y_in
+        _butir_ins, _tak_muat_ins = muat_catatan(total_w_in, block["notes"], _sisa_note_in)
+        if _tak_muat_ins:
+            logger.info("catatan halaman insight (PPT): %d dari %d butir tidak muat di sisa "
+                        "%.2fin", _tak_muat_ins, len(block["notes"]), _sisa_note_in)
+        if _butir_ins:
+            add_note_box(slide, Inches(_DASH_MARGIN_X_IN), Inches(cur_y_in), Inches(total_w_in), _butir_ins, theme=ctx.theme, title=note_title)
 
     return slide
 
