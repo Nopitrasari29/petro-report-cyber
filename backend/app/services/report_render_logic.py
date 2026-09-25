@@ -5217,6 +5217,133 @@ def _semua_kandidat(parsed_data: list, kolom_w_in: float | None = None,
     return hasil
 
 
+# Bentuk yang TIDAK punya dimensi kategori di posisi pertama (isinya metrik semua), jadi
+# tidak ikut aturan keluarga metrik di bawah.
+_BENTUK_TANPA_KATEGORI = {"radar", "kpi_radar"}
+
+
+def _bagian_pasangan(kep: dict) -> tuple:
+    """Pecah `pasangan` sebuah keputusan jadi (kategori, metrik, tabel_sumber).
+
+    Elemen berawalan "@" adalah penanda TABEL SUMBER - berkas bisa memuat beberapa tabel
+    sekaligus dan kolom bernama sama di tabel berbeda bukan cerita yang sama."""
+    bagian = [str(x) for x in (kep.get("pasangan") or [])]
+    tabel = next((b for b in bagian if b.startswith("@")), "")
+    sisa = [b for b in bagian if not b.startswith("@")]
+    if str(kep.get("bentuk") or "") in _BENTUK_TANPA_KATEGORI:
+        return None, tuple(sisa), tabel
+    return (sisa[0] if sisa else None), tuple(sisa[1:]), tabel
+
+
+# Selisih relatif maksimum antara sebuah baris dan jumlah baris lain supaya masih disebut
+# "rekap". Longgar sedikit (2%) karena dokumen sumber sering membulatkan angka rekapnya.
+_REKAP_TOLERANSI = 0.02
+# Berapa bagian kolom numerik yang harus cocok sebelum sebuah nilai divonis baris rekap.
+# Tinggi: salah membuang kategori asli jauh lebih merugikan drpd membiarkan satu baris rekap.
+_REKAP_MIN_COCOK = 0.6
+
+
+def buang_baris_rekap(rows: list) -> tuple:
+    """Buang baris REKAP dari dokumen sumber. -> (sisa, [(kolom, nilai, n_baris), ...]).
+
+    Baris rekap bukan pengamatan - ia jumlah dari baris lain yang kebetulan ikut terbaca saat
+    tabel diurai. Dibiarkan, ia jadi kategori palsu yang selalu jadi yang tertinggi di setiap
+    chart dan melahirkan kalimat tautologis ("Total 24,0x rata-rata jam lainnya").
+
+    Dikenali dari ANGKA, bukan daftar kata: jumlah metriknya ~sama dgn jumlah seluruh baris
+    lain, dan itu berlaku untuk mayoritas kolom numerik."""
+    if not rows or len(rows) < 4:
+        return rows, []
+    try:
+        df = pd.DataFrame(rows)
+    except Exception:
+        return rows, []
+    num = [c for c in df.columns
+           if pd.to_numeric(df[c], errors="coerce").notna().sum() >= max(3, len(df) * 0.5)]
+    if not num:
+        return rows, []
+    kat = [c for c in df.columns
+           if c not in num and 2 <= df[c].astype(str).nunique() <= 200]
+    buang_idx: set = set()
+    temuan = []
+    for c in kat:
+        seri = df[c].astype(str).str.strip()
+        for nilai, idx in seri.groupby(seri).groups.items():
+            idx = list(idx)
+            if not idx or len(idx) >= len(df) / 2.0:
+                continue
+            lain = [i for i in df.index if i not in set(idx)]
+            if not lain:
+                continue
+            cocok = nilai_diuji = 0
+            for m in num:
+                sm = pd.to_numeric(df[m], errors="coerce")
+                a, b = float(sm.loc[idx].sum()), float(sm.loc[lain].sum())
+                if b <= 0:
+                    continue
+                nilai_diuji += 1
+                if abs(a - b) / b <= _REKAP_TOLERANSI:
+                    cocok += 1
+            if nilai_diuji >= 2 and cocok / nilai_diuji >= _REKAP_MIN_COCOK:
+                buang_idx.update(idx)
+                temuan.append((c, nilai, len(idx)))
+    if not buang_idx:
+        return rows, []
+    sisa = [r for i, r in enumerate(rows) if i not in buang_idx]
+    return (sisa if len(sisa) >= 3 else rows), (temuan if len(sisa) >= 3 else [])
+
+
+def konsolidasi_keluarga_metrik(keputusan: list) -> tuple:
+    """Kurangi topik SATU-METRIK yang cuma mengulang sumbu yang sama. -> (sisa, dibuang).
+
+    Lihat catatan modul: satu berkas dgn banyak kolom metrik pada satu dimensi waktu
+    melahirkan satu topik per metrik, dan halaman laporan jadi berisi bentuk chart yang sama
+    berkali-kali dgn angka berbeda - bukan cerita yang berbeda.
+
+    Yang dibuang didahulukan dari metrik yang SUDAH tergambar di keputusan multi-metrik pada
+    dimensi & tabel yang sama; sesudah itu baru dari yang kekuatannya paling rendah. Jadi
+    cakupan metrik tidak ikut hilang - yang hilang pengulangan bentuknya."""
+    keluarga: dict = {}
+    tertutup: dict = {}
+    for i, k in enumerate(keputusan or []):
+        kat, metrik, tabel = _bagian_pasangan(k)
+        if kat is None:
+            # keputusan multi-metrik tanpa kategori (radar) tetap menutup metriknya
+            tertutup.setdefault((None, tabel), set()).update(metrik)
+            continue
+        if len(metrik) == 1:
+            keluarga.setdefault((str(k.get("bentuk")), kat, tabel), []).append(i)
+        elif len(metrik) > 1:
+            tertutup.setdefault((kat, tabel), set()).update(metrik)
+
+    buang: set = set()
+    for (bentuk, kat, tabel), idxs in keluarga.items():
+        _sudah = set(tertutup.get((kat, tabel)) or ()) | set(tertutup.get((None, tabel)) or ())
+
+        def _urut(i):
+            _m = _bagian_pasangan(keputusan[i])[1]
+            return (1 if (_m and _m[0] in _sudah) else 0,
+                    -float(keputusan[i].get("kekuatan") or 0.0))
+
+        _urutan = sorted(idxs, key=_urut)
+        # Anggota yang metriknya SUDAH tergambar di keputusan multi-metrik pada sumbu &
+        # tabel yang sama tidak menambah cerita - itu breakdown yang sama dibaca ulang dari
+        # sudut satu metrik. Yang dipertahankan minimal SATU (pandangan satu-metrik yang
+        # paling kuat, supaya sumbunya tetap punya bacaan yang bersih), dan tidak pernah
+        # lebih dari satu halaman dasbor penuh.
+        _batas = max(1, min(_DASH_TOPICS_PER_PAGE,
+                            sum(1 for i in idxs
+                                if not (_bagian_pasangan(keputusan[i])[1] or ("",))[0] in _sudah)))
+        for i in _urutan[_batas:]:
+            buang.add(i)
+
+    if not buang:
+        return list(keputusan or []), []
+    sisa = [k for i, k in enumerate(keputusan) if i not in buang]
+    dibuang = [_bagian_pasangan(keputusan[i]) for i in sorted(buang)]
+    return sisa, dibuang
+
+
 def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
     """Ubah satu keputusan pemilih jadi tile yang bisa digambar exporter.
 
@@ -6761,11 +6888,19 @@ def _kelompok_topik_nyambung(blok_urut: list, df) -> list:
 
     Urutan aslinya dipertahankan; topik baru ikut kelompok berjalan hanya kalau nyambung dgn
     SEMUA anggotanya - "nyambung dgn salah satu" bisa merantai A-B-C padahal A dan C asing."""
+    # Topik dicocokkan ke kelompok MANA PUN yang sudah ada, bukan cuma ke kelompok terakhir.
+    # Versi pertama cuma memotong DERET BERURUTAN, jadi topik dari tabel sumber yang sama
+    # tapi terpisah urutannya berakhir di kelompok berbeda - terukur di laporan 199: tabel
+    # Inbound & Outbound berselang-seling, hasilnya beberapa halaman berisi 2 kolom dan dua
+    # halaman bertopik tunggal, padahal topiknya cukup untuk halaman penuh. Urutan asli tetap
+    # dipertahankan DI DALAM tiap kelompok.
     kelompok: list = []
     for b in blok_urut:
         jejak = _jejak_topik(b, df)
-        if kelompok and all(_topik_nyambung(jejak, j) for _, j in kelompok[-1]):
-            kelompok[-1].append((b, jejak))
+        for k in kelompok:
+            if all(_topik_nyambung(jejak, j) for _, j in k):
+                k.append((b, jejak))
+                break
         else:
             kelompok.append([(b, jejak)])
     return [[b for b, _ in k] for k in kelompok]
@@ -9725,6 +9860,19 @@ def build_management_report_blocks(report) -> list[dict]:
                           for k in ("category_style", "status_style")} - {""}
         _keputusan, _lap_seksi = rencana_chart_terarah(parsed_data, dynamic_sections_all,
                                                        gaya_disukai=_gaya_user)
+        # Baris REKAP dokumen sumber dibuang DULU - kalau dibiarkan ia jadi kategori palsu
+        # yang selalu tertinggi di setiap chart. Lihat buang_baris_rekap.
+        parsed_data, _rekap = buang_baris_rekap(parsed_data)
+        if _rekap:
+            logger.info("baris rekap dibuang dari data: %s",
+                        [(k, v, n) for k, v, n in _rekap[:4]])
+        # FASE 2: topik satu-metrik yang cuma mengulang sumbu yang sama dikonsolidasi
+        # SEBELUM tile dibangun - lihat konsolidasi_keluarga_metrik.
+        _keputusan, _keluarga_dibuang = konsolidasi_keluarga_metrik(_keputusan)
+        if _keluarga_dibuang:
+            logger.info("konsolidasi keluarga metrik: %d topik satu-metrik dibuang karena "
+                        "mengulang sumbu yang sama: %s", len(_keluarga_dibuang),
+                        [(k, m[0] if m else "", t) for k, m, t in _keluarga_dibuang[:6]])
         _dibangun = [(k, bangun_tile(parsed_data, k, report)) for k in _keputusan]
         for _k, _t in _dibangun:
             if not _t:
