@@ -9839,7 +9839,30 @@ def build_management_report_blocks(report) -> list[dict]:
     # "treemap" TETAP dipakai aman di category_style/status_style (risk_heatmap SELALU jadi
     # tile PERTAMA/baris pertama, & versi SOC-nya selalu 1 halaman penuh sendirian, keduanya
     # TIDAK pernah berisiko jatuh di baris ke-2+ grid padat spt custom_topic).
-    dynamic_sections_all = [s for s in (ai_summary.get("sections") or []) if isinstance(s, dict)]
+    # BUG NYATA DIPERBAIKI (terukur): seksi dinamis diambil dari ai_summary["sections"] saja,
+    # jadi daftar Include Sections di Report Settings TIDAK PERNAH dibaca untuk seksi ini -
+    # mematikan sebuah seksi di pengaturan sama sekali tidak berpengaruh (diuji: 3 seksi
+    # dimatikan, ketiganya tetap muncul & jumlah halaman tidak berubah). `is_section_included`
+    # sudah ada tapi cuma dipakai untuk seksi berkunci TETAP (executive_summary, dst).
+    #
+    # Judulnya juga diambil dari Report Settings kalau ada: itu judul yang BISA DISUNTING user
+    # dan yang ikut bahasa laporan, sedangkan salinan di ai_summary dibekukan saat analisis.
+    _inc_list = report.included_sections if isinstance(report.included_sections, list) else []
+    _inc_map = {s.get("key"): s for s in _inc_list
+                if isinstance(s, dict) and s.get("key")}
+    dynamic_sections_all = []
+    for _s in (ai_summary.get("sections") or []):
+        if not isinstance(_s, dict):
+            continue
+        _kunci = _s.get("id") or _s.get("key")
+        if _kunci and not is_section_included(_kunci, report.included_sections):
+            logger.info("seksi dinamis dilewati (tidak dicentang di Report Settings): %r",
+                        _kunci)
+            continue
+        _cfg = _inc_map.get(_kunci)
+        if _cfg and str(_cfg.get("title") or "").strip():
+            _s = {**_s, "title": _cfg["title"]}
+        dynamic_sections_all.append(_s)
 
     # ---- RENCANA CHART DIHITUNG DI SINI, SEBELUM loop seksi di bawah -----------------
     # Urutannya penting: loop seksi perlu tahu seksi mana yang SUDAH dapat kolom visual,

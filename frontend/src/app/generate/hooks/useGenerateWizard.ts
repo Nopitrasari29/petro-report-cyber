@@ -132,6 +132,12 @@ export function useGenerateWizard() {
   const headerTitleTouchedRef = useRef(false);
   const headerSubtitleTouchedRef = useRef(false);
   const dynamicSectionsTouchedRef = useRef(false);
+  // Bahasa yang dipakai saat usulan section TERAKHIR diminta. Endpoint usulan
+  // ditembak di Step 1 - SEBELUM Step 2 dibuka - jadi ia memakai bahasa default
+  // profil, bukan bahasa yang nanti dipilih user di Report Settings. Kalau user lalu
+  // mengganti bahasa, judul section custom tetap berbahasa lama & terbawa sampai ke
+  // render. Ref ini yang membuat perbedaannya bisa dikenali.
+  const sectionsLangRef = useRef<string | null>(null);
 
   const [headerTitle, setHeaderTitle] = useState("PT PETROKIMIA GRESIK");
   const [headerSubtitle, setHeaderSubtitle] = useState(
@@ -456,6 +462,7 @@ export function useGenerateWizard() {
       // (dari preferensi profil, lihat efek fetchFormDefaults di atas) sebagai perkiraan
       // terbaik yang tersedia di titik ini.
       fd.append("language", language);
+      sectionsLangRef.current = language;
 
       const res = await fetch(
         `${API_BASE_URL}/api/v1/upload/suggest-sections`,
@@ -580,6 +587,21 @@ export function useGenerateWizard() {
       suggestSectionsFromFile(newFiles[0]);
     }
   };
+
+  // Bahasa diganti di Step 2 SESUDAH usulan Step 1 kembali: usulan diminta ulang
+  // dalam bahasa final supaya judul section custom tidak tertinggal di bahasa lama.
+  // Section yang sudah DISUNTING user tidak ikut ditimpa - lihat guard 'touched'.
+  useEffect(() => {
+    if (!rawFiles.length) return;
+    if (sectionsLangRef.current === null) return; // usulan pertama belum pernah jalan
+    if (sectionsLangRef.current === language) return;
+    if (dynamicSectionsTouchedRef.current) {
+      sectionsLangRef.current = language;
+      return;
+    }
+    suggestSectionsFromFile(rawFiles[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language]);
 
   const handleRemoveFile = (index: number) => {
     setRawFiles((prev) => prev.filter((_, i) => i !== index));
