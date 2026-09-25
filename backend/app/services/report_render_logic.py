@@ -2626,16 +2626,42 @@ def tinggi_kotak_catatan_halaman(w_in: float, catatan_per_kolom: list,
 
 
 def tinggi_maks_kotak_catatan(cols: list, col_w_in: float, avail_isi_in: float,
-                              is_en: bool = False) -> float:
-    """Batas atas kotak catatan: sisa setelah tiap kolom dijamin dapat chart pada tinggi
-    MINIMUM-nya plus satu baris kartu. Bukan ambang tetap - dihitung dari isi kolom."""
-    butuh = 0.0
-    for c in (cols or []):
+                              is_en: bool = False, bentuk: list | None = None) -> float:
+    """Batas atas kotak catatan: sisa setelah tiap KOLOM dijamin memuat seluruh seksinya
+    pada tinggi minimum. Bukan ambang tetap - dihitung dari isi kolom.
+
+    BUG NYATA DIPERBAIKI (terukur di dataset tipis nunique=2): versi lama mengambil MAKSIMUM
+    PER SEKSI, padahal satu kolom bisa memuat dua seksi BERTUMPUK - yang dibutuhkan JUMLAH
+    keduanya. Kepala seksi pun tidak ikut dihitung di sini (pemanggil cuma mengurangi satu
+    _DASH_COLS_KEPALA_H_IN tetap), padahal tiap seksi membawa kepalanya sendiri ~1,43in.
+
+    Akibatnya batasnya terlalu longgar: kotak Catatan tumbuh jadi 1,788in padahal perencana
+    memesan 1,02in, kolom kehilangan 0,768in, alokasinya over-commit, dan isi chart meluber
+    ke bawah kotak Catatan lalu tertutup ("Durasi Hari 1.582" di y393,2-400,2 vs kotak mulai
+    y394,7).
+
+    `bentuk` = jumlah seksi per kolom (block["bentuk_kolom"]). Tanpa itu tiap seksi dianggap
+    kolomnya sendiri - perilaku lama, yang benar untuk halaman tidak bertumpuk."""
+    _urut = list(bentuk or []) or [1] * len(cols or [])
+    if sum(_urut) != len(cols or []):
+        _urut = [1] * len(cols or [])
+
+    def _butuh_seksi(c):
         tile = c.get("main_chart_tile")
         _c = chart_min_mutlak_in(tile, col_w_in, is_en) if tile else 0.0
         _kartu = c.get("category_details") or []
         _k = max((tinggi_kartu_in(x) for x in _kartu), default=0.0)
-        butuh = max(butuh, _c + (_k + 0.08 if _kartu else 0.0))
+        return (_kepala_seksi_h_in(c, col_w_in) + _c
+                + (_k + 0.08 if _kartu else 0.0))
+
+    butuh, _pos = 0.0, 0
+    for _cnt in _urut:
+        _seksi = (cols or [])[_pos:_pos + _cnt]
+        _pos += _cnt
+        if not _seksi:
+            continue
+        butuh = max(butuh, sum(_butuh_seksi(c) for c in _seksi)
+                    + _DASH_TILE_GAP_IN * max(0, len(_seksi) - 1))
     return max(0.0, float(avail_isi_in) - butuh)
 
 

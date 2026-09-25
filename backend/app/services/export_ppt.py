@@ -4594,8 +4594,10 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         [str(x) for x in (c.get("notes") or []) if str(x).strip()] for c in cols
     ]
     _catatan_per_kolom = [k for k in _catatan_per_kolom if k]
+    # `bentuk` dioper supaya kolom BERTUMPUK dihitung sbg jumlah seksinya - lihat catatan
+    # kembarannya di export_pdf.py.
     _maks_note_in = tinggi_maks_kotak_catatan(
-        cols, col_w_isi, avail_h_in - _DASH_COLS_KEPALA_H_IN, is_english(ctx.report))
+        cols, col_w_isi, avail_h_in, is_english(ctx.report), bentuk=_bentuk)
     _NOTE_HAL_H_IN, _butir_note, _note_tak_muat = tinggi_kotak_catatan_halaman(
         total_w_in, _catatan_per_kolom, _maks_note_in)
     logger.info("kotak catatan halaman: %d butir muat (kotak %.2fin, batas %.2fin), "
