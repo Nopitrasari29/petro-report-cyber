@@ -9040,6 +9040,13 @@ def build_management_report_blocks(report) -> list[dict]:
     3. "Rekomendasi Prioritas" SEBELUMNYA menampilkan judul & detail dgn ISI SAMA PERSIS
        berulang (detail seharusnya SISA kalimat setelah judul diambil, bukan teks penuh lagi).
     """
+    # Konvensi angka disetel dari LAPORANNYA sendiri, bukan diwarisi dari pemanggil.
+    # _RENDER_IS_EN default True, dan dulu hanya exporter yang menyetelnya - jadi isi blok
+    # yang dibangun lewat jalur lain (tes, endpoint chart) memakai konvensi Inggris walau
+    # laporannya berbahasa Indonesia. Terukur: kartu KPI laporan 195 berisi "High (68.8%)"
+    # di blok tapi tergambar "High (68,8%)" di PDF - render-nya benar, isinya yang ikut
+    # keadaan sekitar. Di jalur export ini idempoten: exporter sudah memanggilnya lebih dulu.
+    set_render_language(report)
     parsed_data = get_parsed_data(report)
     report_stats = compute_statistics(parsed_data, report.data_type) if parsed_data else {"total_records": 0}
     ai_summary = report.ai_summary or {}
