@@ -903,28 +903,73 @@ def _ekor_banding(report, ien, sel, pct, dasar, nilai, kat_id, kat_en) -> str:
               f"'{nilai}'.")
 
 
-def _ekor_konsentrasi(report, ien, rasio, atas, total, kedua, kat_id, kat_en) -> str:
-    """Penutup pola 2, dipilih dari TINGGI RASIO-nya sendiri. Lihat _EKOR_KONSENTRASI_*."""
-    if rasio >= _EKOR_KONSENTRASI_BESAR:
+# Penanda ketiga varian ekor pola 2 - dipakai mengenali varian yang sudah terpakai kolom
+# lain di halaman yang sama (lihat _ragamkan_ekor_konsentrasi).
+_VARIAN_KONSENTRASI = (
+    ("naik", ("harus naik", "would have to rise")),
+    ("porsi", ("sendirian ia memegang", "on its own it holds")),
+    ("peringkat", ("peringkat berikutnya", "the runner-up")),
+)
+
+
+def varian_ekor_konsentrasi(teks) -> str:
+    """Varian ekor pola 2 yang dipakai kalimat ini, atau "" kalau bukan kalimat pola 2."""
+    t = str(teks or "").lower()
+    for nama, frasa in _VARIAN_KONSENTRASI:
+        if any(f in t for f in frasa):
+            return nama
+    return ""
+
+
+def _ekor_konsentrasi(report, ien, rasio, atas, total, kedua, kat_id, kat_en,
+                      hindari=None) -> str:
+    """Penutup pola 2, dipilih dari TINGGI RASIO-nya sendiri. Lihat _EKOR_KONSENTRASI_*.
+
+    KETIGA varian sama-sama SAH untuk rasio berapa pun - tingkatan cuma memilih mana yang
+    paling informatif. Karena itu `hindari` boleh menggeser pilihan ke varian berikutnya
+    tanpa membuat kalimatnya jadi tidak akurat: angkanya tetap dari agregat yang sama.
+    Dipakai saat kolom lain di halaman yang sama sudah memakai varian itu - lihat
+    _ragamkan_ekor_konsentrasi."""
+    def _naik():
         return _L(report,
                   f"untuk menyamainya, rata-rata {kat_id} lain harus naik "
                   f"{fmt_desimal((rasio - 1) * 100, 0, ien)}%.",
                   f"to match it, the average of the other {kat_en} would have to rise "
                   f"{fmt_desimal((rasio - 1) * 100, 0, ien)}%.")
-    if rasio >= _EKOR_KONSENTRASI_SEDANG and total > 0:
+
+    def _porsi():
+        if total <= 0:
+            return ""
         return _L(report,
                   f"sendirian ia memegang {fmt_desimal(atas / total * 100, 1, ien)}% dari "
                   f"seluruh angka yang dihitung.",
                   f"on its own it holds {fmt_desimal(atas / total * 100, 1, ien)}% of "
                   f"everything counted.")
-    _kedua = fmt_desimal((kedua / atas * 100) if atas > 0 else 0.0, 0, ien)
-    return _L(report,
-              f"jaraknya nyata tapi belum timpang, peringkat berikutnya masih di {_kedua}% "
-              f"dari angkanya.",
-              f"the gap is real but not lopsided; the runner-up still sits at {_kedua}% of it.")
+
+    def _peringkat():
+        _k = fmt_desimal((kedua / atas * 100) if atas > 0 else 0.0, 0, ien)
+        return _L(report,
+                  f"jaraknya nyata tapi belum timpang, peringkat berikutnya masih di {_k}% "
+                  f"dari angkanya.",
+                  f"the gap is real but not lopsided; the runner-up still sits at {_k}% of it.")
+
+    if rasio >= _EKOR_KONSENTRASI_BESAR:
+        _urut = [("naik", _naik), ("porsi", _porsi), ("peringkat", _peringkat)]
+    elif rasio >= _EKOR_KONSENTRASI_SEDANG:
+        _urut = [("porsi", _porsi), ("naik", _naik), ("peringkat", _peringkat)]
+    else:
+        _urut = [("peringkat", _peringkat), ("porsi", _porsi), ("naik", _naik)]
+    _hindari = set(hindari or ())
+    for _nama, _buat in _urut:
+        if _nama in _hindari:
+            continue
+        _teks = _buat()
+        if _teks:
+            return _teks
+    return _urut[0][1]() or _peringkat()
 
 
-def catatan_pola(parsed_data: list, tile: dict, report) -> list:
+def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> list:
     """Kalimat POLA yang dibaca dari kolom yang SUDAH ADA di data - bukan sebab yang dikarang.
 
     KOREKSI ARAH DARI USER: permintaannya bukan menambah kolom "alasan" ke dataset, melainkan
@@ -1055,7 +1100,8 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
                     _ekor = _ekor_konsentrasi(
                         report, _ien, _atas / _rata_sisa, _atas, float(_g.sum()),
                         float(_g.iloc[1]), sebut_kolom(kat, _tl, 'kelompok'),
-                        sebut_kolom(kat, _tl, 'kelompok', 'groups'))
+                        sebut_kolom(kat, _tl, 'kelompok', 'groups'),
+                        hindari=ekor_hindari)
                     return (_L(
                         report,
                         # Satuan angkanya disebut EKSPLISIT di kalimat, tidak menumpang pada
@@ -6556,6 +6602,54 @@ def _tanda_pola(teks) -> str:
     return ""
 
 
+def _ragamkan_ekor_konsentrasi(cols: list, parsed_data: list, report) -> int:
+    """Hindari dua kolom sehalaman berakhir dgn VARIAN ekor pola 2 yang sama. -> jumlah diganti.
+
+    Sejajar dgn _ragamkan_pola_halaman, yang menjaga keragaman antar JENIS pola; di sini
+    keragamannya di dalam SATU jenis. Kolom pertama yang memakai sebuah varian
+    mempertahankannya, kolom berikutnya yang memakai varian sama dibangun ULANG lewat
+    catatan_pola dgn varian itu dihindari - bukan disunting teksnya, supaya angkanya tetap
+    lahir dari agregasi yang sama.
+
+    Ketiga varian sama-sama sah untuk rasio berapa pun (lihat _ekor_konsentrasi), jadi
+    menggesernya tidak membuat kalimatnya jadi kurang akurat - cuma menyorot sisi lain dari
+    angka yang sama."""
+    # Yang dihindari varian kolom SEBELUMNYA, bukan seluruh varian yang pernah dipakai
+    # sehalaman: variannya cuma tiga, jadi pada halaman berisi 5 kolom pola 2 pengulangan
+    # tidak terhindarkan - yang terbaca mekanis adalah dua kolom BERSEBELAHAN berbunyi sama,
+    # bukan dua kolom berjauhan.
+    _sebelum, diganti = "", 0
+    for c in (cols or []):
+        butir = [str(x) for x in (c.get("notes") or []) if str(x or "").strip()]
+        _idx = next((i for i, b in enumerate(butir) if varian_ekor_konsentrasi(b)), None)
+        if _idx is None:
+            continue
+        _var = varian_ekor_konsentrasi(butir[_idx])
+        if _var != _sebelum:
+            _sebelum = _var
+            continue
+        _tile = c.get("main_chart_tile")
+        if not _tile or not parsed_data:
+            _sebelum = _var
+            continue
+        try:
+            _baru = beri_subjek_catatan(
+                catatan_pola(parsed_data, _tile, report, ekor_hindari={_var}),
+                judul_pendek_kolom(_tile, report))
+        except Exception:
+            _sebelum = _var
+            continue
+        _ganti = next((b for b in _baru if varian_ekor_konsentrasi(b)), None)
+        if not _ganti or _ganti == butir[_idx]:
+            _sebelum = _var
+            continue
+        butir[_idx] = _ganti
+        c["notes"] = butir
+        _sebelum = varian_ekor_konsentrasi(_ganti)
+        diganti += 1
+    return diganti
+
+
 def _ragamkan_pola_halaman(cols: list) -> tuple:
     """Kurangi keseragaman jenis kalimat antar kolom SATU HALAMAN.
 
@@ -6855,9 +6949,10 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
     # lalu tiap kelompok dikemas SENDIRI-SENDIRI. Halaman tidak pernah memuat topik dari
     # kelompok berbeda, walau ruangnya masih sisa - lihat _kelompok_topik_nyambung.
     try:
-        _df_koh = pd.DataFrame(get_parsed_data(report) or [])
+        _data_koh = get_parsed_data(report) or []
+        _df_koh = pd.DataFrame(_data_koh)
     except Exception:
-        _df_koh = pd.DataFrame()
+        _data_koh, _df_koh = [], pd.DataFrame()
     _kelompok = (_kelompok_topik_nyambung([blocks[i] for i in idxs], _df_koh)
                  if not _df_koh.empty else [[blocks[i] for i in idxs]])
     if len(_kelompok) > 1:
@@ -7004,6 +7099,12 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
         if _tukar or _buang:
             logger.info("catatan halaman: %d butir ditukar & %d dibuang supaya jenis kalimat "
                         "antar %d kolom tidak seragam", _tukar, _buang, len(cols))
+        # Keragaman di dalam SATU jenis: dua kolom sehalaman tidak berakhir dgn varian ekor
+        # pola 2 yang sama - lihat _ragamkan_ekor_konsentrasi.
+        _ganti_ekor = _ragamkan_ekor_konsentrasi(cols, _data_koh, report)
+        if _ganti_ekor:
+            logger.info("catatan halaman: %d ekor pola konsentrasi divariasikan supaya tidak "
+                        "kembar antar kolom", _ganti_ekor)
         packed.append((group[0], {
             "kind": "management_dashboard_columns",
             "title": _judul_kalimat,
