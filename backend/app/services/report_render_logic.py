@@ -976,7 +976,19 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
                          and 2 <= df[c].nunique() <= 8]
             _stat, _ct, _rata = None, None, None
             for _c in _kandidat:
-                _ct_c = pd.crosstab(df[kat], df[_c], normalize="index")
+                # SATU POPULASI untuk kedua angka. crosstab membuang baris yang salah satu
+                # nilainya kosong, jadi proporsi kelompok dihitung dari baris yang terisi -
+                # sementara dasar pembandingnya dulu dihitung dari SELURUH baris berkas. Di
+                # berkas bertabel banyak, dua penyebut itu jauh berbeda: laporan 195 punya 88
+                # baris tapi cuma 16 yang punya Severity, dan '2. INCIDENT' terbaca 10,2%
+                # (dari 88) padahal 56,2% (dari 16). Selisih yang dilaporkan 49,8 poin,
+                # sebenarnya 3,8 poin - di bawah ambang, jadi kalimatnya memang tidak layak
+                # muncul.
+                _pakai_c = _baris_terisi(df, kat).intersection(_baris_terisi(df, _c))
+                if len(_pakai_c) < _POLA_MIN_BARIS:
+                    continue
+                _sub_c = df.loc[_pakai_c]
+                _ct_c = pd.crosstab(_sub_c[kat], _sub_c[_c], normalize="index")
                 if _ct_c.empty:
                     continue
                 # Berapa banyak kelompok yang terpisah SEMPURNA (100% di satu nilai)? Kalau
@@ -988,7 +1000,7 @@ def catatan_pola(parsed_data: list, tile: dict, report) -> list:
                                 "sempurna (penanda struktur, bukan hasil)", _c, _sempurna * 100)
                     continue
                 _stat, _ct = _c, _ct_c
-                _rata = df[_c].value_counts(normalize=True)
+                _rata = _sub_c[_c].value_counts(normalize=True)
                 break
             if _stat is not None:
                 _terbaik = None
