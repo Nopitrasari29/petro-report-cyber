@@ -55,6 +55,8 @@ from app.services.report_render_logic import (
     _DASH_TILE_GAP_IN, tinggi_kolom_tersedia_in, _DASH_COLS_PAD_IN, _DASH_COLS_JUDUL_GAP_IN,
     _DASH_COLS_TITLE_PAD_IN, _KPI_VALUE_MAX_PT,
     muat_catatan,
+    ukuran_judul_cover_mgmt, _MGMT_COVER_SUB_PT, _MGMT_COVER_PERIOD_PT,
+    _MGMT_COVER_FOOTER_PT, _MGMT_CLOSING_THANKS_PT, _MGMT_CLOSING_NOTE_PT,
     _NESTED_CARD_HEADER_H_IN, _NESTED_CARD_HEADER_MIN_H_IN, _NESTED_CARD_SUBITEM_LINE1_H_IN, _NESTED_CARD_SUBITEM_BAR_H_IN,
     _NESTED_CARD_SUBITEM_GAP_IN, _NESTED_CARD_ROW_GAP_IN, _layout_nested_card_grid,
 )
@@ -222,7 +224,17 @@ def _set_font(para_or_run, name=BODY_FONT, size=None, bold=None, italic=None, co
             f.color.rgb = color
 
 
-def _estimate_wrapped_height_in(text: str, font_pt: float, box_width_in: float) -> float:
+# Lebar rata-rata karakter JUDUL COVER, diukur dari render PDF sungguhan (font & ukuran yang
+# sama persis): 'Executive Analysis Report' 8,372in/25 kar = 0,548em, 'Laporan Analisis
+# Eksekutif' 8,531in/26 kar = 0,537em. Default penaksir 0,60em kelewat lebar ~10%, dan pada
+# kotak 9,5in itu membuat judul 26 karakter divonis wrap 2 baris padahal PDF menggambarnya 1
+# baris - subtitle di PPTX lalu turun 0,77in dari posisi PDF-nya. 0,56 dipakai: di atas hasil
+# ukur (jadi tetap aman/konservatif) tapi tidak sejauh 0,60.
+_EM_KARAKTER_JUDUL_COVER = 0.56
+
+
+def _estimate_wrapped_height_in(text: str, font_pt: float, box_width_in: float,
+                                em_per_char: float = 0.6) -> float:
     """Estimasi kasar tinggi (inci) yang dipakai `text` kalau word-wrap dalam box selebar
     `box_width_in` pada ukuran `font_pt` — python-pptx bukan mesin render sungguhan (tidak
     tahu lebar karakter asli tiap font), jadi ini estimasi berbasis rata-rata lebar karakter
@@ -232,7 +244,7 @@ def _estimate_wrapped_height_in(text: str, font_pt: float, box_width_in: float) 
     diasumsikan selalu pendek/selalu 1 baris."""
     if not text:
         return font_pt * 1.25 / 72
-    avg_char_width_in = (font_pt * 0.6) / 72
+    avg_char_width_in = (font_pt * em_per_char) / 72
     chars_per_line = max(int(box_width_in / avg_char_width_in), 1)
     # Pemisah baris EKSPLISIT di dalam teks dipecah dulu. Nilai data dari berkas sumber bisa
     # membawa pemisah barisnya sendiri (sisa pemecahan baris saat PDF sumber dibaca), dan
@@ -422,7 +434,68 @@ def add_footer(slide, page_num: int, total_pages: int, dark: bool = False, theme
     _set_font(p, BODY_FONT, Pt(9), color=color)
 
 
-def add_logo(slide, logo_path, x=None, y=Inches(0.18), width=Inches(2.63), dark=False):
+# Bingkai lockup logo di slide berlatar gelap (1e) - kembaran _dark_logo_html di
+# export_pdf.py. Padding & radius dipakai angka yang SAMA dgn versi PDF supaya bentuknya
+# tidak menyimpang: padding mendatar lebih lebar drpd menegak, radius = setengah tinggi.
+_LOGO_PILL_PAD_X_IN = 14 / 96.0
+_LOGO_PILL_PAD_Y_IN = 8 / 96.0
+
+
+def _pasang_bayangan(shape, blur_pt=6.0, jarak_pt=2.0, alpha=28000):
+    """Bayangan luar lembut lewat XML - python-pptx belum punya API untuk outerShdw.
+
+    `shape.shadow` yang tersedia hanya bisa MEMATIKAN bayangan warisan (inherit=False);
+    tidak ada jalan resmi menyetel blur/jarak/warna. Elemen <a:effectLst><a:outerShdw>
+    ditulis langsung ke spPr - inilah yang dipakai PowerPoint sendiri, jadi hasilnya
+    bayangan native, bukan gambar tiruan."""
+    from pptx.oxml.ns import qn
+    spPr = shape._element.spPr
+    for lama in spPr.findall(qn('a:effectLst')):
+        spPr.remove(lama)
+    eff = spPr.makeelement(qn('a:effectLst'), {})
+    shdw = spPr.makeelement(qn('a:outerShdw'), {
+        'blurRad': str(int(blur_pt * 12700)),
+        'dist': str(int(jarak_pt * 12700)),
+        'dir': '5400000',          # 90 derajat = lurus ke bawah
+        'rotWithShape': '0',
+    })
+    clr = spPr.makeelement(qn('a:srgbClr'), {'val': '000000'})
+    a = spPr.makeelement(qn('a:alpha'), {'val': str(int(alpha))})
+    clr.append(a)
+    shdw.append(clr)
+    eff.append(shdw)
+    spPr.append(eff)
+
+
+def _pill_logo(slide, x_in, y_in, w_in, h_in, theme=None):
+    """Kotak putih membulat penuh di BELAKANG lockup logo, dgn bayangan lembut.
+
+    Alasannya terukur di render: di atas hijau tua, teks "PETROKIMIA GRESIK"/"PUPUK
+    INDONESIA" di dalam logo nyaris tidak terbaca karena warnanya menyatu dgn latar.
+    Dipanggil SEBELUM add_picture supaya logonya berada DI ATAS bingkai.
+
+    ROUNDED_RECTANGLE dipakai (bukan oval): adjustment-nya disetel ke 0,5 = radius
+    setengah sisi pendek, yang membuat kedua ujungnya membulat penuh seperti pill."""
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.oxml.ns import qn
+    kotak = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x_in), Inches(y_in),
+        Inches(w_in), Inches(h_in))
+    kotak.fill.solid()
+    kotak.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    kotak.line.fill.background()
+    kotak.text_frame.text = ''
+    # adj 0,5 = radius setengah sisi terpendek -> ujung membulat PENUH
+    for av in kotak._element.spPr.findall(qn('a:prstGeom') + '/' + qn('a:avLst')):
+        for gd in list(av):
+            av.remove(gd)
+        gd = av.makeelement(qn('a:gd'), {'name': 'adj', 'fmla': 'val 50000'})
+        av.append(gd)
+    _pasang_bayangan(kotak)
+    return kotak
+
+
+def add_logo(slide, logo_path, x=None, y=Inches(0.18), width=Inches(2.63), dark=False, pill=False):
     """`dark` sebelumnya menggambar chip/oval putih di belakang logo di slide berlatar
     gelap, tapi PERMINTAAN USER: hasilnya terlihat aneh — sekarang logo tampil polos tanpa
     background treatment apa pun, di latar apa saja.
@@ -454,6 +527,22 @@ def add_logo(slide, logo_path, x=None, y=Inches(0.18), width=Inches(2.63), dark=
         return
     x = x if x is not None else (SLIDE_W - width - Inches(0.35))
     try:
+        if pill:
+            # Bingkai digambar DULU supaya logo berada di atasnya. Tingginya dihitung
+            # dari rasio gambar sungguhan, bukan ditebak - rasio logo berubah sejak
+            # padding transparannya dipotong (lihat catatan panjang di atas).
+            from PIL import Image
+            with Image.open(logo_path) as _im:
+                _rasio = _im.height / float(_im.width or 1)
+            _w_in = Emu(width).inches
+            _h_in = _w_in * _rasio
+            _pill_logo(
+                slide,
+                Emu(x).inches - _LOGO_PILL_PAD_X_IN,
+                Emu(y).inches - _LOGO_PILL_PAD_Y_IN,
+                _w_in + 2 * _LOGO_PILL_PAD_X_IN,
+                _h_in + 2 * _LOGO_PILL_PAD_Y_IN,
+            )
         slide.shapes.add_picture(logo_path, x, y, width=width)
     except Exception:
         pass
@@ -2366,9 +2455,16 @@ def _build_cover_slide(block: dict, ctx: _PptBlockContext):
     cover = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
     add_dark_bg(cover, theme=ctx.theme)
     add_corner_flourish(cover, ctx.flourish_corner, theme=ctx.theme)
-    add_logo(cover, ctx.logo_path, width=Inches(2.85), dark=True)
+    # 1e: bingkai pill putih HANYA jalur Visual - di jalur Descriptive cover tidak
+    # berubah sedikit pun.
+    _mgmt = bool(block.get("is_management"))
+    add_logo(cover, ctx.logo_path, width=Inches(2.85), dark=True, pill=_mgmt,
+             x=(SLIDE_W - Inches(2.85) - Inches(0.30)) if _mgmt else None,
+             y=Inches(0.30) if _mgmt else Inches(0.18))
 
-    add_kicker(cover, block["kicker"], color=WHITE, y=Inches(1.7))
+    # 1b: kicker dilewati kalau kosong - jalur Visual membuangnya, Descriptive tetap.
+    if str(block.get("kicker") or "").strip():
+        add_kicker(cover, block["kicker"], color=WHITE, y=Inches(1.7))
 
     # Ukuran font judul menyesuaikan panjangnya (laporan bisa dari domain apa saja
     # - SOC, keuangan, KPI, dll - judulnya bisa jauh lebih panjang/pendek dari
@@ -2376,7 +2472,12 @@ def _build_cover_slide(block: dict, ctx: _PptBlockContext):
     # judul yang sebenarnya — bukan angka tetap — supaya tidak pernah tertimpa
     # berapa pun baris yang dibutuhkan judul untuk wrap.
     title_text = block["title"]
-    if len(title_text) > 55:
+    # Jalur Visual memakai tangga ukuran BERSAMA dgn PDF (satu sumber di
+    # report_render_logic) - sebelumnya kedua exporter punya tangganya sendiri dan sudah
+    # menyimpang jauh (44/38/32/26 di sini vs 34 tetap di PDF) untuk halaman yang sama.
+    if _mgmt:
+        title_size_pt = ukuran_judul_cover_mgmt(title_text)
+    elif len(title_text) > 55:
         title_size_pt = 26
     elif len(title_text) > 40:
         title_size_pt = 32
@@ -2394,33 +2495,47 @@ def _build_cover_slide(block: dict, ctx: _PptBlockContext):
     tp.text = title_text
     _set_font(tp, TITLE_FONT, Pt(title_size_pt), bold=True, color=WHITE)
 
-    title_height_in = _estimate_wrapped_height_in(title_text, title_size_pt, 9.5)
-    sub_top_in = max(title_top_in + title_height_in + 0.15, 3.05)
+    title_height_in = _estimate_wrapped_height_in(
+        title_text, title_size_pt, 9.5,
+        em_per_char=_EM_KARAKTER_JUDUL_COVER if _mgmt else 0.6)
+    # Lantai posisi jalur Visual diturunkan 0,17in agar sejajar dgn PDF (terukur dari
+    # render piksel kedua format). Mekanismenya tidak berubah: tinggi judul yang di-wrap
+    # tetap ikut dihitung supaya judul panjang tidak menabrak baris di bawahnya.
+    _lantai_sub = 2.72 if _mgmt else 3.05
+    _jarak_sub = 0.01 if _mgmt else 0.15
+    sub_top_in = max(title_top_in + title_height_in + _jarak_sub, _lantai_sub)
     sub_box = cover.shapes.add_textbox(MARGIN_X, Inches(sub_top_in), Inches(9.5), Inches(0.5))
     sp = sub_box.text_frame.paragraphs[0]
     sp.alignment = PP_ALIGN.LEFT
     sp.text = block["subtitle"]
-    _set_font(sp, BODY_FONT, Pt(15), color=WHITE)
+    _set_font(sp, BODY_FONT, Pt(_MGMT_COVER_SUB_PT if _mgmt else 15), color=WHITE)
 
-    info_top_in = max(sub_top_in + 0.65, 3.9)
+    _jarak_info = 0.43 if _mgmt else 0.65
+    _lantai_info = 3.17 if _mgmt else 3.9
+    info_top_in = max(sub_top_in + _jarak_info, _lantai_info)
     info_box = cover.shapes.add_textbox(MARGIN_X, Inches(info_top_in), Inches(9.5), Inches(0.9))
     itf = info_box.text_frame
     itf.word_wrap = True
     p1 = itf.paragraphs[0]
     p1.alignment = PP_ALIGN.LEFT
     p1.text = f'{block["period_label"]} {block["period_text"]}'
-    _set_font(p1, BODY_FONT, Pt(12.5), color=WHITE)
-    p2 = itf.add_paragraph()
-    p2.alignment = PP_ALIGN.LEFT
-    p2.text = block["info_line"]
-    _set_font(p2, BODY_FONT, Pt(12.5), color=ctx.accent_soft)
-    p2.space_before = Pt(6)
+    _set_font(p1, BODY_FONT, Pt(_MGMT_COVER_PERIOD_PT if _mgmt else 12.5), color=WHITE)
+    # 1c: baris info DILEWATI kalau kosong - menambah paragraf kosong tetap menyisakan
+    # satu baris tinggi di kotak teks, jadi yang terlihat bukan 'baris hilang'.
+    if str(block.get("info_line") or "").strip():
+        p2 = itf.add_paragraph()
+        p2.alignment = PP_ALIGN.LEFT
+        p2.text = block["info_line"]
+        _set_font(p2, BODY_FONT, Pt(_MGMT_COVER_PERIOD_PT if _mgmt else 12.5),
+                  color=ctx.accent_soft)
+        p2.space_before = Pt(6)
 
-    footer_l = cover.shapes.add_textbox(MARGIN_X, SLIDE_H - Inches(0.55), Inches(5), Inches(0.3))
+    _footer_off = 0.42 if _mgmt else 0.55
+    footer_l = cover.shapes.add_textbox(MARGIN_X, SLIDE_H - Inches(_footer_off), Inches(5), Inches(0.3))
     flp = footer_l.text_frame.paragraphs[0]
     flp.alignment = PP_ALIGN.LEFT
     flp.text = block["header_title"]
-    _set_font(flp, BODY_FONT, Pt(10), bold=True, color=WHITE)
+    _set_font(flp, BODY_FONT, Pt(_MGMT_COVER_FOOTER_PT if _mgmt else 10), bold=True, color=WHITE)
     return None
 
 
@@ -3403,38 +3518,49 @@ def _build_closing_slide(block: dict, ctx: _PptBlockContext):
     # sama sekali tidak punya logo — satu-satunya halaman yang benar2 tanpa identitas brand.
     # Ukuran sama besarnya dgn cover (halaman pertama & terakhir yang dilihat, sengaja lebih
     # menonjol drpd slide isi).
-    add_logo(closing, ctx.logo_path, width=Inches(2.85), dark=True)
+    _mgmt = bool(block.get("is_management"))
+    add_logo(closing, ctx.logo_path, width=Inches(2.85), dark=True, pill=_mgmt)
     # Teks digeser ke kanan kalau flourish-nya di pojok kiri-bawah (satu-satunya
     # varian yang jangkauannya menjorok ke area teks, yang start dari MARGIN_X) —
     # keluhan nyata dari pengguna: garis lengkung dekoratif menembus teks penutup.
     text_x2 = Inches(2.3) if ctx.flourish_corner == "bottom_left" else MARGIN_X
     text_w2 = Inches(9) - (text_x2 - MARGIN_X)
     text_w2_in = Emu(text_w2).inches
-    title_box2 = closing.shapes.add_textbox(text_x2, Inches(3.0), text_w2, Inches(1.0))
+    # Jalur Visual: judul penutup dinaikkan 0,90in agar sejajar dgn PDF (terukur).
+    _ty_top = 2.10 if _mgmt else 3.0
+    title_box2 = closing.shapes.add_textbox(text_x2, Inches(_ty_top), text_w2, Inches(1.0))
     tp3 = title_box2.text_frame.paragraphs[0]
     tp3.alignment = PP_ALIGN.LEFT
     tp3.text = block["thank_you"]
-    _set_font(tp3, TITLE_FONT, Pt(40), bold=True, color=WHITE)
-    sub2_top_in = 3.85
+    _set_font(tp3, TITLE_FONT, Pt(_MGMT_CLOSING_THANKS_PT if _mgmt else 40), bold=True, color=WHITE)
+    sub2_top_in = 2.74 if _mgmt else 3.85
     # BUG YANG DIPERBAIKI (dilaporkan user): box ini dulu tinggi TETAP 0.8in,
     # sementara note_box di bawah diposisikan berdasarkan estimasi tinggi KONTEN
     # sebenarnya (sub2_height_in, sering < 0.8in utk judul 1 baris) — box tetap
     # 0.8in penuh jadi meluber menimpa note_box. Tinggi box sekarang eksplisit
     # mengikuti estimasi yang sama dipakai utk memposisikan note_box di bawahnya.
-    sub2_height_in = _estimate_wrapped_height_in(block["title"], 14, text_w2_in)
-    sub_box2 = closing.shapes.add_textbox(text_x2, Inches(sub2_top_in), text_w2, Inches(sub2_height_in + 0.1))
-    sp2 = sub_box2.text_frame
-    sp2.word_wrap = True
-    sp2_p = sp2.paragraphs[0]
-    sp2_p.alignment = PP_ALIGN.LEFT
-    sp2_p.text = block["title"]
-    _set_font(sp2_p, BODY_FONT, Pt(14), color=WHITE)
-    note_top_in = max(sub2_top_in + sub2_height_in + 0.1, 4.4)
+    # 1f: baris yang mengulang judul laporan DILEWATI kalau kosong - jalur Visual
+    # membuangnya. Tingginya ikut nol supaya catatan di bawahnya naik, bukan menyisakan
+    # celah kosong setinggi satu baris.
+    if str(block.get("title") or "").strip():
+        sub2_height_in = _estimate_wrapped_height_in(block["title"], 14, text_w2_in)
+        sub_box2 = closing.shapes.add_textbox(text_x2, Inches(sub2_top_in), text_w2, Inches(sub2_height_in + 0.1))
+        sp2 = sub_box2.text_frame
+        sp2.word_wrap = True
+        sp2_p = sp2.paragraphs[0]
+        sp2_p.alignment = PP_ALIGN.LEFT
+        sp2_p.text = block["title"]
+        _set_font(sp2_p, BODY_FONT, Pt(14), color=WHITE)
+    else:
+        sub2_height_in = 0.0
+    _lantai_note = 2.74 if _mgmt else 4.4
+    note_top_in = max(sub2_top_in + sub2_height_in + 0.1, _lantai_note)
     note_box = closing.shapes.add_textbox(text_x2, Inches(note_top_in), text_w2, Inches(0.4))
     np_ = note_box.text_frame.paragraphs[0]
     np_.alignment = PP_ALIGN.LEFT
     np_.text = block["note"]
-    _set_font(np_, BODY_FONT, Pt(11.5), italic=True, color=ctx.accent_soft)
+    _set_font(np_, BODY_FONT, Pt(_MGMT_CLOSING_NOTE_PT if _mgmt else 11.5), italic=True,
+              color=ctx.accent_soft)
     return None
 
 

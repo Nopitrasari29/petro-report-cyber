@@ -27,6 +27,8 @@ from app.services.report_render_logic import (
     _DASH_FACT_STRIP_H_IN, _DASH_FACT_PAIR_H_IN, _DASH_MAIN_VISUAL_RANGE_IN, _DASH_MARGIN_X_IN, _DASH_COL_GAP_IN,
     _DASH_TITLE_MAX_H_IN, _DASH_CONTENT_BOTTOM_IN, _layout_insight_layers, _layout_dashboard_column_content,
     tinggi_kartu_in, wrap_line_count, muat_catatan, kolom_yang_digambar, _kpi_card_widths,
+    ukuran_judul_cover_mgmt, _MGMT_COVER_SUB_PT, _MGMT_COVER_PERIOD_PT,
+    _MGMT_COVER_FOOTER_PT, _MGMT_CLOSING_THANKS_PT, _MGMT_CLOSING_NOTE_PT,
     metrik_judul_dashboard,
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
     warna_pita_panel, rapikan_nama_kolom,
@@ -1821,7 +1823,22 @@ def _flourish_html(corner="bottom_right", theme: dict | None = None) -> str:
     return f'<div style="position:absolute;top:0;right:0;bottom:0;left:0;overflow:hidden;pointer-events:none;">{circles}</div>'
 
 
-def _cover_subtitle_html(block: dict) -> str:
+# Ukuran cover jalur Visual dibaca dari SATU sumber di report_render_logic supaya PDF &
+# PPTX tidak bisa menyimpang lagi - lihat catatan di sana.
+
+
+def _baris_cover_html(teks, gaya: str) -> str:
+    """Satu baris cover yang HILANG SELURUHNYA kalau isinya kosong.
+
+    Sama alasannya dgn _cover_subtitle_html: menyetel field jadi "" saja tidak cukup -
+    div kosong tetap lahir dgn line-box + margin, jadi yang terlihat bukan "baris
+    hilang" tapi "celah kosong setinggi satu baris". Dipakai baris info cover jalur
+    Visual (1c) dan judul-ulang di penutup (1f)."""
+    t = str(teks or "").strip()
+    return f'<div style="{gaya}">{_esc(t)}</div>' if t else ""
+
+
+def _cover_subtitle_html(block: dict, size_pt: float = 12.5) -> str:
     """Baris subtitle cover - DIHILANGKAN SELURUHNYA kalau isinya kosong.
 
     PERMINTAAN USER (Management Report): subtitle generik dibuang dari cover. Menyetel
@@ -1836,7 +1853,8 @@ def _cover_subtitle_html(block: dict) -> str:
     sub = str(block.get("subtitle") or "").strip()
     if not sub:
         return ""
-    return f'<div style="font-size:12.5pt;color:#fff;margin-bottom:20px;">{_esc(sub)}</div>'
+    return (f'<div style="font-size:{size_pt}pt;color:#fff;margin-bottom:20px;">'
+            f'{_esc(sub)}</div>')
 
 
 def _split_cover_td(block, flourish_corner, logo_b64=None, theme: dict | None = None) -> str:
@@ -1934,17 +1952,40 @@ def _split_closing_td(block, flourish_corner="bottom_right", logo_b64=None, them
     return left_td + right_td
 
 
-def _dark_logo_html(logo_b64, size_px=84, top="0.3in", right="0.3in") -> str:
-    """Logo di atas latar GELAP — PERMINTAAN USER: sempat dibungkus kotak putih solid, lalu
-    glow radial, akhirnya keduanya dianggap aneh/mengganggu. Sekarang tampil polos tanpa
-    background treatment apa pun, sama seperti logo di halaman terang."""
+# Bingkai lockup logo di latar gelap (1e). Ukurannya diturunkan dari tinggi logo, bukan
+# dipatok: padding mendatar lebih lebar drpd menegak supaya bentuknya pill memanjang
+# seperti lockup korporat, dan radius = setengah tinggi total supaya kedua ujungnya
+# membulat PENUH berapa pun ukuran logonya.
+_LOGO_PILL_PAD_X_PX = 14
+_LOGO_PILL_PAD_Y_PX = 8
+
+
+def _dark_logo_html(logo_b64, size_px=84, top="0.3in", right="0.3in", pill=False) -> str:
+    """Logo di atas latar GELAP.
+
+    Riwayat: kotak putih solid & glow radial pernah dicoba lalu dibuang karena dianggap
+    mengganggu, sehingga logo tampil polos. PERMINTAAN USER SEKARANG mengembalikannya
+    dalam bentuk berbeda & spesifik: bingkai PILL putih (kedua ujung membulat penuh) dgn
+    bayangan lembut, HANYA di halaman berlatar gelap (cover & penutup jalur Visual).
+    Alasannya terukur di render: di atas hijau tua, teks "PETROKIMIA GRESIK"/"PUPUK
+    INDONESIA" di dalam logo nyaris tidak terbaca karena warnanya menyatu dgn latar.
+
+    Halaman konten berlatar putih TIDAK memakai bingkai ini - di sana logo sudah kontras."""
+    img = (f'<img src="data:image/png;base64,{logo_b64}" '
+           f'style="height:{size_px}px;display:block;" />')
+    if not pill:
+        return (f'<div style="position:absolute;top:{top};right:{right};'
+                f'line-height:0;">{img}</div>')
+    _radius = size_px / 2.0 + _LOGO_PILL_PAD_Y_PX
     return (
-        f'<div style="position:absolute;top:{top};right:{right};line-height:0;">'
-        f'<img src="data:image/png;base64,{logo_b64}" style="height:{size_px}px;display:block;" /></div>'
+        f'<div style="position:absolute;top:{top};right:{right};line-height:0;'
+        f'background:#fff;padding:{_LOGO_PILL_PAD_Y_PX}px {_LOGO_PILL_PAD_X_PX}px;'
+        f'border-radius:{_radius:.1f}px;'
+        f'box-shadow:0 2px 6px rgba(0,0,0,0.28);">{img}</div>'
     )
 
 
-def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None, logo_b64=None, last=False, raw=False, theme: dict | None = None, center=False, logo_size_px=None) -> str:
+def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None, logo_b64=None, last=False, raw=False, theme: dict | None = None, center=False, logo_size_px=None, logo_pill=False) -> str:
     t = theme or THEME_PALETTES["green"]
     break_style = "" if last else "page-break-after:always;"
     if raw:
@@ -1982,7 +2023,7 @@ def _page(inner_html, dark=False, flourish=None, page_num=None, total_pages=None
         # logonya kelihatan lebih kecil drpd halaman isi berlatar terang (mis. dashboard
         # visual), padahal keduanya sama2 "isi", harusnya konsisten. Disamakan ke 36px
         # (ukuran yang LEBIH BESAR dari 2 itu, sesuai pilihan user) utk kedua cabang.
-        logo_html = _dark_logo_html(logo_b64, size_px=logo_size_px or 36)
+        logo_html = _dark_logo_html(logo_b64, size_px=logo_size_px or 36, pill=logo_pill)
     elif logo_b64:
         # BUG DIPERBAIKI (sama persis dgn cabang dark di atas): 108px dihitung sblm logo
         # dipotong dari padding transparannya — diturunkan ke 50px (108 * rasio ~0.462) supaya
@@ -2139,13 +2180,24 @@ def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         # judul di atasnya hilang). Diganti <div> SPACER berheight eksplisit sebagai
         # SIBLING (bukan parent) sebelum kicker — height eksplisit pada div sendiri
         # (bukan margin pada parent) terbukti aman di posisi manapun dalam alur.
+        # 1d: judul & subtitle cover diperbesar - HANYA jalur Visual. Cabang solid ini
+        # dipakai Descriptive juga, jadi ukurannya dipilih dari blok, bukan diganti
+        # global. Ruang cover memang jadi longgar sesudah kicker & baris info dibuang.
+        _mgmt = bool(block.get("is_management"))
+        # Judul panjang dikecilkan bertahap - cabang solid TIDAK punya penyesuaian ini
+        # sebelumnya (34pt tetap), dan pada 44pt judul panjang akan meluber lebar halaman.
+        # Tangganya meniru varian split yang sudah ada, digeser naik satu tingkat.
+        _judul_pt = ukuran_judul_cover_mgmt(block.get('title')) if _mgmt else 34
+        _sub_pt = _MGMT_COVER_SUB_PT if _mgmt else 12.5
+        _period_pt = _MGMT_COVER_PERIOD_PT if _mgmt else 10.5
+        _footer_pt = _MGMT_COVER_FOOTER_PT if _mgmt else 9
         inner = (
             f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
-            f'{_kicker(block["kicker"], WHITE)}'
-            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:34pt;color:#fff;margin-bottom:10px;">{_esc(block["title"])}</div>'
-            f'{_cover_subtitle_html(block)}'
-            f'<div style="font-size:10.5pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
-            f'<div style="font-size:10.5pt;color:{ctx.accent_soft};margin-top:6px;">{_esc(block["info_line"])}</div>'
+            f'{_kicker(block["kicker"], WHITE) if str(block.get("kicker") or "").strip() else ""}'
+            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:{_judul_pt}pt;color:#fff;margin-bottom:12px;line-height:1.12;">{_esc(block["title"])}</div>'
+            f'{_cover_subtitle_html(block, size_pt=_sub_pt)}'
+            f'<div style="font-size:{_period_pt}pt;color:#fff;">{_esc(block["period_label"])} {_esc(block["period_text"])}</div>'
+            f'{_baris_cover_html(block["info_line"], "font-size:10.5pt;color:%s;margin-top:6px;" % ctx.accent_soft)}'
             # BUG YANG DIPERBAIKI (dilaporkan user): "bottom:0" di sini dulu terlihat benar
             # SECARA KEBETULAN (parent belum position:relative saat itu, jadi malah escape ke
             # tepi FISIK kertas). Setelah parent diperbaiki jadi position:relative (lihat
@@ -2154,7 +2206,7 @@ def _build_cover_block(block: dict, ctx: _PdfBlockContext) -> tuple:
             # tumpang tindih dgn baris info di atasnya. Diganti "top:6.6in" (offset tetap dari
             # atas div, POLA SAMA yang sudah dipakai _split_cover_td utk elemen serupa, TIDAK
             # bergantung tinggi konten di atasnya).
-            f'<div style="position:absolute;top:6.6in;left:0;font-size:9pt;font-weight:700;color:#fff;">{_esc(block["header_title"])}</div>'
+            f'<div style="position:absolute;top:6.6in;left:0;font-size:{_footer_pt}pt;font-weight:700;color:#fff;">{_esc(block["header_title"])}</div>'
         )
         return (inner, True, ctx.flourish_corner, False)
 
@@ -2829,11 +2881,16 @@ def _build_closing_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         # Spacer sibling, bukan margin-top pada div pembungkus — lihat catatan panjang
         # di slide "cover" di atas (bug yang sama persis, ini slide yang jadi bukti
         # nyatanya: judul "Terima Kasih" hilang kepotong ke atas halaman sebelum fix).
+        # Ukuran penutup jalur Visual memakai sumber yang SAMA dgn PPTX (lihat
+        # report_render_logic) - sebelumnya 30pt/10,5pt di sini vs 40pt/11,5pt di PPTX.
+        _mgmt = bool(block.get("is_management"))
+        _thanks_pt = _MGMT_CLOSING_THANKS_PT if _mgmt else 30
+        _note_pt = _MGMT_CLOSING_NOTE_PT if _mgmt else 10.5
         inner = (
             f'<div style="height:1.6in;font-size:1px;line-height:1px;">&nbsp;</div>'
-            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:30pt;color:#fff;margin-bottom:10px;">{_esc(block["thank_you"])}</div>'
-            f'<div style="font-size:12pt;color:#fff;margin-bottom:8px;">{_esc(block["title"])}</div>'
-            f'<div style="font-size:10.5pt;font-style:italic;color:{ctx.accent_soft};">{_esc(block["note"])}</div>'
+            f'<div style="font-family:{TITLE_FONT};font-weight:700;font-size:{_thanks_pt}pt;color:#fff;margin-bottom:10px;">{_esc(block["thank_you"])}</div>'
+            f'{_baris_cover_html(block["title"], "font-size:12pt;color:#fff;margin-bottom:8px;")}'
+            f'<div style="font-size:{_note_pt}pt;font-style:italic;color:{ctx.accent_soft};">{_esc(block["note"])}</div>'
         )
         return (inner, True, ctx.flourish_corner, True)
 
@@ -4687,6 +4744,10 @@ class PDFExporter:
                 logo_b64=logo_b64,
                 last=is_last, raw=raw, theme=ctx.theme, center=center,
                 logo_size_px=39 if is_cover_or_closing else None,
+                # 1e: bingkai pill putih HANYA di cover & penutup jalur Visual - dua
+                # halaman berlatar gelap tempat logo menyatu dgn warna latar. Halaman
+                # konten (latar putih) & jalur Descriptive tidak tersentuh.
+                logo_pill=bool(is_cover_or_closing and dark and block.get("is_management")),
             ))
 
         html_content = f"""

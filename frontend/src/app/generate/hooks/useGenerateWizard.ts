@@ -123,6 +123,16 @@ export function useGenerateWizard() {
     fetchFormDefaults();
   }, []);
 
+  // Usulan AI (suggestSectionsFromFile) bisa memakan beberapa menit & kembali SESUDAH user
+  // mengetik sendiri di Step 2. Tanpa penanda ini, usulan yang telat itu menimpa ketikan user
+  // tanpa syarat - persis gejala "Kop Header custom tidak muncul di cover". AbortController
+  // yang sudah ada tidak menolong: ia membatalkan saat BERKAS diganti, bukan saat kolomnya
+  // diedit. Kolom yang sudah disentuh user tidak lagi ditimpa; yang masih apa adanya tetap
+  // diisi usulan - itu gunanya.
+  const headerTitleTouchedRef = useRef(false);
+  const headerSubtitleTouchedRef = useRef(false);
+  const dynamicSectionsTouchedRef = useRef(false);
+
   const [headerTitle, setHeaderTitle] = useState("PT PETROKIMIA GRESIK");
   const [headerSubtitle, setHeaderSubtitle] = useState(
     "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
@@ -459,10 +469,16 @@ export function useGenerateWizard() {
 
       if (res.ok) {
         const data = await res.json();
-        if (data.header_title) setHeaderTitle(data.header_title);
-        if (data.header_subtitle) setHeaderSubtitle(data.header_subtitle);
+        if (data.header_title && !headerTitleTouchedRef.current)
+          setHeaderTitle(data.header_title);
+        if (data.header_subtitle && !headerSubtitleTouchedRef.current)
+          setHeaderSubtitle(data.header_subtitle);
         if (data.domain_type) setDomainType(data.domain_type);
-        if (data.suggested_sections && Array.isArray(data.suggested_sections)) {
+        if (
+          data.suggested_sections &&
+          Array.isArray(data.suggested_sections) &&
+          !dynamicSectionsTouchedRef.current
+        ) {
           setDynamicSections(data.suggested_sections);
         }
       }
@@ -1087,6 +1103,24 @@ export function useGenerateWizard() {
   // Reset penuh ke Step 0 (tombol "Buat Laporan Baru" di Step 5) — sebelumnya inline di JSX
   // onReset={() => {...}}, dipindah ke sini supaya page.tsx tidak perlu tahu daftar lengkap
   // state yang harus direset satu-satu.
+  // Dipakai UI (Step 2). Versi mentah setHeaderTitle/dst tetap dipakai internal - untuk
+  // mengisi nilai usulan & mengosongkan saat reset - dan itu memang TIDAK boleh menandai
+  // "disentuh user".
+  const setHeaderTitleManual = (val: string) => {
+    headerTitleTouchedRef.current = true;
+    setHeaderTitle(val);
+  };
+  const setHeaderSubtitleManual = (val: string) => {
+    headerSubtitleTouchedRef.current = true;
+    setHeaderSubtitle(val);
+  };
+  const setDynamicSectionsManual: React.Dispatch<
+    React.SetStateAction<DynamicSectionItem[]>
+  > = (val) => {
+    dynamicSectionsTouchedRef.current = true;
+    setDynamicSections(val);
+  };
+
   const resetWizard = () => {
     sessionStorage.removeItem(ACTIVE_REPORT_ID_KEY);
     setCurrentStep(0);
@@ -1105,6 +1139,9 @@ export function useGenerateWizard() {
     setLanguage("English");
     setDynamicSections([]);
     setSectionsLoading(false);
+    headerTitleTouchedRef.current = false;
+    headerSubtitleTouchedRef.current = false;
+    dynamicSectionsTouchedRef.current = false;
     setHeaderTitle("PT PETROKIMIA GRESIK");
     setHeaderSubtitle(
       "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
@@ -1149,12 +1186,12 @@ export function useGenerateWizard() {
     sections,
     setSections,
     dynamicSections,
-    setDynamicSections,
+    setDynamicSections: setDynamicSectionsManual,
     sectionsLoading,
     headerTitle,
-    setHeaderTitle,
+    setHeaderTitle: setHeaderTitleManual,
     headerSubtitle,
-    setHeaderSubtitle,
+    setHeaderSubtitle: setHeaderSubtitleManual,
     themeColor,
     setThemeColor,
     stylePreset,

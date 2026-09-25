@@ -7434,6 +7434,28 @@ def format_report_date(dt: datetime.datetime, language: str | None) -> str:
     return dt.strftime('%d %B %Y')
 
 
+# ---- Ukuran teks cover & penutup JALUR VISUAL -----------------------------------------
+# SATU sumber dipakai KEDUA exporter. Sebelumnya tiap exporter memakai angkanya sendiri dan
+# keduanya sudah menyimpang jauh untuk halaman yang seharusnya sama: judul 44/38/32/26 (PPTX)
+# vs 34 tetap (PDF), subtitle 15 vs 12,5, baris periode 12,5 vs 10,5, "Terima Kasih" 40 vs 30,
+# catatan penutup 11,5 vs 10,5. Kanvas keduanya sama-sama 13,333x7,5in dan satuannya sama-sama
+# poin, jadi angka yang sama = ukuran visual yang sama.
+#
+# Judul mengecil bertahap mengikuti panjangnya: laporan bisa dari domain apa pun dan judulnya
+# bisa jauh lebih panjang dari contoh mana pun - pada 44pt judul panjang meluber lebar halaman.
+_MGMT_COVER_SUB_PT = 16.0
+_MGMT_COVER_PERIOD_PT = 12.0
+_MGMT_COVER_FOOTER_PT = 10.0
+_MGMT_CLOSING_THANKS_PT = 40.0
+_MGMT_CLOSING_NOTE_PT = 12.0
+
+
+def ukuran_judul_cover_mgmt(judul) -> float:
+    """Ukuran judul cover jalur Visual, mengecil bertahap mengikuti panjang judul."""
+    n = len(str(judul or ""))
+    return 30.0 if n > 55 else 36.0 if n > 40 else 40.0 if n > 28 else 44.0
+
+
 def format_period(report) -> str:
     # PERMINTAAN USER (F5): pastikan tanggal mulai <= tanggal selesai — dipakai di SEMUA
     # tempat period_text ditampilkan (cover, Ringkasan Eksekutif, panel scope, dst, lihat
@@ -9254,7 +9276,11 @@ def build_management_report_blocks(report) -> list[dict]:
         # (export_pdf.py) & _build_cover_slide/add_split_cover_slide (export_ppt.py), sama
         # persis skema yang dipakai build_report_blocks() di file ini. Tanpa field ini, ekspor
         # PDF/PPT utk template "Management Report" gagal dgn KeyError begitu blok cover dirender.
-        "kicker": L("LAPORAN MANAJEMEN", "MANAGEMENT REPORT"),
+        # 1b (permintaan user): kicker "LAPORAN MANAJEMEN"/"MANAGEMENT REPORT" DIBUANG dari
+        # cover jalur Visual - label itu cuma mengulang jenis template, nol informasi buat
+        # pembaca. Key-nya TETAP ADA (kedua exporter mengindeksnya langsung, menghapusnya =
+        # KeyError); yang kosong dilewati penggambarnya. Cover Descriptive tidak disentuh.
+        "kicker": "",
         "title": report.title,
         # PERMINTAAN USER (dua tahap, jangan digabung jadi satu aturan):
         # (1) subtitle GENERIK bawaan dihapus - teksnya cuma mengulang jenis template
@@ -9275,10 +9301,10 @@ def build_management_report_blocks(report) -> list[dict]:
         "total_records": total_records,
         "category_count": len(top_categories),
         "critical_count": critical_count,
-        "info_line": L(
-            f"{total_records} data, {critical_count} kategori kritis",
-            f"{total_records} records, {critical_count} critical categories",
-        ),
+        # 1c (permintaan user): baris "N data, N kategori kritis" DIBUANG dari cover jalur
+        # Visual. total_records & critical_count TETAP dihitung & tetap dibawa di blok -
+        # keduanya dipakai hero_stat dan pemakai lain - yang berhenti cuma pencetakannya.
+        "info_line": "",
         "hero_stat": (str(total_records), L("Total Data", "Total Records")),
         "hero_stat_kicker": L("CAPAIAN KESELURUHAN", "OVERALL FIGURE"),
         "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
@@ -10273,11 +10299,21 @@ def build_management_report_blocks(report) -> list[dict]:
     blocks.append({
         "kind": "closing",
         "dark": True,
-        "title": report.title,
+        # 1f (permintaan user): baris yang MENGULANG judul laporan dibuang dari penutup -
+        # judulnya sudah dibaca di cover. Key-nya tetap ada & kosong, sama polanya dgn
+        # kicker/info_line di cover; penggambarnya melewatkan yang kosong.
+        "title": "",
         "thank_you": L("Terima Kasih", "Thank You"),
-        "note": L("Laporan ini disiapkan untuk keperluan manajemen.", "This report is prepared for management use."),
+        # Baris italic di bawah "Terima Kasih" TETAP ADA sbg elemen, isinya diganti nama
+        # departemen. Sengaja TIDAK diterjemahkan: ini nama unit organisasi (nama diri),
+        # aturannya sama dgn nilai data - yang ikut bahasa laporan cuma teks yang DITULIS
+        # sistem, bukan nama yang sudah punya bentuk resmi sendiri.
+        "note": "Departemen Teknologi Informasi PKG",
         "hero_stat": (str(total_records), L("Total Data", "Total Records")),
         "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
+        # Dipakai exporter utk memutuskan bingkai logo (lihat 1e) - penutup jalur Visual
+        # berlatar gelap sama spt cover-nya.
+        "is_management": True,
     })
 
     # PERMINTAAN USER (temuan dari audit langsung: 6 halaman insight topik berbeda ternyata
