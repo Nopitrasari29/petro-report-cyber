@@ -10126,7 +10126,14 @@ def build_management_report_blocks(report) -> list[dict]:
     # visual sama sekali - kasus langka), jatuh kembali ke halaman solo lama (jaring
     # pengaman, tidak pernah lebih buruk dari sebelumnya).
     _MGMT_NARRATIVE_SOLO_THRESHOLD = 2
-    if narrative_items and len(narrative_items) <= _MGMT_NARRATIVE_SOLO_THRESHOLD and not any(item.get("preserve_topic") for item in narrative_items):
+    # Syarat "tidak ada preserve_topic" DIBUANG: bendera itu dipasang di SETIAP butir narasi
+    # (lihat kedua tempat narrative_items.append di atas), jadi jalur penyerapan ini tidak
+    # pernah sekali pun berjalan - cabang mati yang tidak kelihatan karena tidak pernah error.
+    # Maksud aslinya menjaga agar seksi AI tidak hilang diam-diam; penyerapan TIDAK
+    # menghilangkannya - teksnya tetap tampil sbg butir catatan di halaman insight terakhir,
+    # cuma dipendekkan. Terukur di laporan 199: satu butir narasi tersisa mendapat halaman
+    # sendiri dgn cakupan tinta 5% - halaman nyaris kosong, persis yang mau dihindari.
+    if narrative_items and len(narrative_items) <= _MGMT_NARRATIVE_SOLO_THRESHOLD:
         target_insight_page = next((b for b in reversed(blocks) if b.get("kind") == "management_insight_page"), None)
         if target_insight_page is not None:
             extra_notes = [
