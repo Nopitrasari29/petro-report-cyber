@@ -1393,15 +1393,6 @@ def _priority_panel(title_text, items, theme: dict | None = None) -> str:
     return _dark_panel(inner, theme=theme)
 
 
-def _pill(text, theme: dict | None = None) -> str:
-    t = theme or THEME_PALETTES["green"]
-    return (
-        f'<div style="background:{t["main"]};border:1px solid {t["light"]};border-radius:999px;'
-        f'padding:10px 16px;text-align:center;font-weight:700;font-size:10.5pt;color:{t["light"]};margin-bottom:10px;">'
-        f'{_esc(text)}</div>'
-    )
-
-
 def _card_grid(cell_inner_htmls: list, cols: int, card_style: dict | None = None) -> str:
     """Susun daftar HTML kartu jadi grid N kolom pakai <table> (bukan flexbox/grid CSS —
     tidak didukung xhtml2pdf, fallback engine kalau WeasyPrint tak tersedia).
@@ -2895,66 +2886,6 @@ def _build_closing_block(block: dict, ctx: _PdfBlockContext) -> tuple:
         return (inner, True, ctx.flourish_corner, True)
 
 
-def _build_management_kpi_grid_block(block: dict, ctx: _PdfBlockContext) -> tuple:
-    items = block.get("items", [])
-    cell_htmls = []
-    # BUG DIPERBAIKI (dilaporkan user): "blue"/"green"/"amber" SEBELUMNYA warna literal tetap
-    # (biru/hijau/emas baku), sama sekali tidak ikut report.theme_color — laporan yang temanya
-    # navy/dark/gold tetap tampil kartu biru-hijau-emas yang tidak nyambung. Ketiganya (netral/
-    # capaian-baik/sorotan, BUKAN status bahaya) sekarang diturunkan dari palet tema, sama
-    # seperti elemen lain di laporan. "red"/"orange"/"gray" TETAP warna semantik tetap (bahaya/
-    # peringatan/netral-pasif) — konvensi yang sama dgn SEVERITY_COLOR di tempat lain, TIDAK
-    # boleh ikut tema supaya makna "kritis" tetap konsisten dikenali di tema apa pun.
-    color_map = {
-        "blue": ctx.accent_main,
-        "green": ctx.accent_chart,
-        "amber": _light_safe(ctx.accent_light),
-        "red": RED_CRIT,
-        "orange": "#EA580C",
-        "gray": GRAY_TEXT,
-    }
-    # PERMINTAAN USER (berkali-kali — "kalau masih kosong di bawah, GEDEIN aja fontnya/
-    # kotaknya"): kartu SEBELUMNYA selalu ukuran tetap (angka 34pt, padding 16pt) apa pun
-    # jumlah kartunya — kalau cuma 2-3 kartu (1 baris), sisa halaman di bawah grid kosong
-    # total walau sudah ditengahkan vertikal. Sekarang ukuran ikut jumlah BARIS (bukan cuma
-    # posisinya) — makin sedikit baris, kartu (& angka di dalamnya) makin besar, pola sama
-    # dgn yg sudah dipakai di add_stat_card_grid versi PPT.
-    grid_cols = 2 if len(items) in (2, 4) else 3
-    rows = math.ceil(len(items) / grid_cols) if items else 1
-    scale = {1: 1.55, 2: 1.2}.get(rows, 1.0)
-    # padding dinaikkan LEBIH agresif drpd font (padding "gratis" mengisi ruang tanpa bikin
-    # angka terlihat aneh raksasa) — kartu jadi benar2 lebih TINGGI, bukan cuma angkanya besar.
-    pad_scale = {1: 2.6, 2: 1.5}.get(rows, 1.0)
-    value_pt = round(34 * scale)
-    label_pt = round(9.5 * scale)
-    pad_pt = round(16 * pad_scale)
-    dot_px = round(10 * scale)
-    left_colors = []
-    for item in items:
-        col = color_map.get(item.get("color", "blue"), ctx.accent_main)
-        left_colors.append(col)
-        delta_html = f'<div style="font-size:{round(9*scale)}pt;font-weight:600;color:{GRAY_TEXT};margin-top:{round(6*scale)}px;">{_esc(item["delta"])}</div>' if item.get("delta") else ""
-        # Kartu KPI diperbesar (angka 34pt, dot warna, padding lapang) — identitas "Visual
-        # tinggi, KPI ringkas" template ini, beda dgn kartu di SOC Technical Report yang lebih
-        # sedang ukurannya krn di sana angka cuma salah satu elemen, bukan sorotan utama.
-        cell_htmls.append(
-            f'<table cellpadding="0" cellspacing="0"><tr>'
-            f'<td style="width:{dot_px}px;height:{dot_px}px;background:{col};border-radius:{round(dot_px/2)}px;font-size:1px;">&nbsp;</td>'
-            f'<td style="padding-left:8px;font-size:{label_pt}pt;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:{col};">{_esc(item["label"])}</td>'
-            f'</tr></table>'
-            f'<div style="font-family:{TITLE_FONT};font-size:{value_pt}pt;font-weight:900;color:{col};margin-top:8px;">{_esc(item["value"])}</div>'
-            f'{delta_html}'
-        )
-    # Kolom grid menyesuaikan JUMLAH kartu sungguhan — dulu SELALU 3 kolom apa pun jumlah
-    # kartunya, kalau totalnya mis. 4 (bukan kelipatan 3), baris terakhir cuma terisi 1 dari
-    # 3 sel (2 sel kosong lebar), halaman jadi terlihat timpang/kurang padat.
-    # PERMINTAAN USER (E1, "tinggi kartu 1 baris harus seragam"): card_style dipakai — lihat
-    # catatan di _card_grid/_build_recommendations_block.
-    card_style = {"bg": IVORY, "border_color": PANEL_BORDER, "radius": 3, "pad_pt": pad_pt, "border_left_colors": left_colors}
-    inner = _kicker(block.get("kicker", "")) + _title(block.get("title", "")) + _card_grid(cell_htmls, grid_cols, card_style=card_style)
-    return (inner, False, None, False)
-
-
 def _mgmt_tile_chart_html(tile: dict, ctx: "_PdfBlockContext", compact: bool = False, scale: float | None = None) -> str:
     """Chart KOMPAK per tile dashboard (_build_management_visual_dashboard_block di bawah) —
     ukuran sengaja lebih kecil drpd versi 1-halaman-penuh yang dulu dipakai builder terpisah
@@ -3243,47 +3174,6 @@ def _build_dashboard_column_html(tile: dict, ctx: "_PdfBlockContext", col_w_in: 
         note_title = "Notes" if is_english(ctx.report) else "Catatan"
         parts.append(_note_box_html(tile["notes"], theme=ctx.theme, title=note_title))
     return "".join(parts)
-
-
-def _build_management_visual_dashboard_block(block: dict, ctx: _PdfBlockContext) -> tuple:
-    """PERMINTAAN USER (B, "kolom bertingkat" — ganti pola grid seragam 'satu kartu satu
-    chart'): halaman sekarang 2 kolom (biasanya), tiap kolom = pita judul + visual utama +
-    (opsional) strip fakta + kotak fakta berpasangan + kotak catatan bernomor, tersusun
-    vertikal — BUKAN grid uniform sampai 6 kartu kecil identik bentuknya spt sebelumnya.
-    Geometri halaman (A): TANPA kicker terpisah, judul y=0 lebar penuh maks 1.12in, konten
-    kolom mengisi sampai y=7.4in, margin kiri/kanan 0.25in KHUSUS halaman ini — dicapai lewat
-    negative-margin "escape hatch" (div pembungkus dgn margin negatif persis sebesar inset
-    _page() yang berlaku utk SEMUA halaman lain, 0.5in) supaya konten halaman INI bisa punya
-    geometri sendiri TANPA mengubah margin global (_page()) yang dipakai halaman lain."""
-    tiles = block.get("tiles", [])
-    total_w_in = 13.333 - 2 * _DASH_MARGIN_X_IN
-    title_html, title_h_in = _dashboard_title_html(block.get("title", ""), total_w_in)
-    if not tiles:
-        # BUG DIPERBAIKI (audit F2, defense-in-depth): saudara PPT-nya sudah punya guard
-        # eksplisit ini; di sini belum ada sebelumnya.
-        return (title_html, False, None, False)
-    n_cols = len(tiles)
-    col_w_in = (total_w_in - _DASH_COL_GAP_IN * (n_cols - 1)) / n_cols
-    avail_h_in = _DASH_CONTENT_BOTTOM_IN - title_h_in
-    # BUG DIPERBAIKI (ditemukan lewat isolasi render+sampling langsung, bukan dugaan):
-    # <table> utk kolom di dalam div bermargin NEGATIF (escape-hatch geometri halaman ini,
-    # lihat `inner` di bawah) TERBUKTI membuat WeasyPrint gagal merender SELURUH isi tabel
-    # itu (hilang total tanpa exception apa pun — kelas bug yang sama semangatnya dgn "1 sel
-    # hilang total" yang sudah didokumentasikan panjang lebar di _mgmt_tile_chart_html, cuma
-    # trigger-nya beda: di sana kombinasi caption+treemap tertentu, di sini margin
-    # negatif+table). Kolom SEKARANG diposisikan position:absolute (pola yang SUDAH TERBUKTI
-    # aman dipakai luas di file ini, mis. cover/penutup _split_cover_td) drpd <table>.
-    col_divs = [
-        f'<div style="position:absolute;left:{i * (col_w_in + _DASH_COL_GAP_IN)}in;top:0;width:{col_w_in}in;">'
-        f'{_build_dashboard_column_html(t, ctx, col_w_in, avail_h_in)}</div>'
-        for i, t in enumerate(tiles)
-    ]
-    columns_html = f'<div style="position:relative;">{"".join(col_divs)}</div>'
-    # Negative-margin escape hatch: _page() membungkus `inner` di <div style="margin:0.5in">
-    # (dipakai SEMUA halaman lain) — di sini digeser balik ke (0.25in kiri/kanan, 0in atas)
-    # KHUSUS utk halaman ini saja, tanpa menyentuh margin default itu sama sekali.
-    inner = f'<div style="margin:-0.5in -0.25in 0 -0.25in;">{title_html}{columns_html}</div>'
-    return (inner, False, None, False)
 
 
 def _insight_kpi_row_html(cards: list, total_w_in: float, h_in: float, y_in: float, theme: dict | None = None) -> str:

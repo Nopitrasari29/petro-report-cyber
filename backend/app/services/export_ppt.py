@@ -3614,77 +3614,6 @@ def _light_safe(color: RGBColor, max_luminance: float = 0.68) -> RGBColor:
     return RGBColor(r, g, b)
 
 
-def _build_management_kpi_grid_slide(block: dict, ctx: _PptBlockContext):
-    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
-    add_logo(slide, ctx.logo_path)
-    add_kicker(slide, block.get("kicker", ""))
-    title_bottom = add_title(slide, block.get("title", ""))
-
-    items = block.get("items", [])
-    # Kolom & lebar kartu menyesuaikan JUMLAH kartu sungguhan — dulu SELALU 3 kolom lebar
-    # tetap apa pun jumlah kartunya, kalau totalnya mis. 4 (bukan kelipatan 3), baris
-    # terakhir cuma terisi 1 dari 3 slot (2 slot kosong lebar), slide jadi terlihat
-    # timpang/kurang padat, kurang cocok dgn identitas "Visual tinggi" template ini.
-    cols = 2 if len(items) in (2, 4) else 3
-    gap_x = Inches(0.4)
-    gap_y = Inches(0.4)
-    card_w = Emu(int((CONTENT_W - gap_x * (cols - 1)) / cols))
-    card_h = Inches(2.1)
-    start_y = max(title_bottom + 0.15, 1.1)
-
-    # BUG DIPERBAIKI (dilaporkan user): "blue"/"green"/"amber" SEBELUMNYA warna literal
-    # tetap, tidak ikut report.theme_color — sekarang diturunkan dari palet tema (netral/
-    # capaian-baik/sorotan). "red"/"orange"/"gray" TETAP warna semantik tetap (bahaya/
-    # peringatan/netral-pasif), sama seperti SEVERITY_COLOR di tempat lain.
-    color_map = {
-        "blue": ctx.accent_main,
-        "green": ctx.accent_chart,
-        "amber": _light_safe(ctx.accent_light),
-        "red": RED_CRIT,
-        "orange": RGBColor(0xEA, 0x58, 0x0C),
-        "gray": GRAY_TEXT,
-    }
-
-    for i, it in enumerate(items[:6]):
-        r = i // cols
-        c = i % cols
-        cx = MARGIN_X + c * (card_w + gap_x)
-        cy = Inches(start_y) + r * (card_h + gap_y)
-
-        col = color_map.get(it.get("color", "blue"), ctx.accent_main)
-        # Background card
-        rect = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, cy, card_w, card_h)
-        _modest_corner(rect)
-        rect.fill.solid()
-        rect.fill.fore_color.rgb = IVORY
-        rect.line.color.rgb = col
-        rect.line.width = Pt(1.5)
-
-        tb = slide.shapes.add_textbox(cx + Inches(0.2), cy + Inches(0.15), card_w - Inches(0.4), card_h - Inches(0.3))
-        tf = tb.text_frame
-        tf.word_wrap = True
-
-        p1 = tf.paragraphs[0]
-        p1.alignment = PP_ALIGN.LEFT
-        p1.text = it.get("label", "").upper()
-        _set_font(p1, BODY_FONT, Pt(10), bold=True, color=col)
-
-        p2 = tf.add_paragraph()
-        p2.alignment = PP_ALIGN.LEFT
-        p2.text = str(it.get("value", ""))
-        # Angka diperbesar (26pt -> 32pt) — identitas "Visual tinggi, KPI ringkas" template
-        # ini, beda dgn kartu KPI di SOC Technical Report yang lebih sedang ukurannya.
-        _set_font(p2, TITLE_FONT, Pt(32), bold=True, color=col)
-
-        if it.get("delta"):
-            p3 = tf.add_paragraph()
-            p3.alignment = PP_ALIGN.LEFT
-            p3.text = it.get("delta", "")
-            _set_font(p3, BODY_FONT, Pt(9.5), color=GRAY_TEXT)
-
-    return slide
-
-
 def _draw_fact_strip_kolom(slide, pasangan: list, x_in: float, y_in: float, w_in: float):
     """A8 sisi PPT - kembaran _fact_strip_kolom_html di export_pdf.py. Isi & penyaringnya
     datang dari report_render_logic.fakta_strip_kolom yang SAMA, jadi kedua format menampilkan
@@ -3922,55 +3851,6 @@ def _draw_dashboard_main_visual(slide, tile: dict, ctx: "_PptBlockContext", x_in
         # PERMINTAAN USER (tambah jenis visualisasi baru): mirror export_pdf.py's
         # _scatter_bubble_svg — 2 angka BERBEDA per entitas via chart BUBBLE native.
         add_native_bubble_chart(slide, chart_x, chart_y, chart_w, chart_h, tile["points"], color=ctx.accent_main)
-
-
-def _build_management_visual_dashboard_slide(block: dict, ctx: _PptBlockContext):
-    """PERMINTAAN USER (B, "kolom bertingkat" — ganti pola grid seragam 'satu kartu satu
-    chart'): halaman sekarang 2 kolom (biasanya), tiap kolom = pita judul + visual utama +
-    (opsional) strip fakta + kotak fakta berpasangan + kotak catatan bernomor, tersusun
-    vertikal — BUKAN grid uniform sampai 6 kartu kecil identik bentuknya spt sebelumnya.
-    Geometri halaman (A): TANPA kicker terpisah, judul y=0 lebar penuh maks 1.12in, konten
-    kolom mengisi sampai y=7.4in (dari _DASH_CONTENT_BOTTOM_IN), margin kiri/kanan 0.25in
-    KHUSUS halaman ini (lihat _DASH_MARGIN_X_IN — TIDAK mengubah MARGIN_X global dipakai
-    halaman lain, supaya perubahan ini tidak merembet ke gaya SOC/halaman Management lain
-    yang sudah stabil)."""
-    slide = ctx.prs.slides.add_slide(ctx.prs.slide_layouts[6])
-    add_logo(slide, ctx.logo_path)
-    title_bottom_in = add_dashboard_title(slide, block.get("title", ""), _DASH_MARGIN_X_IN, Emu(SLIDE_W).inches - 2 * _DASH_MARGIN_X_IN)
-
-    tiles = block.get("tiles", [])
-    if not tiles:
-        return slide
-    n_cols = len(tiles)
-    total_w_in = Emu(SLIDE_W).inches - 2 * _DASH_MARGIN_X_IN
-    col_w_in = (total_w_in - _DASH_COL_GAP_IN * (n_cols - 1)) / n_cols
-    avail_h_in = _DASH_CONTENT_BOTTOM_IN - title_bottom_in
-
-    for i, tile in enumerate(tiles):
-        col_x_in = _DASH_MARGIN_X_IN + i * (col_w_in + _DASH_COL_GAP_IN)
-        heights = _layout_dashboard_column(tile, avail_h_in)
-        gap = heights["gap"]
-        cur_y_in = title_bottom_in
-
-        _draw_header_band(slide, Inches(col_x_in), Inches(cur_y_in), Inches(col_w_in), tile.get("title", ""), h=Inches(heights["title_band"]))
-        cur_y_in += heights["title_band"] + gap
-
-        _draw_dashboard_main_visual(slide, tile, ctx, col_x_in, cur_y_in, col_w_in, heights["main_visual"])
-        cur_y_in += heights["main_visual"] + gap
-
-        if "fact_strip" in heights:
-            _draw_fact_strip(slide, col_x_in, cur_y_in, col_w_in, tile.get("fact_strip"), theme=ctx.theme)
-            cur_y_in += heights["fact_strip"] + gap
-
-        if "fact_pair" in heights:
-            _draw_fact_pair(slide, col_x_in, cur_y_in, col_w_in, tile.get("fact_pair"), theme=ctx.theme)
-            cur_y_in += heights["fact_pair"] + gap
-
-        if "note_box" in heights and tile.get("notes"):
-            note_title = "Notes" if is_english(ctx.report) else "Catatan"
-            add_note_box(slide, Inches(col_x_in), Inches(cur_y_in), Inches(col_w_in), tile["notes"], theme=ctx.theme, title=note_title)
-
-    return slide
 
 
 def _rapatkan_margin(tf, kiri: float = 0.0, kanan: float = 0.0,

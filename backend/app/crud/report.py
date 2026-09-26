@@ -96,16 +96,6 @@ def get_owned_report(db: Session, report_id: int, user_id: int):
         .first()
     )
 
-def get_reports_for_user(db: Session, user_id: int, skip: int = 0, limit: int = 100):
-    return (
-        db.query(Report)
-        .filter(Report.user_id == user_id)
-        .order_by(Report.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
-
 def create_report(db: Session, report: ReportCreate, user_id: int | None = None):
     # Sengaja unpack SEMUA field dari ReportCreate secara otomatis (bukan daftar field manual
     # satu-satu seperti sebelumnya) — daftar manual itu ketinggalan menambahkan kolom baru

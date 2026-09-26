@@ -125,28 +125,6 @@ def best_grid_cols(n: int, min_cols: int = 2, max_cols: int = 3, max_rows: int =
 _SPACE_HUNGRY_TILE_KINDS = {"kpi_radar", "time_heatmap", "period_compare"}
 
 
-def _chunk_visual_tiles(tiles: list, max_per_page: int = 2) -> list:
-    """Pecah `tiles` (topik "tipis" — lihat _is_rich_insight_page/_build_column_dashboard_
-    blocks) jadi beberapa halaman kolom — normalnya maks `max_per_page` topik/halaman, TAPI
-    begitu 1 tile "space-hungry" (_SPACE_HUNGRY_TILE_KINDS) masuk ke satu chunk, chunk itu
-    langsung ditutup SENDIRIAN (tile hungry itu jadi 1 halaman penuh) — chunk berikutnya
-    mulai dari nol lagi, tidak ikut menumpuk tile lain bersamanya."""
-    chunks: list = []
-    current: list = []
-    current_has_hungry = False
-    for t in tiles:
-        is_hungry = t.get("tile_kind") in _SPACE_HUNGRY_TILE_KINDS
-        if current and (is_hungry or current_has_hungry or len(current) >= max_per_page):
-            chunks.append(current)
-            current, current_has_hungry = [], False
-        current.append(t)
-        if is_hungry:
-            current_has_hungry = True
-    if current:
-        chunks.append(current)
-    return chunks
-
-
 def find_logo_path() -> str | None:
     """Cari file logo perusahaan di frontend/public — SEBELUMNYA disalin persis (path resolusi
     identik) di export_pdf.py (_resolve_logo_b64) & export_ppt.py (_resolve_logo_path), cuma
@@ -1441,67 +1419,6 @@ def _tile_rank_items(tile: dict) -> list | None:
     logger.warning("tile_kind %r tidak punya cabang di _tile_rank_items - tile tidak akan "
                    "jadi halaman insight", kind)
     return None
-
-
-def _attach_column_facts(tile: dict, report, sec_domain: bool) -> None:
-    """Turunan fact_strip/fact_pair/notes (dibaca _layout_dashboard_column/render kolom lama)
-    utk topik "tipis" yang tidak lolos _is_rich_insight_page — digabung dgn topik lain lewat
-    _build_column_dashboard_blocks drpd dipaksa jadi halaman insight mandiri yang separuh
-    kosong. SEMUA angka derivatif LANGSUNG dari data yang sama persis sudah digambar tile
-    ini sendiri (via _tile_rank_items), sama prinsipnya dgn _build_insight_page."""
-    _ien = is_english(report)
-    unit = _L(report, "kejadian", "events") if sec_domain else _L(report, "data", "entries")
-    items = _tile_rank_items(tile)
-    if items:
-        items = sorted(items, key=lambda kv: -kv[1])
-        total = sum(v for _, v in items) or 1
-        tile["fact_strip"] = [
-            (_L(report, "Total", "Total"), _fmt_count(total, _ien)),
-            (_L(report, "Kategori", "Categories"), str(len(items))),
-        ]
-        if len(items) >= 2:
-            tile["fact_pair"] = [(name, f"{_fmt_count(val, _ien)} ({fmt_persen(val, total)})") for name, val in items[:2]]
-        rest = items[2:6]
-        if rest:
-            tile["notes"] = [
-                _L(
-                    report,
-                    f"{name} mencatat {_fmt_count(val, _ien)} {unit} ({fmt_persen(val, total)} dari total).",
-                    f"{name} recorded {_fmt_count(val, _ien)} {unit} ({fmt_persen(val, total)} of the total).",
-                )
-                for name, val in rest
-            ]
-    elif tile.get("tile_kind") == "kpi_gauge":
-        pct = tile.get("pct", 0)
-        tile["fact_strip"] = [
-            # tile ini cuma membawa `pct` (sudah dibulatkan di hulu), bukan pembilang/penyebut
-            # aslinya - jadi fmt_persen dipakai dgn basis 100 agar formatnya tetap seragam.
-            (_L(report, "Pencapaian", "Achievement"), fmt_persen(pct, 100)),
-            (_L(report, "Sisa", "Remaining"), fmt_persen(max(0, 100 - pct), 100)),
-        ]
-
-
-def _dedupe_chunk_tile_facts(chunk: list) -> None:
-    """BUG NYATA DITEMUKAN sebelumnya (check_dup_titles.py, laporan produksi id 166/167): 2
-    topik "tipis" digabung 1 halaman bisa kebetulan derivatif dari data kategori yang SAMA
-    PERSIS (chart-nya beda bentuk, tapi fact_strip/pair/notes jadi identik). Kolom KEDUA dst
-    yang blok fakta-nya identik dgn kolom SEBELUMNYA (dalam chunk/halaman yang SAMA)
-    dikosongkan (chart tetap tampil, cuma tanpa blok fakta yang jadi duplikat itu)."""
-    seen = []
-    for tile in chunk:
-        fingerprint = (
-            tuple(tile.get("fact_strip") or ()),
-            tuple(tile.get("fact_pair") or ()),
-            tuple(tile.get("notes") or ()),
-        )
-        if fingerprint == ((), (), ()):
-            continue
-        if fingerprint in seen:
-            tile.pop("fact_strip", None)
-            tile.pop("fact_pair", None)
-            tile.pop("notes", None)
-        else:
-            seen.append(fingerprint)
 
 
 # CATATAN: _build_column_dashboard_blocks DIHAPUS (audit jalur render) - tidak pernah
@@ -5631,13 +5548,6 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
     return None
 
 
-# SEMENTARA (permintaan user): jalur katalog lama tidak dihapus, cuma DIMATIKAN, supaya
-# keluaran kedua jalur masih bisa dibandingkan dari DATA YANG SAMA kalau ada regresi besar.
-# Setelah pengukuran disepakati, katalog lama + bendera ini DIHAPUS - jangan ditinggalkan
-# jadi jalur mati (lihat _build_management_visual_dashboard_block/_slide yang dulu membuat
-# orang mengira renderer tertentu masih dipakai padahal tidak).
-_PAKAI_PEMILIH_TANDA_TANGAN = True
-
 _BOBOT_VARIASI = 0.6
 
 # Bonus untuk kandidat yang BENTUKNYA sesuai style preset pilihan user. Sengaja sebesar
@@ -5668,50 +5578,6 @@ _BOBOT_PRESET = 0.6
 # di atas basi - ukur ulang sebelum menggeser angka ini. JANGAN menggesernya karena keluaran
 # terlihat kurang enak; alasannya harus datang dari kurva baru.
 _AMBANG_KEKUATAN = 0.3
-
-
-def rencana_chart(parsed_data: list, maks: int | None = None,
-                  kolom_w_in: float | None = None) -> list:
-    """SKOR DULU, PILIH KEMUDIAN.
-
-    skor = kekuatan syarat + bonus variasi (bentuk yang BELUM muncul di halaman ini).
-
-    Komponen variasi itu yang menyelesaikan laporan 186 tanpa aturan terpisah: grouped_bar
-    ketujuh kalah dari donut pertama walaupun syaratnya lebih kuat. Bukan tambalan "kalau
-    bentuk sama berulang cari alternatif" - variasi jadi bagian skor sejak awal.
-
-    Pasangan yang SUDAH terpakai dibuang, bukan diturunkan skornya: satu pasangan satu chart.
-
-    `maks` BUKAN kuota kualitas - batas fisik berapa chart muat di halaman ditangani
-    perencana tata letak lewat chart_min_height. Default None = tanpa batas; sisa kandidat
-    berskor tinggi jatuh ke halaman berikutnya."""
-    kand = [k for k in _semua_kandidat(parsed_data, kolom_w_in)
-            if k["bentuk"] and k["kekuatan"] >= _AMBANG_KEKUATAN]
-    terpakai_pasangan, dipakai_bentuk = set(), set()
-    terpilih = []
-    while kand:
-        for k in kand:
-            k["_skor"] = k["kekuatan"] + (_BOBOT_VARIASI if k["bentuk"] not in dipakai_bentuk else 0.0)
-        kand.sort(key=lambda k: (-k["_skor"], str(k["pasangan"])))
-        pilih = kand.pop(0)
-        # PASANGAN ditandai sebagai KESATUAN, bukan anggota-anggotanya. Versi pertama
-        # menandai tiap KOLOM lalu menguji dgn irisan - begitu Metode_Pengadaan & Status
-        # terpakai sekali, SETIAP pasangan yang menyentuh salah satunya ikut mati, padahal
-        # Vendor x Metode_Pengadaan pasangan yang BERBEDA & sah (terukur: 183 dari 15
-        # pasangan cuma 1 terpilih). Satu kolom BOLEH muncul di beberapa chart - itu sudut
-        # pandang berbeda, bukan pengulangan; yang tidak boleh diulang adalah PASANGANNYA.
-        _kunci = frozenset(pilih["pasangan"])
-        if _kunci in terpakai_pasangan:
-            pilih["alasan_kalah"] = "pasangan sudah terpakai"
-            continue
-        terpilih.append(pilih)
-        terpakai_pasangan.add(_kunci)
-        dipakai_bentuk.add(pilih["bentuk"])
-        logger.info("pemilih chart: %s -> %s [%s] skor %.2f",
-                    pilih["pasangan"], pilih["bentuk"], pilih["alasan"], pilih["_skor"])
-        if maks and len(terpilih) >= maks:
-            break
-    return terpilih
 
 
 
@@ -5797,99 +5663,6 @@ def pendekkan_label(labels: list) -> list:
         if hasil.count(h) > 1:
             hasil[idx] = asli[idx]
     return hasil
-
-
-def _strip_common_affix(labels: list) -> list:
-    """PERMINTAAN USER: label kartu bersarang sempit (~1.74in) - nama aset F5 BIG-IP mentah
-    (mis. "/Common/vs.bimbingankp.petrokimia-gresik.com") jauh lebih panjang dari itu, DILARANG
-    dipotong dgn "..." (kehilangan makna). Buang bagian yang SAMA PERSIS di SEMUA label yang
-    ditampilkan BERSAMAAN (prefix "/Common/" & suffix ".petrokimia-gresik.com" di contoh di
-    atas), sisakan bagian PEMBEDA-nya ("vs.bimbingankp").
-
-    Prefix/suffix umum dihitung per KARAKTER (longest common prefix/suffix di antara SEMUA
-    label), lalu ditarik mundur ke BATAS TERAKHIR (/ . - _ spasi) yang masih di dalam batas
-    umum itu - supaya tidak memotong di tengah token yang genuinely jadi pembeda. Cth: LCP
-    karakter dari 2 nama di atas adalah "/Common/vs." (termasuk titik setelah "vs") - ditarik
-    mundur ke "/" TERAKHIR di dalamnya ("/Common/") supaya "vs." (bagian bermakna "virtual
-    server") tetap ikut ditampilkan, bukan ikut terbuang.
-
-    Cuma memangkas kalau prefix/suffix umum itu CUKUP panjang (>=4 karakter) - biar tidak
-    memangkas 1-2 karakter sepele yang hasilnya kelihatan aneh/tidak jelas alasannya.
-
-    BUG NYATA DITEMUKAN (verifikasi visual langsung — render PDF sungguhan, bukan cuma unit
-    test data bersih): kalau SATU SAJA label dlm batch tidak ikut pola umum (mis. label
-    "Aggregated" nyempil di antara nama2 "/Common/vs.XXX...") LCP-nya jatuh ke NOL karakter
-    (semua label harus cocok utk dianggap "umum") - akibatnya SEMUA kartu (termasuk 5 yang
-    genuinely sama pola) gagal dipangkas & balik ke CSS ellipsis "..." - PERSIS yang dilarang.
-    Diperbaiki: kalau LCP/LCS gabungan semua label < 4 karakter, coba lagi setelah membuang
-    SAMPAI 2 label yang PALING mengganggu pola (dicoba satu-satu, disimpan yang hasilnya
-    terpanjang) — prefix/suffix HASIL AKHIR lalu diterapkan PER LABEL SECARA independen (kalau
-    suatu label kebetulan tidak cocok pola itu, mis. si outlier yang dibuang tadi, label itu
-    TETAP ditampilkan penuh apa adanya, TIDAK ikut batal semua)."""
-    labels = [str(lbl) for lbl in labels]
-    if len(labels) < 2:
-        return labels
-
-    def _lcp(strs: list) -> str:
-        if not strs:
-            return ""
-        shortest = min(strs, key=len)
-        for i, ch in enumerate(shortest):
-            if any(s[i] != ch for s in strs):
-                return shortest[:i]
-        return shortest
-
-    def _best_common_affix(strs: list, max_outliers: int = 2) -> str:
-        candidates = list(strs)
-        for _ in range(max_outliers):
-            if len(_lcp(candidates)) >= 4 or len(candidates) < 3:
-                break
-            best_removal_idx, best_len = None, len(_lcp(candidates))
-            for i in range(len(candidates)):
-                trial = candidates[:i] + candidates[i + 1:]
-                trial_len = len(_lcp(trial))
-                if trial_len > best_len:
-                    best_len, best_removal_idx = trial_len, i
-            if best_removal_idx is None:
-                break
-            candidates.pop(best_removal_idx)
-        return _lcp(candidates)
-
-    prefix = _best_common_affix(labels)
-    suffix = _best_common_affix([s[::-1] for s in labels])[::-1]
-
-    def _trim_prefix_to_boundary(p: str) -> str:
-        # "/" DIUTAMAKAN drpd batas lain (. - _ spasi) kalau ADA di dalam prefix umum: "/"
-        # menandai SEGMEN PATH (mis. "/Common/") - batas struktural yang lebih besar drpd "."
-        # yang bisa jadi bagian dari SATU token bermakna (mis. "vs." utk "virtual server").
-        # Tanpa prioritas ini, LCP "/Common/vs." (yang kebetulan berakhir di ".") akan ditarik
-        # mundur ke "." itu sendiri (tidak mundur sama sekali) & "vs." ikut terbuang - PERSIS
-        # bug yang ditemukan & diperbaiki di sini. Baru kalau TIDAK ADA "/" sama sekali di
-        # prefix umum, jatuh ke batas lain (mis. data non-path spt "Vendor_A"/"Vendor_B").
-        last_slash = p.rfind("/")
-        if last_slash != -1:
-            return p[:last_slash + 1]
-        last_boundary = max((i for i, ch in enumerate(p) if ch in _AFFIX_BOUNDARY_CHARS), default=-1)
-        return p[:last_boundary + 1]
-
-    def _trim_suffix_to_boundary(s: str) -> str:
-        first_boundary = next((i for i, ch in enumerate(s) if ch in _AFFIX_BOUNDARY_CHARS), None)
-        return s[first_boundary:] if first_boundary is not None else ""
-
-    prefix = _trim_prefix_to_boundary(prefix) if len(prefix) >= 4 else ""
-    suffix = _trim_suffix_to_boundary(suffix) if len(suffix) >= 4 else ""
-    if not prefix and not suffix:
-        return labels
-
-    stripped = []
-    for lbl in labels:
-        # Diterapkan PER LABEL: label yang tidak cocok pola (mis. outlier yang dibuang saat
-        # menghitung _best_common_affix) TETAP tampil penuh apa adanya — TIDAK membatalkan
-        # pemangkasan utk label LAIN yang genuinely cocok (lihat catatan bug di atas).
-        s = lbl[len(prefix):] if prefix and lbl.startswith(prefix) else lbl
-        s = s[:len(s) - len(suffix)] if suffix and s.endswith(suffix) else s
-        stripped.append(s if s.strip() else lbl)
-    return stripped
 
 
 def _compute_multi_metric_items(breakdown_list: list, cat_col_name: str | None, report) -> dict:
@@ -6694,22 +6467,6 @@ def _note_is_readable_from_visual(note: str, column: dict) -> bool:
     return bool(nums_in_note) and nums_in_note.issubset(drawn_values | {"100"})
 
 
-def _potong_di_batas_kata(teks: str, maks: int) -> str:
-    """Potong di spasi terdekat & beri elipsis - JANGAN di tengah kata.
-
-    KOREKSI USER (terlihat di render: "PT Sarana Instrumentasi Utam"): potongan keras di
-    posisi ke-N menghilangkan huruf tanpa penanda apa pun, jadi pembaca tidak tahu namanya
-    terpotong & bisa salah membaca nama entitasnya."""
-    teks = teks.strip()
-    if len(teks) <= maks:
-        return teks
-    potong = teks[:maks].rstrip()
-    spasi = potong.rfind(" ")
-    if spasi >= maks * 0.5:
-        potong = potong[:spasi]
-    return potong.rstrip(" ,.-") + "…"
-
-
 # Penanda kalimat per JENIS pola (lihat catatan_pola). Dipakai mengenali butir sejenis antar
 # kolom di satu halaman - dari frasanya, bukan dari posisi butir yang bisa bergeser.
 _TANDA_POLA = (
@@ -7043,24 +6800,6 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
                         "target_frac": _avg / _top,
                     }]
 
-    # PERMINTAAN USER ("pastikan tidak ada halaman yang lebih renggang dari yang lain"):
-    # dikemas berurutan apa adanya, isi halaman bisa timpang jauh (terukur: 167 elemen vs 87)
-    # karena BOBOT tiap topik beda jauh - satu topik dgn 4 kartu x 15 sub-item bersarang
-    # menyumbang elemen berkali lipat topik yg cuma punya chart. Jadi topik dibagi rata
-    # berdasarkan bobot isinya, bukan urutannya: yg terberat disebar lebih dulu ke halaman
-    # yang saat itu paling ringan. Urutan tile bergeser, tapi halaman ini memang halaman
-    # "Sorotan Data" gabungan beberapa topik - bukan alur naratif berurutan.
-    # Koefisien DIKALIBRASI dari render nyata (laporan 183, hitung elemen per kolom langsung
-    # dari PDF): kolom 4 kartu/15 sub-item = 96 elemen, 4 kartu/4 sub = 41, chart+2 KPI = 31,
-    # 6 kartu polos = 35, 5 kartu polos = 26. Sub-item jauh lebih mahal drpd kartu induknya -
-    # itu sebabnya menebak bobot dari "kartu vs chart" saja meleset jauh.
-    def _topic_weight(b):
-        cards = b.get("category_details") or []
-        subs = sum(len(c.get("sub_items") or []) for c in cards)
-        has_chart = bool(b.get("main_chart_tile") or b.get("chart_png") or b.get("chart_spec"))
-        return (8 + 3 * len(cards) + 4 * subs + 3 * len(b.get("kpi_summary") or [])
-                + len(b.get("notes") or []) + (14 if has_chart else 0))
-
     # KOREKSI USER: RATAKAN JUMLAH DULU, BARU BOBOT. Sebelumnya ukuran keranjang lahir dari
     # cara membaginya (2 halaman -> selalu 3 di depan; >2 halaman -> serakah per bobot), jadi
     # 4 topik jadi 1+3 & 7 topik jadi 3+3+1 - keranjang berisi SATU, yang lalu dirender lewat
@@ -7227,7 +6966,7 @@ def _pack_insight_pages_into_columns(blocks: list, report) -> list:
             if metrik_judul_dashboard(_gabung, 13.333 - 2 * _DASH_MARGIN_X_IN)["n_baris"] <= 2:
                 _judul_kalimat = _gabung
         # Kurangi pengulangan struktur kalimat antar kolom SEHALAMAN - lihat
-        # _kurangi_pola_seragam. Dilakukan di sini, sesudah kolom dikelompokkan jadi halaman,
+        # _ragamkan_pola_halaman. Dilakukan di sini, sesudah kolom dikelompokkan jadi halaman,
         # karena "berulang" itu sifat halaman: satu kolom memakai tipe 1 sama sekali bukan
         # masalah, lima kolom memakainya bersamaan barulah terbaca mekanis.
         _tukar, _buang = _ragamkan_pola_halaman(cols)
@@ -9872,58 +9611,54 @@ def build_management_report_blocks(report) -> list[dict]:
     _tiles_baru: list = []
     _lap_seksi: list = []
     _gagal: list = []
-    if _PAKAI_PEMILIH_TANDA_TANGAN:
-        # Gaya pilihan user (style_preset -> visual_style) ikut membobot pemilihan bentuk.
-        # Hanya kalau user memilih preset EKSPLISIT: "auto" berarti menyerahkan sepenuhnya ke
-        # tanda tangan data, dan laporan lama tanpa preset tidak boleh berubah bentuk.
-        _gaya_user = None
-        if str(getattr(report, "style_preset", "") or "").strip().lower() in STYLE_PRESETS:
-            _vs_user = get_visual_style(report) or {}
-            _gaya_user = {str(_vs_user.get(k) or "").strip()
-                          for k in ("category_style", "status_style")} - {""}
-        _keputusan, _lap_seksi = rencana_chart_terarah(parsed_data, dynamic_sections_all,
-                                                       gaya_disukai=_gaya_user)
-        # Baris REKAP dokumen sumber dibuang DULU - kalau dibiarkan ia jadi kategori palsu
-        # yang selalu tertinggi di setiap chart. Lihat buang_baris_rekap.
-        parsed_data, _rekap = buang_baris_rekap(parsed_data)
-        if _rekap:
-            logger.info("baris rekap dibuang dari data: %s",
-                        [(k, v, n) for k, v, n in _rekap[:4]])
-        # FASE 2: topik satu-metrik yang cuma mengulang sumbu yang sama dikonsolidasi
-        # SEBELUM tile dibangun - lihat konsolidasi_keluarga_metrik.
-        _keputusan, _keluarga_dibuang = konsolidasi_keluarga_metrik(_keputusan)
-        if _keluarga_dibuang:
-            logger.info("konsolidasi keluarga metrik: %d topik satu-metrik dibuang karena "
-                        "mengulang sumbu yang sama: %s", len(_keluarga_dibuang),
-                        [(k, m[0] if m else "", t) for k, m, t in _keluarga_dibuang[:6]])
-        _dibangun = [(k, bangun_tile(parsed_data, k, report)) for k in _keputusan]
-        for _k, _t in _dibangun:
-            if not _t:
-                continue
-            # POPULASI PENUH ditempel di SATU tempat (bukan di tiap cabang bangun_tile):
-            # catatan agregat butuh tahu berapa entitas yang TIDAK tergambar.
-            # RUMUS KOLOM TURUNAN ditempel ke keterangan - syarat yang disepakati: pembaca
-            # harus tahu kolom itu dihitung, bukan kolom asli. Satu tempat, semua bentuk.
-            _rd = _k.get("rumus_dipakai") or {}
-            if _rd:
-                _teks = "; ".join(f"{k} = {v}" for k, v in _rd.items())
-                _awal = "Derived: " if is_english(report) else "Turunan: "
-                _t["caption"] = ((_t.get("caption") + " ") if _t.get("caption") else "") + _awal + _teks + "."
-            if _k.get("n_entitas_penuh"):
-                _t["n_entitas_penuh"] = int(_k["n_entitas_penuh"])
-                _t["total_entitas_penuh"] = float(_k.get("total_entitas_penuh") or 0)
-                _t["nilai_penuh"] = list(_k.get("nilai_penuh") or [])
-            if _k.get("seksi"):
-                # Judul kolom mengikuti SEKSI-nya: subjeknya yang menamai kolom, bentuknya
-                # cuma cara menggambarnya.
-                _t["source_topic_title"] = _k["seksi"]
-                _t["title"] = _k["seksi"]
-                _seksi_dapat_visual.add(_k["seksi"])
-            _t["cara_baca"] = cara_baca_kolom(_t, report)
-            _tiles_baru.append(_t)
-        _gagal = [k["bentuk"] for k, t in _dibangun if not t]
-        for _j, _st, _alasan in _lap_seksi:
-            logger.info("SEKSI | %-38s %-20s %s", _j[:38], _st, _alasan)
+    _gaya_user = None
+    if str(getattr(report, "style_preset", "") or "").strip().lower() in STYLE_PRESETS:
+        _vs_user = get_visual_style(report) or {}
+        _gaya_user = {str(_vs_user.get(k) or "").strip()
+                      for k in ("category_style", "status_style")} - {""}
+    _keputusan, _lap_seksi = rencana_chart_terarah(parsed_data, dynamic_sections_all,
+                                                   gaya_disukai=_gaya_user)
+    # Baris REKAP dokumen sumber dibuang DULU - kalau dibiarkan ia jadi kategori palsu
+    # yang selalu tertinggi di setiap chart. Lihat buang_baris_rekap.
+    parsed_data, _rekap = buang_baris_rekap(parsed_data)
+    if _rekap:
+        logger.info("baris rekap dibuang dari data: %s",
+                    [(k, v, n) for k, v, n in _rekap[:4]])
+    # FASE 2: topik satu-metrik yang cuma mengulang sumbu yang sama dikonsolidasi
+    # SEBELUM tile dibangun - lihat konsolidasi_keluarga_metrik.
+    _keputusan, _keluarga_dibuang = konsolidasi_keluarga_metrik(_keputusan)
+    if _keluarga_dibuang:
+        logger.info("konsolidasi keluarga metrik: %d topik satu-metrik dibuang karena "
+                    "mengulang sumbu yang sama: %s", len(_keluarga_dibuang),
+                    [(k, m[0] if m else "", t) for k, m, t in _keluarga_dibuang[:6]])
+    _dibangun = [(k, bangun_tile(parsed_data, k, report)) for k in _keputusan]
+    for _k, _t in _dibangun:
+        if not _t:
+            continue
+        # POPULASI PENUH ditempel di SATU tempat (bukan di tiap cabang bangun_tile):
+        # catatan agregat butuh tahu berapa entitas yang TIDAK tergambar.
+        # RUMUS KOLOM TURUNAN ditempel ke keterangan - syarat yang disepakati: pembaca
+        # harus tahu kolom itu dihitung, bukan kolom asli. Satu tempat, semua bentuk.
+        _rd = _k.get("rumus_dipakai") or {}
+        if _rd:
+            _teks = "; ".join(f"{k} = {v}" for k, v in _rd.items())
+            _awal = "Derived: " if is_english(report) else "Turunan: "
+            _t["caption"] = ((_t.get("caption") + " ") if _t.get("caption") else "") + _awal + _teks + "."
+        if _k.get("n_entitas_penuh"):
+            _t["n_entitas_penuh"] = int(_k["n_entitas_penuh"])
+            _t["total_entitas_penuh"] = float(_k.get("total_entitas_penuh") or 0)
+            _t["nilai_penuh"] = list(_k.get("nilai_penuh") or [])
+        if _k.get("seksi"):
+            # Judul kolom mengikuti SEKSI-nya: subjeknya yang menamai kolom, bentuknya
+            # cuma cara menggambarnya.
+            _t["source_topic_title"] = _k["seksi"]
+            _t["title"] = _k["seksi"]
+            _seksi_dapat_visual.add(_k["seksi"])
+        _t["cara_baca"] = cara_baca_kolom(_t, report)
+        _tiles_baru.append(_t)
+    _gagal = [k["bentuk"] for k, t in _dibangun if not t]
+    for _j, _st, _alasan in _lap_seksi:
+        logger.info("SEKSI | %-38s %-20s %s", _j[:38], _st, _alasan)
     narrative_items = []
     # Section yang dicentang tapi chartnya sengaja dilewati tetap diberi jejak tertulis -
     # lihat _radar_puncak_rendah di atas.
@@ -10014,19 +9749,18 @@ def build_management_report_blocks(report) -> list[dict]:
             tile_values = [float(v) for v in legacy_values[:_NESTED_CARD_MAX_TOTAL]]
         else:
             tile_labels = tile_values = None
-        # SEKSI YANG SUDAH DAPAT KOLOM VISUAL tidak perlu tile custom_topic lagi (bentuknya
-        # sudah dipilih pemilih tanda tangan). Seksi yang TIDAK dapat kolom visual WAJIB tetap
-        # muncul sbg narasi - AI mengembalikannya utuh, jadi menghilangkannya adalah kehilangan
-        # diam. Itu yang terjadi sebelum ini: 9 seksi dikembalikan, 1 sampai ke laporan.
-        if _PAKAI_PEMILIH_TANDA_TANGAN:
-            if sec_title in _seksi_dapat_visual:
-                continue
-            narrative_items.append({
-                "title": sec_title,
-                "content": _shorten_to_caption(sec_content, max_sentences=3),
-                "preserve_topic": True,
-            })
+    # SEKSI YANG SUDAH DAPAT KOLOM VISUAL tidak perlu tile custom_topic lagi (bentuknya
+    # sudah dipilih pemilih tanda tangan). Seksi yang TIDAK dapat kolom visual WAJIB tetap
+    # muncul sbg narasi - AI mengembalikannya utuh, jadi menghilangkannya adalah kehilangan
+    # diam. Itu yang terjadi sebelum ini: 9 seksi dikembalikan, 1 sampai ke laporan.
+        if sec_title in _seksi_dapat_visual:
             continue
+        narrative_items.append({
+            "title": sec_title,
+            "content": _shorten_to_caption(sec_content, max_sentences=3),
+            "preserve_topic": True,
+        })
+        continue
         if tile_labels:
             # ITEM 8: label dipendekkan PER LABEL sebelum bentuk chart dipilih - urutannya
             # penting, krn panjang label menentukan tinggi minimum chart (chart_min_height_in)
@@ -10051,86 +9785,85 @@ def build_management_report_blocks(report) -> list[dict]:
                 "preserve_topic": True,
             })
 
-    # Tumpuk SEMUA tile visual yang tersedia jadi 1 halaman dashboard (bisa 4/5/lebih
-    # sekaligus, macam-macam jenis chart, keterangan tiap tile cuma 1 kalimat) — kalau
-    # jumlahnya lebih dari 6 (bisa terjadi sekarang krn tile custom topic bisa nambah banyak),
-    # PERMINTAAN USER ("hapus jalur management_visual_dashboard, arahkan semuanya ke jalur
-    # insight — jalur insight sudah terbukti menghasilkan 143 elemen, jalur lama menghasilkan
-    # 17 dan 27"): jalur "kolom" lama (_build_column_dashboard_blocks/_layout_dashboard_column)
-    # DIHENTIKAN PEMAKAIANNYA di sini (fungsinya TIDAK dihapus dari file, cuma tidak dipanggil
-    # lagi dari loop ini — cukup utk mengganti PERILAKU, penghapusan kode mati itu sendiri
-    # masih utang kebersihan terpisah). SETIAP tile sekarang jadi halaman insight sendiri:
-    # tile "space-hungry" (radar/heatmap/period_compare, tidak py daftar entitas) lewat
-    # _build_chart_insight_page (chart asli jadi lapis "detail", bukan kartu), tile lain lewat
-    # _build_insight_page spt sebelumnya - TANPA gerbang "kaya/tipis" lagi (_is_rich_insight_
-    # page tidak dipanggil di sini lagi): kartu bersarang SEKARANG hampir selalu berisi
-    # sub-item nyata (multi-metrik, lihat _compute_multi_metric_items), jadi hampir semua
-    # topik genuinely layak halaman sendiri; topik yang KEBETULAN masih menghasilkan himpunan
-    # entitas yang sama dgn topik lain tetap ditangkap & digabung oleh
-    # _merge_overlapping_insight_pages di akhir fungsi ini (bukan gerbang di sini).
-    # ---- PENGGANTIAN SUMBER TILE ----
-    # Katalog di atas menggantungkan bentuk chart pada NAMA BAGIAN (is_included(...)): bentuknya
-    # ditentukan judul topik, bukan karakter kolomnya. Pemilih tanda tangan menilai SEMUA pasangan
-    # kolom terhadap SEMUA aturan bentuk & memilih skor tertinggi. Keluaran katalog lama tetap
-    # dihitung dan DICATAT berdampingan (log, bukan utk pembaca) supaya regresi bisa dilihat dari
-    # data yang sama, bukan dari ingatan.
-    if _PAKAI_PEMILIH_TANDA_TANGAN:
-        logger.info("SUMBER TILE | lama=%d %s | baru=%d %s%s",
-                    len(visual_tiles), sorted(t["tile_kind"] for t in visual_tiles),
-                    len(_tiles_baru), sorted(t["tile_kind"] for t in _tiles_baru),
-                    f" | keputusan tanpa tile: {_gagal}" if _gagal else "")
-        if _tiles_baru:
-            # KONTRAK "Include Sections" ditegakkan DI SINI, sesudah perencana memilih bentuk
-            # dan sebelum tile dipakai - lihat saring_tile_per_section untuk alasannya.
-            # Kembar dibuang DULU - lihat _buang_tile_kembar. Dikerjakan sebelum penyaring
-            # section supaya jumlah tile yang dihitung kontrak "dicentang = muncul" tidak
-            # ikut menghitung duplikat.
-            _tiles_baru, _kembar = _buang_tile_kembar(_tiles_baru)
-            if _kembar:
-                logger.info("tile kembar dibuang (%d): %s", len(_kembar), _kembar[:4])
-            _tiles_baru, _dibuang_sec = saring_tile_per_section(_tiles_baru, included)
-            if _dibuang_sec:
-                logger.info("Include Sections: %d tile dibuang krn sectionnya tidak dicentang: %s",
-                            len(_dibuang_sec), _dibuang_sec)
-            # SISI SEBALIKNYA dari kontrak yang sama: "dicentang = WAJIB muncul". Perencana
-            # menggantikan katalog tile lama SELURUHNYA, jadi section bawaan yang dicentang
-            # tapi tidak kebetulan terpilih perencana ikut hilang - terukur di laporan 194,
-            # "Multi-Indicator Score Radar" dicentang tapi tidak pernah tergambar. Tile lama
-            # utk section itu dikembalikan, BUKAN dipaksa jadi bentuk lain: bentuknya tetap
-            # ditentukan tanda tangan data, yang dikembalikan cuma subjeknya.
-            _kunci_ada = {kunci_section_tile(t) for t in _tiles_baru}
-            for _lama in (visual_tiles or []):
-                _kl = kunci_section_tile(_lama)
-                # Tile "space-hungry" TIDAK dikembalikan lewat jalur ini. Ketiganya butuh
-                # halaman sendiri (lihat _SPACE_HUNGRY_TILE_KINDS), sementara pengemas kolom
-                # membagi ruang murni berdasar tinggi dan tidak mengenal aturan itu - jadi
-                # tile yang dikembalikan tertumpuk bersama tile lain dan perkiraan tingginya
-                # meleset. TERUKUR: laporan 192 halaman 3, judul panel "Alur Status
-                # Penanganan" tergambar MENIMPA label "Paruh Awal"/"Paruh Akhir" milik panel
-                # lain (irisan 64%), tertangkap test_no_two_rendered_texts_overlap.
-                # Penyaringan (tidak dicentang -> hilang) TETAP berlaku untuk ketiganya;
-                # yang dibatasi hanya pengembaliannya.
-                if _kl in _SPACE_HUNGRY_TILE_KINDS:
-                    continue
-                # Tile dgn KURANG DARI 2 segmen juga tidak dikembalikan. Perencana kolom
-                # memang melewatinya ("segmen yang lolos ambang label < 2"), jadi
-                # mengembalikannya cuma menghasilkan tile yang tergambar di PDF tapi tidak
-                # pernah digambar di PPTX - terukur di laporan 195 & 197: status_funnel
-                # dgn 1 kategori dilaporkan "1 dari 1 label TIDAK digambar".
-                if len(_chart_labels_tile(_lama)) < 2:
-                    continue
-                if _kl and _kl not in _kunci_ada and is_section_included(_kl, included):
-                    _tiles_baru.append(_lama)
-                    _kunci_ada.add(_kl)
-                    logger.info("Include Sections: tile %r dikembalikan - section %r dicentang "
-                                "tapi tidak dihasilkan perencana", _lama.get("tile_kind"), _kl)
-        if _tiles_baru:
-            visual_tiles = _tiles_baru
-        else:
-            # Tidak ada pasangan kolom yang layak (26 dari 131 laporan pada profil terakhir).
-            # Katalog lama dipakai apa adanya - lebih baik bentuk yang digantungkan nama bagian
-            # daripada halaman tanpa chart sama sekali.
-            logger.info("SUMBER TILE | pemilih tidak menghasilkan tile, katalog lama dipakai")
+# Tumpuk SEMUA tile visual yang tersedia jadi 1 halaman dashboard (bisa 4/5/lebih
+# sekaligus, macam-macam jenis chart, keterangan tiap tile cuma 1 kalimat) — kalau
+# jumlahnya lebih dari 6 (bisa terjadi sekarang krn tile custom topic bisa nambah banyak),
+# PERMINTAAN USER ("hapus jalur management_visual_dashboard, arahkan semuanya ke jalur
+# insight — jalur insight sudah terbukti menghasilkan 143 elemen, jalur lama menghasilkan
+# 17 dan 27"): jalur "kolom" lama (_build_column_dashboard_blocks/_layout_dashboard_column)
+# DIHENTIKAN PEMAKAIANNYA di sini (fungsinya TIDAK dihapus dari file, cuma tidak dipanggil
+# lagi dari loop ini — cukup utk mengganti PERILAKU, penghapusan kode mati itu sendiri
+# masih utang kebersihan terpisah). SETIAP tile sekarang jadi halaman insight sendiri:
+# tile "space-hungry" (radar/heatmap/period_compare, tidak py daftar entitas) lewat
+# _build_chart_insight_page (chart asli jadi lapis "detail", bukan kartu), tile lain lewat
+# _build_insight_page spt sebelumnya - TANPA gerbang "kaya/tipis" lagi (_is_rich_insight_
+# page tidak dipanggil di sini lagi): kartu bersarang SEKARANG hampir selalu berisi
+# sub-item nyata (multi-metrik, lihat _compute_multi_metric_items), jadi hampir semua
+# topik genuinely layak halaman sendiri; topik yang KEBETULAN masih menghasilkan himpunan
+# entitas yang sama dgn topik lain tetap ditangkap & digabung oleh
+# _merge_overlapping_insight_pages di akhir fungsi ini (bukan gerbang di sini).
+# ---- PENGGANTIAN SUMBER TILE ----
+# Katalog di atas menggantungkan bentuk chart pada NAMA BAGIAN (is_included(...)): bentuknya
+# ditentukan judul topik, bukan karakter kolomnya. Pemilih tanda tangan menilai SEMUA pasangan
+# kolom terhadap SEMUA aturan bentuk & memilih skor tertinggi. Keluaran katalog lama tetap
+# dihitung dan DICATAT berdampingan (log, bukan utk pembaca) supaya regresi bisa dilihat dari
+# data yang sama, bukan dari ingatan.
+    logger.info("SUMBER TILE | lama=%d %s | baru=%d %s%s",
+                len(visual_tiles), sorted(t["tile_kind"] for t in visual_tiles),
+                len(_tiles_baru), sorted(t["tile_kind"] for t in _tiles_baru),
+                f" | keputusan tanpa tile: {_gagal}" if _gagal else "")
+    if _tiles_baru:
+        # KONTRAK "Include Sections" ditegakkan DI SINI, sesudah perencana memilih bentuk
+        # dan sebelum tile dipakai - lihat saring_tile_per_section untuk alasannya.
+        # Kembar dibuang DULU - lihat _buang_tile_kembar. Dikerjakan sebelum penyaring
+        # section supaya jumlah tile yang dihitung kontrak "dicentang = muncul" tidak
+        # ikut menghitung duplikat.
+        _tiles_baru, _kembar = _buang_tile_kembar(_tiles_baru)
+        if _kembar:
+            logger.info("tile kembar dibuang (%d): %s", len(_kembar), _kembar[:4])
+        _tiles_baru, _dibuang_sec = saring_tile_per_section(_tiles_baru, included)
+        if _dibuang_sec:
+            logger.info("Include Sections: %d tile dibuang krn sectionnya tidak dicentang: %s",
+                        len(_dibuang_sec), _dibuang_sec)
+        # SISI SEBALIKNYA dari kontrak yang sama: "dicentang = WAJIB muncul". Perencana
+        # menggantikan katalog tile lama SELURUHNYA, jadi section bawaan yang dicentang
+        # tapi tidak kebetulan terpilih perencana ikut hilang - terukur di laporan 194,
+        # "Multi-Indicator Score Radar" dicentang tapi tidak pernah tergambar. Tile lama
+        # utk section itu dikembalikan, BUKAN dipaksa jadi bentuk lain: bentuknya tetap
+        # ditentukan tanda tangan data, yang dikembalikan cuma subjeknya.
+        _kunci_ada = {kunci_section_tile(t) for t in _tiles_baru}
+        for _lama in (visual_tiles or []):
+            _kl = kunci_section_tile(_lama)
+            # Tile "space-hungry" TIDAK dikembalikan lewat jalur ini. Ketiganya butuh
+            # halaman sendiri (lihat _SPACE_HUNGRY_TILE_KINDS), sementara pengemas kolom
+            # membagi ruang murni berdasar tinggi dan tidak mengenal aturan itu - jadi
+            # tile yang dikembalikan tertumpuk bersama tile lain dan perkiraan tingginya
+            # meleset. TERUKUR: laporan 192 halaman 3, judul panel "Alur Status
+            # Penanganan" tergambar MENIMPA label "Paruh Awal"/"Paruh Akhir" milik panel
+            # lain (irisan 64%), tertangkap test_no_two_rendered_texts_overlap.
+            # Penyaringan (tidak dicentang -> hilang) TETAP berlaku untuk ketiganya;
+            # yang dibatasi hanya pengembaliannya.
+            if _kl in _SPACE_HUNGRY_TILE_KINDS:
+                continue
+            # Tile dgn KURANG DARI 2 segmen juga tidak dikembalikan. Perencana kolom
+            # memang melewatinya ("segmen yang lolos ambang label < 2"), jadi
+            # mengembalikannya cuma menghasilkan tile yang tergambar di PDF tapi tidak
+            # pernah digambar di PPTX - terukur di laporan 195 & 197: status_funnel
+            # dgn 1 kategori dilaporkan "1 dari 1 label TIDAK digambar".
+            if len(_chart_labels_tile(_lama)) < 2:
+                continue
+            if _kl and _kl not in _kunci_ada and is_section_included(_kl, included):
+                _tiles_baru.append(_lama)
+                _kunci_ada.add(_kl)
+                logger.info("Include Sections: tile %r dikembalikan - section %r dicentang "
+                            "tapi tidak dihasilkan perencana", _lama.get("tile_kind"), _kl)
+    if _tiles_baru:
+        visual_tiles = _tiles_baru
+    else:
+        # Tidak ada pasangan kolom yang layak (26 dari 131 laporan pada profil terakhir).
+        # Katalog lama dipakai apa adanya - lebih baik bentuk yang digantungkan nama bagian
+        # daripada halaman tanpa chart sama sekali.
+        logger.info("SUMBER TILE | pemilih tidak menghasilkan tile, katalog lama dipakai")
 
     for tile in visual_tiles:
         if tile["tile_kind"] in _SPACE_HUNGRY_TILE_KINDS:

@@ -468,20 +468,6 @@ _NARRATIVE_PAGE_KINDS = {"management_action_items", "management_ai_narrative"}
 _DENSITY_NARRATIVE_MIN_CHARS = 600
 
 
-def _expected_column_sizes(n_topics: int, per_page: int = 3) -> list:
-    """Ukuran halaman yang SEHARUSNYA - pembagian serata mungkin, tanpa keranjang berisi satu.
-
-    SYARAT USER: halaman 2 kolom hanya SAH kalau jumlah topiknya memang tidak cukup utk 3
-    kolom. Tanpa ini, pembagi bisa "lolos" ambang cuma dgn memilih 2 kolom (ambangnya lebih
-    rendah) padahal topiknya cukup utk 3 - lubang yang persis sebaliknya dari yang mau
-    ditutup. Jadi ukuran halaman nyata dibandingkan dgn pembagian yang seharusnya."""
-    if n_topics <= 0:
-        return []
-    n_pages = max(1, -(-n_topics // per_page))
-    base, extra = divmod(n_topics, n_pages)
-    return sorted([base + (1 if i < extra else 0) for i in range(n_pages)], reverse=True)
-
-
 def _page_is_chart_exempt(block: dict) -> bool:
     """PERMINTAAN USER (poin 1 — "tandai sebagai pengecualian sah, HANYA kalau data yang
     mendasarinya <5 kategori, DAN halaman itu wajib punya catatan analitis. Jangan jadikan
