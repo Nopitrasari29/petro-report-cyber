@@ -353,6 +353,24 @@ _NARASI_KARTU_DASAR_IN = 0.94
 _NARASI_BARIS_H_IN = 0.19
 _NARASI_GAP_IN = 0.14
 _NARASI_ISI_PT = 9.0
+# Lebar rata-rata karakter yang DIPAKAI penaksir tinggi kartu narasi.
+#
+# TERUKUR & SENGAJA DIBIARKAN LONGGAR. Teks kartu tergambar 0,0400 in/karakter (diukur dari
+# render laporan 195, halaman "Insight Tambahan"), sementara angka ini pada basis 9pt setara
+# 0,1000 in/karakter - 2,5x lebih lebar. Akibatnya halaman dinyatakan "penuh" saat baru
+# terisi 50-68% dan lahir halaman "(Lanjutan)" yang tipis: pemecah menuntut 7,0in untuk 7
+# butir (laporan 195) & 8,0in untuk 10 butir (197), padahal render nyata 6 butir cuma memakai
+# 3,22in dan 2,72in dari jatah 5,50in. Sebab dasarnya teks DIGAMBAR ~7pt (renderer
+# mengecilkannya saat kartu banyak) tapi barisnya dihitung pada 9pt.
+#
+# Mengecilkannya ke 0,40 SUDAH DICOBA dan hasilnya LEBIH BURUK: laporan 195 memuat 7 butir di
+# satu halaman, lalu kartu ke-5 & ke-6 terpotong di tepi bawah (kartu mencapai y=7,52in pada
+# halaman 7,5in) dan butir ke-7 tidak tergambar sama sekali. Yang salah bukan angkanya
+# melainkan MODEL GRID pemecah yang tidak sama dgn renderer: pemecah mengasumsikan 2 kolom
+# sama lebar, renderer menggambar kolom asimetris & memperbesar kartu saat jumlahnya sedikit.
+# Selama kedua model belum disamakan, angka longgar ini yang menahan isi tetap di dalam
+# halaman - ruang terbuang lebih aman drpd isi terpotong.
+_NARASI_EM_KARAKTER = 0.80
 # TINGGI AREA ISI halaman narasi, BUKAN offset kartu pertama.
 # KOREKSI: konstanta pertama saya (2.60in) diambil dari posisi kartu pertama pada render
 # nyata - tapi halaman narasi dirender DITENGAHKAN VERTIKAL (center=True di _page()), jadi
@@ -394,7 +412,8 @@ def butir_narasi_per_halaman(items: list, lebar_total_in: float, tinggi_in: floa
     def _tinggi(it, kolom: int, skala: float = 1.0) -> float:
         lebar_kartu = (lebar_total_in - _NARASI_GAP_IN * (kolom - 1)) / kolom
         lebar_px = max(60.0, (lebar_kartu - 0.45) * 96)
-        baris = wrap_line_count(str(it.get("content") or ""), lebar_px, _NARASI_ISI_PT, 0.80)
+        baris = wrap_line_count(str(it.get("content") or ""), lebar_px, _NARASI_ISI_PT,
+                                _NARASI_EM_KARAKTER)
         return (_NARASI_KARTU_DASAR_IN + baris * _NARASI_BARIS_H_IN) * skala
 
     def _tinggi_grid(calon: list) -> float:
