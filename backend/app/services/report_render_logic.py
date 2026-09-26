@@ -4136,6 +4136,24 @@ def subjek_seksi(sec: dict, kolom_tersedia: list) -> set:
     return keluar
 
 
+# Penanda seksi yang sifatnya MERANGKUM, bukan memperkenalkan satu breakdown. Dibaca dari
+# KUNCI seksi - kunci dari AI adalah slug judulnya sendiri, dan kunci preset memang sudah
+# bernama begini - jadi satu pola menangkap keduanya tanpa menebak-nebak judul bebasnya.
+_KUNCI_SEKSI_PENUTUP = ("conclusion", "recommendation", "kesimpulan", "rekomendasi",
+                        "penutup", "saran")
+
+
+def seksi_merangkum(sec: dict) -> bool:
+    """Seksi penutup/rekomendasi - tidak boleh menamai panel chart breakdown.
+
+    Isinya sudah punya tempat sendiri (blok rekomendasi/action items/kesimpulan), dan ia tidak
+    menggambarkan satu breakdown tertentu. Kalau dibiarkan mengklaim, judulnya menempel di atas
+    chart yang topiknya lain - terukur di laporan 199: "Conclusion and Recommendations" di atas
+    breakdown Blocked: Policy per jam."""
+    k = str((sec or {}).get("key") or (sec or {}).get("id") or "").lower()
+    return any(t in k for t in _KUNCI_SEKSI_PENUTUP)
+
+
 def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | None = None,
                           gaya_disukai: set | None = None) -> tuple:
     """Seksi memilih SUBJEK, tanda tangan memilih BENTUK.
@@ -4159,15 +4177,43 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
     terpakai_pasangan, dipakai_bentuk, terpilih = set(), set(), []
     laporan = []
 
-    def _ambil(calon, judul):
+    def _ambil(calon, judul, subjek=None):
         _suka = gaya_disukai or set()
+        _subj = set(subjek or ())
         for k in calon:
             k["_skor"] = (k["kekuatan"]
                           + (_BOBOT_VARIASI if k["bentuk"] not in dipakai_bentuk else 0.0)
                           + (_BOBOT_PRESET if k["bentuk"] in _suka else 0.0))
-        calon.sort(key=lambda k: (-k["_skor"], str(k["pasangan"])))
+
+        def _relevansi(k):
+            """Seberapa cocok kandidat ini dgn SUBJEK seksinya - bukan seberapa kuat chartnya.
+
+            BUG NYATA DIPERBAIKI (terukur di laporan 192): urutan dulu memakai _skor SAJA,
+            jadi sebuah seksi mengklaim kandidat TERKUAT yang kebetulan menyinggung subjeknya,
+            bukan yang paling menggambarkan subjeknya. Hasilnya judul & chart tertukar -
+            "Status Distribution" menaungi chart Metode_Pengadaan sementara "Procurement
+            Method Analysis" menaungi chart Status, dan "Departmental Spending" menaungi
+            Vendor sementara "Service Category Analysis" menaungi Unit_Kerja_Pemohon.
+
+            Kolom KATEGORI (elemen pertama pasangan) paling menentukan: itu yang jadi sumbu
+            dan yang dibaca pembaca sbg "chart ini tentang apa"."""
+            _p = [str(x) for x in k["pasangan"] if not str(x).startswith("@")]
+            _kat_cocok = 1 if (_p and _p[0] in _subj) else 0
+            return (_kat_cocok, len(_subj & set(_p)))
+
+        calon.sort(key=lambda k: (-_relevansi(k)[0], -_relevansi(k)[1], -k["_skor"],
+                                  str(k["pasangan"])))
         for k in calon:
             if frozenset(k["pasangan"]) in terpakai_pasangan:
+                continue
+            # Seksi hanya boleh MENAMAI chart yang kolom kategorinya memang subjeknya.
+            # Tanpa syarat ini, seksi yang subjeknya sudah keburu diklaim seksi lain akan
+            # menamai chart mana pun yang tersisa - terukur di laporan 192: "Status
+            # Distribution" menaungi chart Deskripsi_Barang_Jasa karena kolom Status sudah
+            # diambil seksi sebelumnya. Kandidat yang tidak jadi diklaim TIDAK hilang; ia
+            # tetap dipakai di fase berikutnya dgn judul yang dibangun dari datanya sendiri -
+            # judul jujur lebih baik drpd judul yang salah.
+            if _subj and _relevansi(k)[0] == 0:
                 continue
             terpilih.append(dict(k, seksi=judul))
             terpakai_pasangan.add(frozenset(k["pasangan"]))
@@ -4180,6 +4226,10 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
         judul = sanitize_text(coerce_narrative_text(sec.get("title"))) or ""
         if not judul:
             continue
+        if seksi_merangkum(sec):
+            laporan.append((judul, "tanpa kolom visual",
+                            "seksi rangkuman/penutup - tidak menamai panel chart"))
+            continue
         subjek = subjek_seksi(sec, kolom)
         if not subjek:
             laporan.append((judul, "tanpa kolom visual", "tidak menyebut kolom data mana pun"))
@@ -4191,7 +4241,7 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
                             "kolom subjeknya (%s) tidak punya pasangan yang lolos tanda tangan"
                             % ", ".join(sorted(subjek))))
             continue
-        dipilih = _ambil(list(calon), judul)
+        dipilih = _ambil(list(calon), judul, subjek)
         if dipilih:
             laporan.append((judul, "dapat kolom visual",
                             "%s dari %s" % (dipilih["bentuk"], list(dipilih["pasangan"]))))
