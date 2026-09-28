@@ -659,7 +659,7 @@ def _walk_numbers(obj):
     ditemukan — dipakai test di bawah utk mencari angka "racun" di MANA PUN dlm hasil block
     plan, tanpa perlu tahu persis lewat jalur mana (tile dashboard biasa ATAU kartu halaman
     insight — keduanya jalur yang sah, block plan bisa memilih salah satu tergantung datanya
-    "kaya" atau tidak, lihat _is_rich_insight_page)."""
+    "kaya" atau tidak)."""
     found = []
     if isinstance(obj, dict):
         for v in obj.values():
@@ -686,7 +686,7 @@ def test_custom_topic_chart_values_come_from_pandas_not_ai():
     Dites dgn menyuntikkan SATU section palsu yang py("chart_source") MENUNJUK entri breakdown
     ASLI, BERDAMPINGAN dgn field "chart" gaya LAMA berisi angka "racun" (999999...) yang SENGAJA
     salah - kalau HASIL block plan (di MANA PUN — tile dashboard biasa, atau kartu halaman
-    insight kalau datanya kebetulan "kaya", lihat _is_rich_insight_page) ternyata memuat 999999,
+    insight kalau datanya kebetulan "kaya") ternyata memuat 999999,
     berarti kode masih (sebagian) mempercayai angka tulisan AI drpd cuma menunjuk nama kolom.
     Dicek scr REKURSIF (_walk_numbers) drpd mengasumsikan 1 struktur tile tetap — supaya tes
     ini tidak rapuh thd jalur mana yang dipilih block plan utk data spesifik yang kebetulan

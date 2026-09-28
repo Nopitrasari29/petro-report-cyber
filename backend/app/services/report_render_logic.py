@@ -6353,22 +6353,6 @@ def _build_chart_insight_page(tile: dict, report, parsed_data: list | None = Non
     }
 
 
-def _is_rich_insight_page(page: dict) -> bool:
-    """Kriteria "topik ini layak dapat halaman insight mendalam sendiri" (PERMINTAAN USER
-    LANJUTAN: "tujuan utamanya kepadatan, bukan kedalaman per halaman" — versi sebelumnya
-    SETIAP topik dapat halaman sendiri tanpa syarat, banyak yang berakhir separuh kosong krn
-    detailnya genuinely tipis): minimal 3 kartu kategori DI LAPIS DETAIL, DAN mayoritas
-    (>50%) kartu itu py rincian sub-kategori nyata (dari cross-tab sungguhan, lihat
-    _compute_secondary_breakdown) — bukan cuma header+skor+badge kosongan. Topik yang tidak
-    lolos digabung ke halaman kolom lain (_build_column_dashboard_blocks) drpd berdiri
-    sendiri stengah kosong."""
-    cat_details = page.get("category_details") or []
-    if len(cat_details) < 3:
-        return False
-    with_sub_items = sum(1 for c in cat_details if c.get("sub_items"))
-    return with_sub_items > len(cat_details) / 2
-
-
 _INSIGHT_PAGE_OVERLAP_THRESHOLD = 0.7
 
 
