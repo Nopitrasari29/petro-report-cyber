@@ -756,16 +756,35 @@ class OllamaClient:
 
         # Cocokkan balik ke topik yang BENAR2 diminta di batch ini via "id" (defensif kalau
         # model keliru urutan/jumlah) — id asing di luar batch ini diabaikan.
-        by_id = {
-            str(item.get("id") or "").strip(): item
-            for item in batch_sections if isinstance(item, dict)
-        }
+        _items = [item for item in batch_sections if isinstance(item, dict)]
+        by_id = {str(item.get("id") or "").strip(): item for item in _items}
+
+        def _norm(t):
+            return re.sub(r"[^a-z0-9]+", "", str(t or "").lower())
+
+        by_title = {}
+        for item in _items:
+            by_title.setdefault(_norm(item.get("title")), item)
+
+        # BUG NYATA DIPERBAIKI: pencocokan dulu HANYA lewat id persis. Seksi custom dari
+        # tombol "+Add" berkunci `custom_<timestamp>` - token acak yang hampir tidak pernah
+        # disalin ulang model (ia menulis slug judulnya), jadi seksi custom TIDAK PERNAH
+        # cocok dan selalu berakhir "GAGAL TOTAL - dilewati". Terlihat di seluruh DB:
+        # setiap seksi berkunci slug cocok, setiap seksi custom tidak. Judul jauh lebih
+        # andal disalin - dan memang diminta "SAMA PERSIS seperti di daftar".
+        _terpakai = set()
         matched = []
         for s in batch:
             sid = str(s.get("key") or s.get("id") or "")
             item = by_id.get(sid)
-            if not item:
+            if item is None or id(item) in _terpakai:
+                item = by_title.get(_norm(s.get("title")))
+            if (item is None or id(item) in _terpakai) and len(batch) == 1 and len(_items) == 1:
+                # retry solo: satu diminta, satu dijawab - tidak ada yang bisa tertukar
+                item = _items[0]
+            if item is None or id(item) in _terpakai:
                 continue
+            _terpakai.add(id(item))
             content = str(item.get("content") or "").strip()
             if not content:
                 continue
