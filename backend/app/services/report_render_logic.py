@@ -3319,6 +3319,111 @@ def kolom_yang_digambar(cols: list, total_w_in: float, gap_in: float, body_h_in:
     return simpan or cols
 
 
+def kolom_terbuang_saat_gambar(block: dict) -> list:
+    """Kolom yang PASTI dibuang exporter saat menggambar halaman ini.
+
+    Dihitung dengan fungsi & parameter yang SAMA PERSIS dengan kedua exporter
+    (export_pdf.py::_build_management_dashboard_columns_block dan kembarannya di
+    export_ppt.py), jadi jawabannya tidak bisa berbeda dari yang benar-benar terjadi.
+    Dipakai untuk menemukan seksi yang kolomnya lenyap sebelum laporan jadi - bukan untuk
+    mengubah apa yang digambar."""
+    cols = [c for c in (block.get("columns") or []) if c]
+    if not cols:
+        return []
+    simpan = kolom_yang_digambar(
+        cols, 13.333 - 2 * _DASH_MARGIN_X_IN, _DASH_COLS_GAP_IN,
+        _DASH_CONTENT_BOTTOM_IN - _DASH_COLS_TITLE_H_IN - _DASH_COLS_KPI_H_IN - 0.10)
+    # kolom_yang_digambar mengembalikan daftar ASLI kalau SEMUA kolom gugur (halaman tidak
+    # pernah dikosongkan) - dalam keadaan itu tidak ada yang benar-benar terbuang.
+    if simpan is cols or len(simpan) == len(cols):
+        return []
+    tersimpan = {id(c) for c in simpan}
+    return [c for c in cols if id(c) not in tersimpan]
+
+
+def pulihkan_seksi_yang_kolomnya_terbuang(blocks: list, report, konten_seksi: dict) -> int:
+    """Seksi yang kolomnya dibuang saat gambar dikembalikan jadi butir narasi.
+
+    BUG NYATA DIPERBAIKI (terukur di laporan 199, seksi DICENTANG 'Trend of Blocked Spam by
+    Hour'): seksi yang berhasil mengklaim tile DICORET dari narasi, lalu tile-nya dibuang
+    saat export karena tidak muat digambar - hasilnya seksi itu tidak muncul di mana pun,
+    tidak sebagai panel maupun sebagai narasi. Pembacanya tidak punya petunjuk apa pun bahwa
+    ada topik yang dicentang tapi hilang.
+
+    Halaman chart TIDAK disentuh di sini - exporter tetap membuang kolom yang sama seperti
+    sebelumnya. Yang ditambahkan cuma butir narasinya, supaya isi yang dicentang user selalu
+    punya tempat di laporan.
+
+    Narasi dipaginasi ULANG (bukan disisipkan ke halaman yang sudah penuh), jadi kalau butir
+    tambahan tidak muat, halaman narasinya bertambah - bukan butirnya yang hilang diam-diam.
+
+    Kembalikan jumlah seksi yang dipulihkan."""
+    terbuang = []
+    for b in blocks:
+        if b.get("kind") != "management_dashboard_columns":
+            continue
+        for c in kolom_terbuang_saat_gambar(b):
+            judul = str((c or {}).get("source_topic_title") or "").strip()
+            if judul:
+                terbuang.append(judul)
+    if not terbuang:
+        return 0
+
+    # Butir narasi yang SUDAH ada dikumpulkan lagi supaya paginasinya dihitung ulang utuh.
+    idx_narasi = [i for i, b in enumerate(blocks)
+                  if b.get("kind") == "management_ai_narrative"]
+    butir = []
+    for i in idx_narasi:
+        butir.extend(blocks[i].get("items") or [])
+
+    sudah = {str(x.get("title") or "").strip() for x in butir}
+    dipulihkan = 0
+    for judul in terbuang:
+        if judul in sudah:
+            continue
+        isi = sanitize_text(coerce_narrative_text(konten_seksi.get(judul) or ""))
+        if not isi:
+            # Tanpa teks seksinya, memaksa butir kosong cuma menambah kartu hampa. Tetap
+            # dicatat supaya hilangnya tidak diam-diam.
+            logger.warning("seksi %r kolomnya terbuang dan tidak punya teks utk narasi - "
+                           "tidak muncul di laporan", judul[:60])
+            continue
+        butir.append({"title": judul,
+                      "content": _shorten_to_caption(isi, max_sentences=3),
+                      "preserve_topic": True})
+        sudah.add(judul)
+        dipulihkan += 1
+        logger.info("seksi %r dipulihkan jadi narasi: kolom chartnya dibuang saat gambar",
+                    judul[:60])
+    if not dipulihkan:
+        return 0
+
+    sisip = idx_narasi[0] if idx_narasi else None
+    if sisip is None:
+        # Belum ada halaman narasi sama sekali - ditaruh tepat sebelum Tindak Lanjut/penutup,
+        # tempat halaman narasi memang berada saat ia ada.
+        sisip = next((i for i, b in enumerate(blocks)
+                      if b.get("kind") in ("management_action_items", "closing")), len(blocks))
+    for i in reversed(idx_narasi):
+        blocks.pop(i)
+
+    _lebar = 13.333 - 2 * _DASH_MARGIN_X_IN
+    _tinggi = _NARASI_TINGGI_ISI_IN - _NARASI_HEADER_IN
+    baru = []
+    for n, chunk in enumerate(butir_narasi_per_halaman(butir, _lebar, _tinggi)):
+        lanjutan = n > 0
+        baru.append({
+            "kind": "management_ai_narrative",
+            "kicker": _L(report, "ANALISIS", "ANALYSIS"),
+            "title": _L(report,
+                        "Insight Tambahan (Lanjutan)" if lanjutan else "Insight Tambahan",
+                        "Additional Insights (Continued)" if lanjutan else "Additional Insights"),
+            "items": chunk,
+        })
+    blocks[sisip:sisip] = baru
+    return dipulihkan
+
+
 def dashboard_column_bboxes(block: dict, legacy_chart_fraction: float | None = None) -> list[dict]:
     """Return chart/card/note rectangles for every dashboard column.
 
@@ -10342,5 +10447,15 @@ def build_management_report_blocks(report) -> list[dict]:
     # supaya yang dikemas jadi kolom cuma topik yang genuinely berbeda - bukan duplikat yang
     # seharusnya dibuang lebih dulu.
     blocks = _pack_insight_pages_into_columns(blocks, report)
+
+    # PALING AKHIR, setelah susunan kolom FINAL: seksi yang kolomnya akan dibuang exporter
+    # dikembalikan jadi butir narasi. Tanpa ini seksi yang DICENTANG user bisa hilang dari
+    # laporan sama sekali - terukur di laporan 199, lihat pulihkan_seksi_yang_kolomnya_terbuang.
+    _konten_seksi = {
+        sanitize_text(coerce_narrative_text(_s.get("title"))): _s.get("content")
+        for _s in dynamic_sections_all
+        if sanitize_text(coerce_narrative_text(_s.get("title")))
+    }
+    pulihkan_seksi_yang_kolomnya_terbuang(blocks, report, _konten_seksi)
 
     return blocks
