@@ -1141,6 +1141,121 @@ function InsightTile({ panel, theme = THEME_PALETTES.green, cols = 1 }: { panel:
 // (IVORY/putih). theme.light/theme.soft SENGAJA pucat krn awalnya cuma dipakai sbg teks di
 // atas latar GELAP (mis. kicker cover) — utk tema "gold" khususnya jauh lebih pucat drpd
 // tema lain, nyaris tak kelihatan kalau dipakai ulang apa adanya di atas kartu/panel terang.
+// Nama chart yang bisa dibaca manusia. Kunci tile_kind dipakai apa adanya oleh
+// export_pdf.py/export_ppt.py; di sini cuma diterjemahkan jadi sebutan yang berarti bagi
+// pembaca preview.
+const NAMA_CHART: Record<string, string> = {
+  risk_heatmap: "Peringkat batang",
+  ranked_bar: "Peringkat batang",
+  metric_share: "Komposisi",
+  kpi_radar: "Radar multi-indikator",
+  time_heatmap: "Peta panas waktu",
+  trend_chart: "Tren waktu",
+  period_compare: "Perbandingan periode",
+  status_funnel: "Corong status",
+  donut: "Donat",
+};
+
+// Halaman yang isinya dibangun otomatis dari data (chart/kartu) belum punya padanan render
+// React-nya. Sebelumnya blok seperti ini jatuh ke `default: return null` dan kotak preview
+// 16:9 dirender KOSONG - pembaca tidak tahu halaman itu berisi apa. Ringkasan di bawah
+// dibaca dari BLOK YANG SAMA yang dipakai merender PDF/PPTX, jadi isinya selalu cocok
+// dengan file yang akan diunduh.
+function RingkasanHalamanOtomatis({
+  block,
+  theme,
+}: {
+  block: ReportBlock;
+  theme: ThemeColors;
+}) {
+  const kolom: any[] = Array.isArray((block as any).columns)
+    ? ((block as any).columns as any[])
+    : (block as any).main_chart_tile
+      ? [block]
+      : [];
+  const butir: any[] = Array.isArray((block as any).items)
+    ? ((block as any).items as any[])
+    : [];
+
+  const chart = kolom
+    .map((c) => (c?.main_chart_tile || {}) as any)
+    .filter((t) => t && (t.tile_kind || t.title));
+
+  const judul =
+    (block as any).title ||
+    (block as any).judul_topik ||
+    "Halaman visual";
+
+  return (
+    <div className="w-full h-full flex flex-col justify-center px-[6%] py-[5%]">
+      <div
+        className="text-[11px] font-black uppercase tracking-[0.18em] mb-2"
+        style={{ color: theme.main }}
+      >
+        Halaman visual
+      </div>
+      <div className="text-[19px] font-extrabold text-stone-800 leading-snug mb-3">
+        {judul}
+      </div>
+
+      {chart.length > 0 && (
+        <div className="text-[12px] font-bold text-stone-600 mb-2">
+          {chart.length} chart di halaman ini
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        {chart.map((t, i) => (
+          <div key={i} className="flex items-baseline gap-2">
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full shrink-0 mt-1.5"
+              style={{ background: theme.chart }}
+            />
+            <span className="text-[12px] text-stone-700 leading-snug">
+              <span className="font-bold">
+                {NAMA_CHART[t.tile_kind as string] || "Chart"}
+              </span>
+              {t.cat_col_name ? (
+                <span className="text-stone-500">
+                  {" · "}
+                  {String(t.cat_col_name)}
+                  {t.met_col_name ? " × " + String(t.met_col_name) : ""}
+                </span>
+              ) : null}
+              {kolom[i]?.title ? (
+                <span className="block text-[11px] text-stone-500">
+                  {String(kolom[i].title)}
+                </span>
+              ) : null}
+            </span>
+          </div>
+        ))}
+        {butir.slice(0, 6).map((it, i) => (
+          <div key={"n" + i} className="flex items-baseline gap-2">
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full shrink-0 mt-1.5"
+              style={{ background: theme.chart }}
+            />
+            <span className="text-[12px] text-stone-700 leading-snug">
+              {String(it?.title || it?.label || "")}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {chart.length === 0 && butir.length === 0 && (
+        <div className="text-[12px] text-stone-500">
+          Isi halaman ini dibangun otomatis dari data laporan.
+        </div>
+      )}
+
+      <div className="mt-auto pt-3 text-[10px] font-semibold text-stone-400">
+        Tampilan persisnya mengikuti file PDF/PPTX yang diunduh.
+      </div>
+    </div>
+  );
+}
+
 function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): React.ReactNode {
   const accentColor = theme.main;
   // Ramp warna kategori/status DITURUNKAN dari tema — sama seperti export_pdf.py/export_ppt.py.
@@ -1692,7 +1807,12 @@ function renderInner(block: ReportBlock, vs: VisualStyle, theme: ThemeColors): R
       );
     }
 
+    // BUG NYATA DIPERBAIKI (dilaporkan user): jenis blok jalur Management
+    // (management_dashboard_columns / management_insight_page / management_ai_narrative)
+    // tidak punya case di sini, jadi semuanya jatuh ke `return null` dan kotak preview 16:9
+    // dirender KOSONG. Sekarang halaman seperti itu memperlihatkan judul, jumlah chart, dan
+    // jenis chartnya - bukan kanvas putih tanpa keterangan.
     default:
-      return null;
+      return <RingkasanHalamanOtomatis block={block} theme={theme} />;
   }
 }

@@ -160,7 +160,7 @@ export default function Step4PreviewEdit({
             kalau daftar Pages lebih panjang — lihat catatan panjang di deklarasi
             previewCardHeight). Pagination di-mt-auto supaya tetap di dasar kartu. */}
         <div
-          className="lg:col-span-3 bg-white rounded-2xl border border-stone-200/80 p-6 shadow-sm premium-card-hover transition-colors flex flex-col min-h-0"
+          className="lg:col-span-3 xl:col-span-2 bg-white rounded-2xl border border-stone-200/80 p-6 shadow-sm premium-card-hover transition-colors flex flex-col min-h-0"
           style={previewCardHeight ? { height: previewCardHeight } : undefined}
         >
           <h3 className="font-extrabold text-stone-855 text-sm border-b border-stone-100 pb-2 mb-4">
@@ -238,7 +238,7 @@ export default function Step4PreviewEdit({
             sini selalu tinggi natural yang benar utk dijadikan acuan tinggi kartu Pages. */}
         <div
           ref={previewCardRef}
-          className="lg:col-span-9 bg-white rounded-2xl border border-stone-200/80 p-6 shadow-sm space-y-6 premium-card-hover transition-colors"
+          className="lg:col-span-9 xl:col-span-10 bg-white rounded-2xl border border-stone-200/80 p-6 shadow-sm space-y-6 premium-card-hover transition-colors"
         >
           {/* Tab Selector */}
           <div className="flex justify-between items-center border-b border-stone-150 pb-2">
