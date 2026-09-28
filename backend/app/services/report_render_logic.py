@@ -4240,40 +4240,24 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
             Vendor sementara "Service Category Analysis" menaungi Unit_Kerja_Pemohon.
 
             Kolom KATEGORI (elemen pertama pasangan) paling menentukan: itu yang jadi sumbu
-            dan yang dibaca pembaca sbg "chart ini tentang apa". Tapi METRIK-nya ikut
-            menentukan juga - lihat _semua_kolom_disebut di bawah."""
-            _p = _kolom_kandidat(k)
+            dan yang dibaca pembaca sbg "chart ini tentang apa"."""
+            _p = [str(x) for x in k["pasangan"] if not str(x).startswith("@")]
             _kat_cocok = 1 if (_p and _p[0] in _subj) else 0
             return (_kat_cocok, len(_subj & set(_p)))
-
-        def _kolom_kandidat(k):
-            return [str(x) for x in k["pasangan"] if not str(x).startswith("@")]
-
-        def _semua_kolom_disebut(k):
-            """Seluruh kolom kandidat harus disebut teks seksinya - bukan cuma kategorinya.
-
-            BUG NYATA DIPERBAIKI (terukur di laporan 186): syarat lama cuma memeriksa kolom
-            KATEGORI, padahal di data deret-waktu kategorinya hampir selalu kolom yang sama
-            (Hour). Syarat itu lolos untuk nyaris semua kandidat dan tidak menyaring apa pun,
-            jadi seksi "Authentication Failure Trend" menaungi chart Hour x Blocked: Policy
-            dan seksi "Sent Traffic Insight" menaungi chart Hour x Blocked: Policy juga -
-            judul menjanjikan satu metrik, chartnya menggambar metrik lain."""
-            return set(_kolom_kandidat(k)) <= _subj
 
         calon.sort(key=lambda k: (-_relevansi(k)[0], -_relevansi(k)[1], -k["_skor"],
                                   str(k["pasangan"])))
         for k in calon:
             if frozenset(k["pasangan"]) in terpakai_pasangan:
                 continue
-            # Seksi hanya boleh MENAMAI chart yang SELURUH kolomnya memang subjeknya.
+            # Seksi hanya boleh MENAMAI chart yang kolom kategorinya memang subjeknya.
             # Tanpa syarat ini, seksi yang subjeknya sudah keburu diklaim seksi lain akan
             # menamai chart mana pun yang tersisa - terukur di laporan 192: "Status
             # Distribution" menaungi chart Deskripsi_Barang_Jasa karena kolom Status sudah
             # diambil seksi sebelumnya. Kandidat yang tidak jadi diklaim TIDAK hilang; ia
             # tetap dipakai di fase berikutnya dgn judul yang dibangun dari datanya sendiri -
-            # judul jujur lebih baik drpd judul yang salah, dan seksi yang kehabisan chart
-            # cocok lebih baik tidak menamai apa pun drpd menamai chart yang salah.
-            if _subj and not _semua_kolom_disebut(k):
+            # judul jujur lebih baik drpd judul yang salah.
+            if _subj and _relevansi(k)[0] == 0:
                 continue
             terpilih.append(dict(k, seksi=judul))
             terpakai_pasangan.add(frozenset(k["pasangan"]))
@@ -4307,9 +4291,7 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
                             "%s dari %s" % (dipilih["bentuk"], list(dipilih["pasangan"]))))
         else:
             laporan.append((judul, "tanpa kolom visual",
-                            "tidak ada pasangan tersisa yang SELURUH kolomnya (%s) disebut "
-                            "seksi ini - sudah diklaim seksi lain, atau metriknya beda"
-                            % ", ".join(sorted(subjek))))
+                            "semua pasangan subjeknya sudah diklaim seksi lain"))
 
     # ---- FASE 2: pasangan bagus yang tidak diklaim seksi mana pun -------------------
     sisa = [k for k in kand if frozenset(k["pasangan"]) not in terpakai_pasangan]
@@ -6747,33 +6729,6 @@ def _jejak_topik(blok: dict, df) -> frozenset | None:
     return jejak or None
 
 
-def _kategori_topik(blok: dict):
-    """SUBJEK topik = kolom kategorinya. None kalau topik ini tidak punya sumbu kategori.
-
-    Ini yang dibaca pembaca sbg "halaman ini tentang apa" - bukan bentuk chartnya, dan bukan
-    baris mana yang dipakainya."""
-    t = (blok or {}).get("main_chart_tile") or {}
-    nama = t.get("cat_col_name")
-    nama = str(nama).strip() if nama else ""
-    return nama or None
-
-
-def _subjek_nyambung(a, b) -> bool:
-    """Dua topik boleh satu halaman kalau SUBJEKNYA sama.
-
-    BUG NYATA DIPERBAIKI: syarat koherensi satu-satunya dulu adalah jejak BARIS, dan untuk
-    data dari SATU tabel lebar (hampir semua laporan di sistem ini) setiap kolom punya jejak
-    baris yang sama persis - jadi syarat itu selalu terpenuhi dan tidak pernah memisahkan
-    apa pun. Terukur di laporan 192: satu halaman memuat 5 kolom dgn 5 kolom kategori
-    BERBEDA (Status, Metode_Pengadaan, Vendor, Unit_Kerja_Pemohon, Deskripsi_Barang_Jasa).
-
-    Topik tanpa kolom kategori tetap NETRAL - memaksanya jadi halaman sendiri cuma
-    menghasilkan halaman tipis tanpa memperbaiki koherensi apa pun."""
-    if a is None or b is None:
-        return True
-    return a == b
-
-
 def _topik_nyambung(a, b) -> bool:
     """Dua jejak baris dianggap satu topik besar kalau sebagian besarnya bertindih."""
     if a is None or b is None:
@@ -6796,18 +6751,13 @@ def _kelompok_topik_nyambung(blok_urut: list, df) -> list:
     kelompok: list = []
     for b in blok_urut:
         jejak = _jejak_topik(b, df)
-        subjek = _kategori_topik(b)
         for k in kelompok:
-            # DUA syarat, bukan satu: barisnya bertindih DAN subjeknya sama. Lihat
-            # _subjek_nyambung - tanpa syarat subjek, data dari satu tabel lebar membuat
-            # semua topik dianggap nyambung dan halaman jadi campur aduk.
-            if all(_topik_nyambung(jejak, j) and _subjek_nyambung(subjek, sj)
-                   for _, j, sj in k):
-                k.append((b, jejak, subjek))
+            if all(_topik_nyambung(jejak, j) for _, j in k):
+                k.append((b, jejak))
                 break
         else:
-            kelompok.append([(b, jejak, subjek)])
-    return [[b for b, _, _ in k] for k in kelompok]
+            kelompok.append([(b, jejak)])
+    return [[b for b, _ in k] for k in kelompok]
 
 
 def _pack_insight_pages_into_columns(blocks: list, report) -> list:
