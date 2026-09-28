@@ -42,9 +42,21 @@ PENTING:
   * SALAH (cuma deskripsi data, DILARANG): "Pabrik II B tercatat sebanyak 11 kali dalam data,
     menjadikannya unit dengan frekuensi tertinggi."
   * BENAR (sebab-akibat + bukti, WAJIB gaya ini): "Konsentrasi produksi menumpuk di Pabrik II B
-    (11 dari 48 data, 22.9%) - dominasi sebesar ini berisiko membebani kapasitas unit tersebut
+    (11 dari 48 data, 22.9%). Dominasi sebesar ini berisiko membebani kapasitas unit tersebut
     sementara unit lain kurang termanfaatkan, terlihat dari kesenjangan tajam pada distribusi
     kategori."
+- LARANGAN GAYA (dilaporkan user: teksnya "terbaca seperti tulisan AI"):
+  * JANGAN membuka kalimat dengan frasa pengisi yang tidak menambah fakta:
+    "This indicates/suggests/highlights/shows/demonstrates/reflects ...",
+    "Hal ini menunjukkan/mengindikasikan/menyoroti/mencerminkan ...",
+    "It is worth noting ...", "Perlu dicatat bahwa ...", "Secara keseluruhan ...".
+    Langsung sebutkan hal yang terjadi dan dampaknya. SALAH: "Blocked: Policy naik 2,4x.
+    Hal ini menunjukkan adanya peningkatan aktivitas mencurigakan." BENAR: "Blocked: Policy
+    naik 2,4x, lebih dari dua kali lipat beban penyaringan di akhir periode."
+  * JANGAN memakai tanda pisah em dash ("—") maupun " - " sebagai penyambung antar klausa.
+    Pakai TITIK (dua kalimat) atau TITIK KOMA. Ini supaya teks AI tidak seragam dengan
+    kalimat yang disusun program.
+  * JANGAN mengulang struktur kalimat yang sama di beberapa section berturut-turut.
 - KALIMAT PERTAMA tiap field naratif ("trend_analysis", "severity_analysis", "risk_assessment",
   dan "sections[].content") WAJIB bisa BERDIRI SENDIRI sbg ringkasan singkat (target ≤60
   karakter) — kalimat ini yang dipakai laporan sbg KETERANGAN SINGKAT di bawah chart/visualisasi
@@ -614,8 +626,20 @@ PENTING:
   JANGAN sekadar mendeskripsikan angka apa adanya. Setiap "content" WAJIB pola SEBAB-AKIBAT:
   (1) apa yang terjadi, (2) kenapa/apa dampaknya ke bisnis, (3) rujuk angka buktinya. SALAH:
   "Pabrik II B tercatat 11 kali, tertinggi di antara unit lain." BENAR: "Konsentrasi produksi
-  menumpuk di Pabrik II B (11 dari 48 data) - berisiko membebani kapasitas unit ini sementara
-  unit lain kurang termanfaatkan."
+  menumpuk di Pabrik II B (11 dari 48 data). Beban sebesar itu berisiko menekan kapasitas unit
+  ini sementara unit lain kurang termanfaatkan."
+- LARANGAN GAYA (dilaporkan user: teksnya "terbaca seperti tulisan AI"):
+  * JANGAN membuka kalimat dengan frasa pengisi yang tidak menambah fakta:
+    "This indicates/suggests/highlights/shows/demonstrates/reflects ...",
+    "Hal ini menunjukkan/mengindikasikan/menyoroti/mencerminkan ...",
+    "It is worth noting ...", "Perlu dicatat bahwa ...", "Secara keseluruhan ...".
+    Langsung sebutkan hal yang terjadi dan dampaknya. SALAH: "Blocked: Policy naik 2,4x.
+    Hal ini menunjukkan adanya peningkatan aktivitas mencurigakan." BENAR: "Blocked: Policy
+    naik 2,4x, lebih dari dua kali lipat beban penyaringan di akhir periode."
+  * JANGAN memakai tanda pisah em dash ("—") maupun " - " sebagai penyambung antar klausa.
+    Pakai TITIK (dua kalimat) atau TITIK KOMA. Ini supaya teks AI tidak seragam dengan
+    kalimat yang disusun program.
+  * JANGAN mengulang struktur kalimat yang sama di beberapa section berturut-turut.
 - KALIMAT PERTAMA "content" WAJIB bisa berdiri sendiri sbg ringkasan singkat (target ≤60
   karakter, angka kunci di dalamnya) — kalimat ini dipakai laporan sbg keterangan singkat di
   bawah chart tile-nya, BUKAN cuma potongan dari paragraf panjang. Kalimat 2/3 (kalau ada)

@@ -984,6 +984,31 @@ def _ekor_konsentrasi(report, ien, rasio, atas, total, kedua, kat_id, kat_en,
     return _urut[0][1]() or _peringkat()
 
 
+def _sambung_ekor(kepala: str, ekor: str, geser: int) -> str:
+    """Sambung kepala & ekor kalimat catatan TANPA menyentuh isinya.
+
+    Pola 1 & 2 dulu selalu memakai " - ", jadi di halaman berkolom banyak beberapa catatan
+    berturut-turut berbentuk "<fakta panjang> - <ekor>" dan terbaca seperti satu cetakan yang
+    diulang. Yang berubah di sini HANYA tanda sambungnya - kepala, ekor, seluruh angka, dan
+    seluruh klaimnya tetap apa adanya.
+
+    Pilihannya deterministik: diturunkan dari identitas tile yang sama yang sudah dipakai
+    memutar urutan pola, jadi dua kolom bersebelahan cenderung dapat bentuk berbeda dan
+    laporan yang sama selalu menghasilkan teks yang sama.
+
+    Ekor yang SUDAH memuat ";" selalu dipecah jadi kalimat sendiri - menyambungnya dengan ";"
+    lagi menghasilkan dua titik koma dalam satu kalimat."""
+    kepala, ekor = (kepala or "").strip(), (ekor or "").strip()
+    if not ekor:
+        return kepala
+    if not kepala:
+        return ekor[:1].upper() + ekor[1:]
+    kepala = kepala.rstrip(". ")
+    if ";" in ekor or geser % 2 == 0:
+        return "%s. %s" % (kepala, ekor[:1].upper() + ekor[1:])
+    return "%s; %s" % (kepala, ekor)
+
+
 def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> list:
     """Kalimat POLA yang dibaca dari kolom yang SUDAH ADA di data - bukan sebab yang dikarang.
 
@@ -1025,6 +1050,11 @@ def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> li
     # jadi setiap panel di laporan menghasilkan kalimat korelasi yang SAMA PERSIS - persis
     # pengulangan yang sedang diperbaiki. Sekarang kalimatnya lahir dari kolom milik panel itu
     # sendiri, jadi berbeda dengan sendirinya antar panel.
+
+    _tanda = "|".join(str(x or "") for x in (
+        (tile or {}).get("cat_col_name"), (tile or {}).get("met_col_name"),
+        (tile or {}).get("title"), (tile or {}).get("tile_kind")))
+    _geser = (sum(ord(c) for c in _tanda) % 4) if _tanda else 0
 
     def _pola1():
         # ---- 1. PERBANDINGAN ANTAR KELOMPOK: kategori dgn proporsi status paling menonjol ---
@@ -1081,17 +1111,17 @@ def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> li
                         report, _ien, _sel, _pct, _dasar, _nilai,
                         sebut_kolom(kat, _tl, 'kelompok'),
                         sebut_kolom(kat, _tl, 'kelompok', 'groups'))
-                    return (_L(
+                    return _sambung_ekor(_L(
                         report,
                         f"{_grp} paling menonjol pada {sebut_kolom(_stat, _tl, 'salah satu kategori')} '{_nilai}' "
                         f"({fmt_desimal(_pct * 100, 1, _ien)}% dari barisnya, dibanding "
                         f"{fmt_desimal(_dasar * 100, 1, _ien)}% rata-rata seluruh "
-                        f"{sebut_kolom(kat, _tl, 'kelompok lain')}) - {_ekor}",
+                        f"{sebut_kolom(kat, _tl, 'kelompok lain')})",
                         f"{_grp} stands out on {sebut_kolom(_stat, _tl, 'salah satu kategori', 'one category')} '{_nilai}' "
                         f"({fmt_desimal(_pct * 100, 1, _ien)}% of its rows versus "
                         f"{fmt_desimal(_dasar * 100, 1, _ien)}% across all "
-                        f"{sebut_kolom(kat, _tl, 'kelompok lain', 'other groups')}) - {_ekor}",
-                    ))
+                        f"{sebut_kolom(kat, _tl, 'kelompok lain', 'other groups')})",
+                    ), _ekor, _geser)
 
         return None
 
@@ -1117,7 +1147,7 @@ def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> li
                         float(_g.iloc[1]), sebut_kolom(kat, _tl, 'kelompok'),
                         sebut_kolom(kat, _tl, 'kelompok', 'groups'),
                         hindari=ekor_hindari)
-                    return (_L(
+                    return _sambung_ekor(_L(
                         report,
                         # Satuan angkanya disebut EKSPLISIT di kalimat, tidak menumpang pada
                         # awalan subjek - supaya angka ini tidak bisa terbaca sbg besaran lain
@@ -1125,12 +1155,12 @@ def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> li
                         f"{_g.index[0]} menyumbang {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x "
                         f"rata-rata {sebut_kolom(kat, _tl, 'kelompok')} lainnya pada "
                         f"{sebut_kolom(_mk, _tl, 'indikator utama') if _mk else 'jumlah data'} "
-                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - {_ekor}",
+                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)})",
                         f"{_g.index[0]} contributes {fmt_desimal(_atas / _rata_sisa, 1, _ien)}x the "
                         f"average of the other {sebut_kolom(kat, _tl, 'kelompok', 'groups')} on "
                         f"{sebut_kolom(_mk, _tl, 'indikator utama', 'the main indicator') if _mk else 'record count'} "
-                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)}) - {_ekor}",
-                    ))
+                        f"({_fmt_count(_atas, _ien)} vs {_fmt_count(_rata_sisa, _ien)})",
+                    ), _ekor, _geser)
 
         return None
 
@@ -1158,12 +1188,12 @@ def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> li
                                 f"{rapikan_nama_kolom(_a)} dan {rapikan_nama_kolom(_b)} "
                                 f"{'naik bersama' if _r > 0 else 'berlawanan arah'} dengan kaitan "
                                 f"{'erat' if _abs >= _POLA_KORELASI_KUAT else 'sedang'} "
-                                f"(r={fmt_desimal(_r, 2, _ien)}) - hubungan sekuat itu mencakup "
+                                f"(r={fmt_desimal(_r, 2, _ien)}). Hubungan sekuat itu mencakup "
                                 f"sekitar {fmt_desimal(_abs * _abs * 100, 0, _ien)}% ragam keduanya.",
                                 f"{rapikan_nama_kolom(_a)} and {rapikan_nama_kolom(_b)} "
                                 f"{'move together' if _r > 0 else 'move in opposite directions'} with a "
                                 f"{'strong' if _abs >= _POLA_KORELASI_KUAT else 'moderate'} "
-                                f"association (r={fmt_desimal(_r, 2, _ien)}) - a link that strong "
+                                f"association (r={fmt_desimal(_r, 2, _ien)}). A link that strong "
                                 f"covers about {fmt_desimal(_abs * _abs * 100, 0, _ien)}% of their "
                                 f"shared variation.",
                             ))
@@ -1171,10 +1201,10 @@ def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> li
                             return (_L(
                                 report,
                                 f"{rapikan_nama_kolom(_a)} dan {rapikan_nama_kolom(_b)} praktis tidak "
-                                f"berkaitan (r={fmt_desimal(_r, 2, _ien)}) - besarnya yang satu tidak "
+                                f"berkaitan (r={fmt_desimal(_r, 2, _ien)}). Besarnya yang satu tidak "
                                 f"bisa dipakai memperkirakan yang lain.",
                                 f"{rapikan_nama_kolom(_a)} and {rapikan_nama_kolom(_b)} are effectively "
-                                f"unrelated (r={fmt_desimal(_r, 2, _ien)}) - the size of one says "
+                                f"unrelated (r={fmt_desimal(_r, 2, _ien)}). The size of one says "
                                 f"nothing about the other.",
                             ))
 
@@ -1228,10 +1258,6 @@ def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> li
     # Tanpa ini tipe 1 (syaratnya paling longgar) selalu menang di hampir semua panel, dan
     # halaman dasbor berkolom banyak jadi berisi kalimat yang strukturnya sama persis.
     _urut = [_pola1, _pola2, _pola3, _pola4]
-    _tanda = "|".join(str(x or "") for x in (
-        (tile or {}).get("cat_col_name"), (tile or {}).get("met_col_name"),
-        (tile or {}).get("title"), (tile or {}).get("tile_kind")))
-    _geser = (sum(ord(c) for c in _tanda) % 4) if _tanda else 0
     for _f in _urut[_geser:] + _urut[:_geser]:
         if len(keluar) >= 2:
             break
@@ -1400,10 +1426,10 @@ def catatan_agregat(items: list, n_digambar: int, unit: str, report,
         _nama_top = pasangan[nilai.index(max(nilai))][0]
         catatan.append(_L(
             report,
-            f"{_nama_top} {fmt_desimal(max(_pop) / med, 1, _ien)}x median seluruh entitas - "
-            f"selisih sebesar ini membuat rata-rata seluruh entitas tidak mewakili mayoritas.",
+            f"{_nama_top} {fmt_desimal(max(_pop) / med, 1, _ien)}x median seluruh entitas. "
+            f"Selisih sebesar ini membuat rata-rata seluruh entitas tidak mewakili mayoritas.",
             f"{_nama_top} is {fmt_desimal(max(_pop) / med, 1, _ien)}x the median across all "
-            f"entities - a gap this large makes the overall average unrepresentative.",
+            f"entities. A gap this large makes the overall average unrepresentative.",
         ))
     # Cakupan ditaruh PALING AKHIR (lihat catatan di R1). Kalau tidak ada butir naratif sama
     # sekali, ia tetap dipakai - lebih baik satu baris transparansi daripada Catatan kosong.
@@ -6277,8 +6303,8 @@ def _build_chart_insight_page(tile: dict, report, parsed_data: list | None = Non
         )]
         notes.append(_L(
             report,
-            f"{axes[top_i]} mencatat skor tertinggi ({values[top_i]:.0f}), sementara {axes[low_i]} paling rendah ({values[low_i]:.0f}) — selisih {values[top_i] - values[low_i]:.0f} poin.",
-            f"{axes[top_i]} recorded the highest score ({values[top_i]:.0f}), while {axes[low_i]} was the lowest ({values[low_i]:.0f}) — a gap of {values[top_i] - values[low_i]:.0f} points.",
+            f"{axes[top_i]} mencatat skor tertinggi ({values[top_i]:.0f}), sementara {axes[low_i]} paling rendah ({values[low_i]:.0f}). Selisihnya {values[top_i] - values[low_i]:.0f} poin.",
+            f"{axes[top_i]} recorded the highest score ({values[top_i]:.0f}), while {axes[low_i]} was the lowest ({values[low_i]:.0f}). The gap is {values[top_i] - values[low_i]:.0f} points.",
         ))
         # PERMINTAAN USER (density: halaman insight bertopik chart tunggal, tanpa kartu
         # bersarang, genuinely lebih tipis drpd halaman berkartu — bukan alasan utk kosong):
