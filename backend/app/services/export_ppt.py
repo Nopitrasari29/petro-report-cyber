@@ -4552,6 +4552,12 @@ _DASH_COLS_KPI_H_IN = 0.88
 _DASH_PANEL_LINE_PT = 0.4
 
 
+# Nomor halaman slide hidup di y=7,08-7,38in - DI DALAM area isi yang dipatok
+# _DASH_CONTENT_BOTTOM_IN (7,4in) bersama PDF. PDF tidak punya bentrok ini krn nomor
+# halamannya di luar kanvas isi. Jadi khusus PPTX, elemen terbawah berhenti di sini.
+_PPT_NOTE_BAWAH_IN = 7.02
+
+
 def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext):
     """Kembaran PPT dari export_pdf.py::_build_management_dashboard_columns_block - beberapa
     topik dikemas jadi KOLOM SEJAJAR di satu slide, memakai ulang helper yang sama persis
@@ -4602,6 +4608,15 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     _catatan_per_kolom = [k for k in _catatan_per_kolom if k]
     # `bentuk` dioper supaya kolom BERTUMPUK dihitung sbg jumlah seksinya - lihat catatan
     # kembarannya di export_pdf.py.
+    # BUG NYATA DIPERBAIKI: pita nomor halaman dipesan DI SINI, sebelum tinggi kotak
+    # diputuskan - bukan dipangkas belakangan. Dulu kotak dipesan 1.02in di y=6.44
+    # sementara ruang sampai _PPT_NOTE_BAWAH_IN cuma 0.58in, lalu loop pelepas butir di
+    # bawah menggerus SELURUH butir sampai `_cat` kosong dan add_note_box tidak pernah
+    # dipanggil (laporan 186: PDF 4 halaman ber-Catatan, PPTX 0). Slide kehilangan
+    # ruangnya TANPA mendapat kotaknya. Sekarang kolom yang mengalah 0.38in, sesuai
+    # keputusan bahwa catatan menang saat berebut ruang dgn chart.
+    if _catatan_per_kolom:
+        avail_h_in -= max(0.0, _DASH_CONTENT_BOTTOM_IN - _PPT_NOTE_BAWAH_IN)
     _maks_note_in = tinggi_maks_kotak_catatan(
         cols, col_w_isi, avail_h_in, is_english(ctx.report), bentuk=_bentuk)
     _NOTE_HAL_H_IN, _butir_note, _note_tak_muat = tinggi_kotak_catatan_halaman(
@@ -4861,8 +4876,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         # Nomor halaman hidup di y=7,08-7,38in, DI DALAM batas kanvas isi - jadi kotak catatan
         # tidak boleh sampai ke sana. Butir paling belakang dilepas sampai muat, sama seperti
         # yang sudah dilakukan kotak catatan per-kolom. Lihat scratchpad/patch_note_bawah.
-        _BATAS_NOTE_BAWAH_IN = 7.02
-        _ruang = max(0.0, _BATAS_NOTE_BAWAH_IN - _note_y)
+        _ruang = max(0.0, _PPT_NOTE_BAWAH_IN - _note_y)
         if _note_h > _ruang:
             while _butir_note and _note_box_height_in(total_w_in, _butir_note) > _ruang:
                 _butir_note = _butir_note[:-1]
