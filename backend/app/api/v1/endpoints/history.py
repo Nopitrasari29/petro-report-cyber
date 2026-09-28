@@ -23,7 +23,27 @@ from datetime import datetime, date
 
 router = APIRouter()
 
+from app.services.nama_berkas import nama_berkas_laporan
+
 _ILLEGAL_FILENAME_CHARS_RE = re.compile(r'[\\/:*?"<>|]')
+
+
+def _nama_berkas(db_report, report_id: int) -> str:
+    """Nama berkas unduhan DARI ISI laporan, bukan dari judulnya.
+
+    Judul laporan seragam untuk satu template ("SOC Executive Summary"), jadi nama berkas
+    lama membuat tiga laporan berisi data berbeda keluar dengan nama yang sama persis dan
+    tidak memberi tahu apa pun tentang isinya. nama_berkas_laporan menyusunnya dari topik
+    dominan section yang dicentang + periode - deterministik, tanpa panggilan AI. Kalau
+    gagal karena alasan apa pun, jatuh ke perilaku lama supaya unduhan tidak pernah gagal
+    cuma gara-gara penamaan."""
+    try:
+        nama = nama_berkas_laporan(db_report, fallback="")
+        if nama:
+            return nama
+    except Exception:
+        logger.exception("Gagal menyusun nama berkas dari isi report %s", report_id)
+    return _sanitize_filename(db_report.title, f"soc_report_{report_id}")
 
 
 def _sanitize_filename(title: str | None, fallback: str) -> str:
@@ -352,7 +372,7 @@ def download_pdf_report(
     except Exception:
         pass
 
-    filename_base = _sanitize_filename(db_report.title, f"soc_report_{report_id}")
+    filename_base = _nama_berkas(db_report, report_id)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -416,7 +436,7 @@ def download_pptx_report(
     except Exception:
         pass
 
-    filename_base = _sanitize_filename(db_report.title, f"soc_report_{report_id}")
+    filename_base = _nama_berkas(db_report, report_id)
     return Response(
         content=ppt_bytes,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
