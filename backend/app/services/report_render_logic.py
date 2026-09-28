@@ -4196,24 +4196,40 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
             Vendor sementara "Service Category Analysis" menaungi Unit_Kerja_Pemohon.
 
             Kolom KATEGORI (elemen pertama pasangan) paling menentukan: itu yang jadi sumbu
-            dan yang dibaca pembaca sbg "chart ini tentang apa"."""
-            _p = [str(x) for x in k["pasangan"] if not str(x).startswith("@")]
+            dan yang dibaca pembaca sbg "chart ini tentang apa". Tapi METRIK-nya ikut
+            menentukan juga - lihat _semua_kolom_disebut di bawah."""
+            _p = _kolom_kandidat(k)
             _kat_cocok = 1 if (_p and _p[0] in _subj) else 0
             return (_kat_cocok, len(_subj & set(_p)))
+
+        def _kolom_kandidat(k):
+            return [str(x) for x in k["pasangan"] if not str(x).startswith("@")]
+
+        def _semua_kolom_disebut(k):
+            """Seluruh kolom kandidat harus disebut teks seksinya - bukan cuma kategorinya.
+
+            BUG NYATA DIPERBAIKI (terukur di laporan 186): syarat lama cuma memeriksa kolom
+            KATEGORI, padahal di data deret-waktu kategorinya hampir selalu kolom yang sama
+            (Hour). Syarat itu lolos untuk nyaris semua kandidat dan tidak menyaring apa pun,
+            jadi seksi "Authentication Failure Trend" menaungi chart Hour x Blocked: Policy
+            dan seksi "Sent Traffic Insight" menaungi chart Hour x Blocked: Policy juga -
+            judul menjanjikan satu metrik, chartnya menggambar metrik lain."""
+            return set(_kolom_kandidat(k)) <= _subj
 
         calon.sort(key=lambda k: (-_relevansi(k)[0], -_relevansi(k)[1], -k["_skor"],
                                   str(k["pasangan"])))
         for k in calon:
             if frozenset(k["pasangan"]) in terpakai_pasangan:
                 continue
-            # Seksi hanya boleh MENAMAI chart yang kolom kategorinya memang subjeknya.
+            # Seksi hanya boleh MENAMAI chart yang SELURUH kolomnya memang subjeknya.
             # Tanpa syarat ini, seksi yang subjeknya sudah keburu diklaim seksi lain akan
             # menamai chart mana pun yang tersisa - terukur di laporan 192: "Status
             # Distribution" menaungi chart Deskripsi_Barang_Jasa karena kolom Status sudah
             # diambil seksi sebelumnya. Kandidat yang tidak jadi diklaim TIDAK hilang; ia
             # tetap dipakai di fase berikutnya dgn judul yang dibangun dari datanya sendiri -
-            # judul jujur lebih baik drpd judul yang salah.
-            if _subj and _relevansi(k)[0] == 0:
+            # judul jujur lebih baik drpd judul yang salah, dan seksi yang kehabisan chart
+            # cocok lebih baik tidak menamai apa pun drpd menamai chart yang salah.
+            if _subj and not _semua_kolom_disebut(k):
                 continue
             terpilih.append(dict(k, seksi=judul))
             terpakai_pasangan.add(frozenset(k["pasangan"]))
@@ -4247,7 +4263,9 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
                             "%s dari %s" % (dipilih["bentuk"], list(dipilih["pasangan"]))))
         else:
             laporan.append((judul, "tanpa kolom visual",
-                            "semua pasangan subjeknya sudah diklaim seksi lain"))
+                            "tidak ada pasangan tersisa yang SELURUH kolomnya (%s) disebut "
+                            "seksi ini - sudah diklaim seksi lain, atau metriknya beda"
+                            % ", ".join(sorted(subjek))))
 
     # ---- FASE 2: pasangan bagus yang tidak diklaim seksi mana pun -------------------
     sisa = [k for k in kand if frozenset(k["pasangan"]) not in terpakai_pasangan]
