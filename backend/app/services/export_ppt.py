@@ -4552,10 +4552,20 @@ _DASH_COLS_KPI_H_IN = 0.88
 _DASH_PANEL_LINE_PT = 0.4
 
 
-# Nomor halaman slide hidup di y=7,08-7,38in - DI DALAM area isi yang dipatok
-# _DASH_CONTENT_BOTTOM_IN (7,4in) bersama PDF. PDF tidak punya bentrok ini krn nomor
-# halamannya di luar kanvas isi. Jadi khusus PPTX, elemen terbawah berhenti di sini.
-_PPT_NOTE_BAWAH_IN = 7.02
+# Batas bawah kotak Catatan = batas area isi yang SAMA dengan PDF. Clamp ini jaring
+# pengaman supaya kotak tidak keluar kanvas, BUKAN pemangkas tinggi.
+#
+# Dulu bernilai 7,02 supaya kotak tidak menabrak nomor halaman (y=7,08-7,38in). Tapi kotak
+# Catatan minimum 1,02in sementara ruang sampai 7,02 cuma 0,58in, jadi loop pelepas butir
+# di bawah menggerus SELURUH butir dan add_note_box tidak pernah dipanggil - kotaknya hilang
+# sama sekali. Mencoba memesan pita itu lebih awal juga gagal: kolom chart kehilangan 0,38in
+# dan chart yang terjepit berhenti menggambar labelnya ("4 dari 4 label TIDAK digambar").
+#
+# Jadi PPTX memakai pita yang sama dengan PDF. Nomor halaman tergambar di dalam pita kotak
+# Catatan - PDF sudah melakukan hal yang sama hari ini (kotak y=6,64-7,25in vs nomor halaman
+# y=7,12-7,23in), jadi ini membuat kedua format sepadan, bukan memperkenalkan cacat baru.
+# Merapikan tumpang-tindih itu di KEDUA format adalah pekerjaan tersendiri.
+_PPT_NOTE_BAWAH_IN = _DASH_CONTENT_BOTTOM_IN
 
 
 def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext):
@@ -4608,15 +4618,6 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     _catatan_per_kolom = [k for k in _catatan_per_kolom if k]
     # `bentuk` dioper supaya kolom BERTUMPUK dihitung sbg jumlah seksinya - lihat catatan
     # kembarannya di export_pdf.py.
-    # BUG NYATA DIPERBAIKI: pita nomor halaman dipesan DI SINI, sebelum tinggi kotak
-    # diputuskan - bukan dipangkas belakangan. Dulu kotak dipesan 1.02in di y=6.44
-    # sementara ruang sampai _PPT_NOTE_BAWAH_IN cuma 0.58in, lalu loop pelepas butir di
-    # bawah menggerus SELURUH butir sampai `_cat` kosong dan add_note_box tidak pernah
-    # dipanggil (laporan 186: PDF 4 halaman ber-Catatan, PPTX 0). Slide kehilangan
-    # ruangnya TANPA mendapat kotaknya. Sekarang kolom yang mengalah 0.38in, sesuai
-    # keputusan bahwa catatan menang saat berebut ruang dgn chart.
-    if _catatan_per_kolom:
-        avail_h_in -= max(0.0, _DASH_CONTENT_BOTTOM_IN - _PPT_NOTE_BAWAH_IN)
     _maks_note_in = tinggi_maks_kotak_catatan(
         cols, col_w_isi, avail_h_in, is_english(ctx.report), bentuk=_bentuk)
     _NOTE_HAL_H_IN, _butir_note, _note_tak_muat = tinggi_kotak_catatan_halaman(
