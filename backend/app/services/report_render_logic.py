@@ -232,6 +232,8 @@ def _choose_categorical_chart_style(labels: list, values: list, semantic: str = 
     return "bar"
 
 
+from app.services.kamus_label import terjemahkan_parsed_data
+
 _RENDER_IS_EN: "contextvars.ContextVar[bool]" = contextvars.ContextVar("render_is_en", default=True)
 
 
@@ -249,6 +251,22 @@ def set_render_language(report) -> None:
 
 def render_is_en() -> bool:
     return _RENDER_IS_EN.get()
+
+
+# Penanda "render ini jalur Management/Visual". Penerjemahan label kamus HANYA berlaku di
+# jalur itu - pendekkan_label dipakai bersama dgn jalur Descriptive, dan Descriptive TIDAK
+# BOLEH berubah tampilannya. ContextVar (bukan variabel modul) dgn alasan yang sama persis
+# seperti _RENDER_IS_EN: beberapa laporan bisa dirender bersamaan.
+_RENDER_IS_MGMT: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "render_is_mgmt", default=False)
+
+
+def set_render_management(aktif: bool) -> None:
+    _RENDER_IS_MGMT.set(bool(aktif))
+
+
+def render_is_mgmt() -> bool:
+    return _RENDER_IS_MGMT.get()
 
 
 def _fmt_count(val, is_en: bool | None = None) -> str:
@@ -8058,6 +8076,10 @@ def _group_candidates_into_pages(candidates: list, report, sec_domain: bool) -> 
 #   sendiri, isinya juga selalu berukuran tetap terlepas dari data).
 # ============================================================================
 def build_report_blocks(report) -> list[dict]:
+    # Penanda Management DIMATIKAN di sini. ContextVar bertahan di thread/task yang sama,
+    # jadi tanpa baris ini satu render Management akan menyalakan penerjemahan label kamus
+    # untuk SEMUA render Descriptive berikutnya di worker yang sama.
+    set_render_management(False)
     parsed_data = get_parsed_data(report)
     report_stats = compute_statistics(parsed_data, report.data_type) if parsed_data else {"total_records": 0}
     ai_summary = report.ai_summary or {}
@@ -9141,7 +9163,13 @@ def build_management_report_blocks(report) -> list[dict]:
     # di blok tapi tergambar "High (68,8%)" di PDF - render-nya benar, isinya yang ikut
     # keadaan sekitar. Di jalur export ini idempoten: exporter sudah memanggilnya lebih dulu.
     set_render_language(report)
+    set_render_management(True)
     parsed_data = get_parsed_data(report)
+    # Label kategori generik ("Gudang"/"Warehouse") diseragamkan ke bahasa laporan DI HULU,
+    # sekali, supaya chart, kartu KPI, tabel, dan catatan menyebut kategori yang sama dgn
+    # kata yang sama. Cuma cocok SELURUH string - "Gudang Bahan Baku" dan "Gedung Ahmad
+    # Dahlan" tidak tersentuh. KHUSUS jalur Management; Descriptive tidak memanggil ini.
+    parsed_data = terjemahkan_parsed_data(parsed_data, is_english(report))
     report_stats = compute_statistics(parsed_data, report.data_type) if parsed_data else {"total_records": 0}
     ai_summary = report.ai_summary or {}
 
