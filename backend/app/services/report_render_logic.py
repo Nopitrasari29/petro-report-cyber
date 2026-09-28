@@ -6747,6 +6747,33 @@ def _jejak_topik(blok: dict, df) -> frozenset | None:
     return jejak or None
 
 
+def _kategori_topik(blok: dict):
+    """SUBJEK topik = kolom kategorinya. None kalau topik ini tidak punya sumbu kategori.
+
+    Ini yang dibaca pembaca sbg "halaman ini tentang apa" - bukan bentuk chartnya, dan bukan
+    baris mana yang dipakainya."""
+    t = (blok or {}).get("main_chart_tile") or {}
+    nama = t.get("cat_col_name")
+    nama = str(nama).strip() if nama else ""
+    return nama or None
+
+
+def _subjek_nyambung(a, b) -> bool:
+    """Dua topik boleh satu halaman kalau SUBJEKNYA sama.
+
+    BUG NYATA DIPERBAIKI: syarat koherensi satu-satunya dulu adalah jejak BARIS, dan untuk
+    data dari SATU tabel lebar (hampir semua laporan di sistem ini) setiap kolom punya jejak
+    baris yang sama persis - jadi syarat itu selalu terpenuhi dan tidak pernah memisahkan
+    apa pun. Terukur di laporan 192: satu halaman memuat 5 kolom dgn 5 kolom kategori
+    BERBEDA (Status, Metode_Pengadaan, Vendor, Unit_Kerja_Pemohon, Deskripsi_Barang_Jasa).
+
+    Topik tanpa kolom kategori tetap NETRAL - memaksanya jadi halaman sendiri cuma
+    menghasilkan halaman tipis tanpa memperbaiki koherensi apa pun."""
+    if a is None or b is None:
+        return True
+    return a == b
+
+
 def _topik_nyambung(a, b) -> bool:
     """Dua jejak baris dianggap satu topik besar kalau sebagian besarnya bertindih."""
     if a is None or b is None:
@@ -6769,13 +6796,18 @@ def _kelompok_topik_nyambung(blok_urut: list, df) -> list:
     kelompok: list = []
     for b in blok_urut:
         jejak = _jejak_topik(b, df)
+        subjek = _kategori_topik(b)
         for k in kelompok:
-            if all(_topik_nyambung(jejak, j) for _, j in k):
-                k.append((b, jejak))
+            # DUA syarat, bukan satu: barisnya bertindih DAN subjeknya sama. Lihat
+            # _subjek_nyambung - tanpa syarat subjek, data dari satu tabel lebar membuat
+            # semua topik dianggap nyambung dan halaman jadi campur aduk.
+            if all(_topik_nyambung(jejak, j) and _subjek_nyambung(subjek, sj)
+                   for _, j, sj in k):
+                k.append((b, jejak, subjek))
                 break
         else:
-            kelompok.append([(b, jejak)])
-    return [[b for b, _ in k] for k in kelompok]
+            kelompok.append([(b, jejak, subjek)])
+    return [[b for b, _, _ in k] for k in kelompok]
 
 
 def _pack_insight_pages_into_columns(blocks: list, report) -> list:
