@@ -5503,6 +5503,42 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
     df = _prof.get("df")
     if df is None or df.empty:
         return None
+
+    # ---- ITEM J: BARIS TANPA KATEGORI DIBUANG, PASANGAN GRAIN-BEDA DITOLAK -------------
+    # BUG NYATA DIPERBAIKI (terukur di laporan 202): berkas sumber berisi DUA tabel
+    # bertumpuk dengan grain berbeda (tabel PO dan tabel anggaran). Tidak ada SATU baris pun
+    # yang punya Anggaran_Rp DAN Metode_Pengadaan sekaligus - diukur: 45 vs 42 vs 0. Saat
+    # Anggaran_Rp di-groupby Metode_Pengadaan, `df.groupby(df[kat].astype(str))` mengubah
+    # NaN jadi kelompok bernama "nan" yang memegang 100% nilai, sementara SELURUH kategori
+    # asli bernilai 0. Judul halaman ikut salah: "nan memimpin Metode Pengadaan dengan 100%".
+    #
+    # _kelompok_nyata sudah ada & sudah dipakai catatan_pola sejak lama, tapi belum pernah
+    # dipakai pembangun chart - kelas kesalahan "dua tempat menghitung hal yang sama, satu
+    # ketinggalan" yang sudah beberapa kali muncul di proyek ini.
+    _kat_tile = str(pasangan[0]) if pasangan else ""
+    if _kat_tile and _kat_tile in getattr(df, "columns", []):
+        _n_awal = len(df)
+        df = _kelompok_nyata(df, _kat_tile)
+        if df.empty:
+            logger.info("tile %s dilewati: kolom kategori %r tidak punya nilai sama sekali",
+                        bentuk, _kat_tile[:40])
+            return None
+        if len(df) < _n_awal:
+            logger.info("tile %s: %d baris tanpa kategori %r dibuang sebelum agregasi",
+                        bentuk, _n_awal - len(df), _kat_tile[:40])
+        # GRAIN TIDAK COCOK: sesudah baris tanpa kategori dibuang, metriknya tidak punya
+        # satu nilai pun. Chart-nya nol seluruhnya - lebih menyesatkan drpd tidak ada,
+        # karena "semuanya nol" terbaca seperti temuan. Pemilih chart memakai pasangan lain.
+        for _met_tile in pasangan[1:]:
+            _m = str(_met_tile)
+            if _m not in getattr(df, "columns", []):
+                continue
+            if pd.to_numeric(df[_m], errors="coerce").notna().sum() == 0:
+                logger.info("tile %s dilewati: %r tidak punya nilai pada baris yang punya "
+                            "%r - grain kedua kolom tidak cocok", bentuk, _m[:40],
+                            _kat_tile[:40])
+                return None
+
     _ien = is_english(report) if report is not None else False
 
     def _judul(t_id, t_en):
