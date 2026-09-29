@@ -37,7 +37,7 @@ _DOMAIN_PRESETS: Dict[str, Dict[str, Any]] = {
     "procurement": {
         "domain_label": ("Pengadaan Barang & Jasa", "Goods & Services Procurement"),
         "default_header_title": ("PT PETROKIMIA GRESIK - PENGADAAN BARANG & JASA", "PT PETROKIMIA GRESIK - GOODS & SERVICES PROCUREMENT"),
-        "default_header_subtitle": ("Laporan Analisis Eksekutif Pengadaan & Manajemen Vendor", "Procurement & Vendor Management Executive Analysis Report"),
+        "default_header_subtitle": ("Laporan Analisis Pengadaan & Manajemen Vendor", "Procurement & Vendor Management Analysis Report"),
         "sections": [
             {
                 "key": "executive_summary",
@@ -123,7 +123,7 @@ _DOMAIN_PRESETS: Dict[str, Dict[str, Any]] = {
     "financial": {
         "domain_label": ("Keuangan & Anggaran", "Finance & Budget"),
         "default_header_title": ("PT PETROKIMIA GRESIK - DEPARTEMEN KEUANGAN", "PT PETROKIMIA GRESIK - FINANCE DEPARTMENT"),
-        "default_header_subtitle": ("Laporan Analisis Eksekutif Keuangan & Arus Kas", "Financial & Cash Flow Executive Analysis Report"),
+        "default_header_subtitle": ("Laporan Analisis Keuangan & Arus Kas", "Financial & Cash Flow Analysis Report"),
         "sections": [
             {
                 "key": "executive_summary",
@@ -209,7 +209,7 @@ _DOMAIN_PRESETS: Dict[str, Dict[str, Any]] = {
     "general": {
         "domain_label": ("Analisis Operasional & Umum", "General & Operational Analysis"),
         "default_header_title": ("PT PETROKIMIA GRESIK - EKSEKUTIF REPORT", "PT PETROKIMIA GRESIK - EXECUTIVE REPORT"),
-        "default_header_subtitle": ("Laporan Analisis Eksekutif Data Operasional Berbasis AI", "AI-Powered Operational Data Executive Analysis Report"),
+        "default_header_subtitle": ("Laporan Analisis Data Operasional Berbasis AI", "AI-Powered Operational Data Analysis Report"),
         "sections": [
             {
                 "key": "executive_summary",

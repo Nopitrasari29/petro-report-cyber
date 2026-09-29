@@ -9576,7 +9576,7 @@ def build_management_report_blocks(report) -> list[dict]:
         "hero_stat": (str(total_records), L("Total Data", "Total Records")),
         "hero_stat_kicker": L("CAPAIAN KESELURUHAN", "OVERALL FIGURE"),
         "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
-        "header_subtitle": report.header_subtitle or "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
+        "header_subtitle": report.header_subtitle or "Sistem Otomasi Laporan & Presentasi Berbasis AI",
         "cover_style": "split",
         "theme_color": resolve_theme_color(report),
         "is_management": True,

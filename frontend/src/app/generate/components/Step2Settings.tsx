@@ -131,7 +131,7 @@ export default function Step2Settings({
   sectionsLoading = false,
   headerTitle = "PT PETROKIMIA GRESIK",
   setHeaderTitle,
-  headerSubtitle = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
+  headerSubtitle = "Sistem Otomasi Laporan & Presentasi Berbasis AI",
   setHeaderSubtitle,
   themeColor = "green",
   setThemeColor,
@@ -528,7 +528,7 @@ export default function Step2Settings({
                 onChange={(e) =>
                   setHeaderSubtitle && setHeaderSubtitle(e.target.value)
                 }
-                placeholder="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
+                placeholder="Sistem Otomasi Laporan & Presentasi Berbasis AI"
                 className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700 font-medium focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
               />
             </div>

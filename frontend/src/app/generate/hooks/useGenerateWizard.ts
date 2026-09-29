@@ -141,7 +141,7 @@ export function useGenerateWizard() {
 
   const [headerTitle, setHeaderTitle] = useState("PT PETROKIMIA GRESIK");
   const [headerSubtitle, setHeaderSubtitle] = useState(
-    "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
+    "Sistem Otomasi Laporan & Presentasi Berbasis AI",
   );
   const [themeColor, setThemeColor] = useState("green");
   const [stylePreset, setStylePreset] = useState("auto");
@@ -1166,7 +1166,7 @@ export function useGenerateWizard() {
     dynamicSectionsTouchedRef.current = false;
     setHeaderTitle("PT PETROKIMIA GRESIK");
     setHeaderSubtitle(
-      "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI",
+      "Sistem Otomasi Laporan & Presentasi Berbasis AI",
     );
     setThemeColor("green");
     setStylePreset("auto");

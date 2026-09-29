@@ -53,7 +53,7 @@ class Report(Base):
 
     # Kustomisasi Template Kop & Tema Visual (Revisi Progress 2)
     header_title = Column(String, nullable=True, default="PT PETROKIMIA GRESIK")
-    header_subtitle = Column(String, nullable=True, default="Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI")
+    header_subtitle = Column(String, nullable=True, default="Sistem Otomasi Laporan & Presentasi Berbasis AI")
     # Default "green" (Petrokimia) — opsi "auto" (warna diacak & DIKUNCI sekali saat analisis
     # berhasil, lihat resolved_theme_color di pick_visual_style()/resolve_theme_color()) sudah
     # dihapus dari picker UI, tapi resolve_theme_color() tetap menanganinya sebagai fallback

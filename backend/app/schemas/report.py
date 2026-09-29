@@ -13,7 +13,7 @@ class ReportBase(BaseModel):
     include_ai_insights: Optional[bool] = True
     include_raw_data_summary: Optional[bool] = True
     header_title: Optional[str] = "PT PETROKIMIA GRESIK"
-    header_subtitle: Optional[str] = "Sistem Otomasi Laporan & Eksekutif Presentasi Berbasis AI"
+    header_subtitle: Optional[str] = "Sistem Otomasi Laporan & Presentasi Berbasis AI"
     theme_color: Optional[str] = "green"
     domain_type: Optional[str] = "general"
     tone: Optional[str] = "Professional"

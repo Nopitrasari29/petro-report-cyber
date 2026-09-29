@@ -3398,6 +3398,43 @@ def _muat_nama_kartu(nama: str, w_in: float, maks_baris: int = 2):
     return 6.5, wrap_line_count(nama, lebar_px, 6.5, _NAMA_KARTU_FAKTOR_LEBAR)
 
 
+# Item S: lantai ukuran font angka skor di kartu bersarang. Di bawah ini angkanya tidak
+# lagi berfungsi sebagai "skor besar" yang jadi inti kartu.
+_NESTED_SCORE_PT_MAKS = 16.0
+_NESTED_SCORE_PT_MIN = 10.5
+
+
+def _ukur_skor_dan_badge(skor: str, badge: str, w_in: float):
+    """Ukuran font skor supaya skor + badge MUAT di lebar kartu, dan apakah badge harus turun.
+
+    BUG NYATA DIPERBAIKI (laporan 203, tereproduksi dgn merender komponen ini langsung):
+    kartu adalah div berlebar tetap dgn `overflow:hidden`, dan baris skor menaruh angka 16pt
+    bersama badge inline di SATU baris. Begitu "1.045.000.000" + "Rendah" lebih lebar dari
+    kartunya, badge yang paling kanan TERPOTONG - "Renda" di lapisan teks, pil terpotong di
+    gambar. Terukur: badge terpotong pada lebar kartu <= 2.1in, utuh mulai 2.4in.
+
+    Yang mengalah adalah UKURAN FONT SKOR, bukan teksnya: angka skor tetap utuh (ia inti
+    kartu) dan badge tetap utuh. Kalau di lantai font pun belum muat, badge turun ke barisnya
+    sendiri - dua baris masih terbaca, terpotong tidak.
+
+    Kembalikan (ukuran_pt, badge_turun_baris)."""
+    _pad_pt = 20.0                      # padding kiri+kanan header kartu (10pt x 2)
+    _tersedia = max(10.0, w_in * 72.0 - _pad_pt)
+    _skor = str(skor or "")
+    _bdg = str(badge or "")
+    # lebar badge: teks 7.5pt + padding pil (7pt x 2) + jarak dari skor (8pt)
+    _w_badge = (len(_bdg) * 7.5 * 0.62 + 14.0 + 8.0) if _bdg else 0.0
+    pt = _NESTED_SCORE_PT_MAKS
+    while pt > _NESTED_SCORE_PT_MIN:
+        if len(_skor) * pt * 0.58 + _w_badge <= _tersedia:
+            return pt, False
+        pt -= 0.5
+    pt = _NESTED_SCORE_PT_MIN
+    # di lantai font: kalau masih tidak muat sebaris, badge turun ke baris sendiri
+    _turun = (len(_skor) * pt * 0.58 + _w_badge) > _tersedia
+    return pt, _turun
+
+
 def _nested_category_card_html(card: dict, w_in: float, h_in: float, x_in: float, y_in: float, theme: dict | None = None) -> str:
     """Kartu bersarang 1 kategori (permintaan user poin 9): header berwarna (nama + skor
     besar + badge status) + body berisi sub-item pola 2-baris (poin 4: label kiri/nilai
@@ -3421,6 +3458,9 @@ def _nested_category_card_html(card: dict, w_in: float, h_in: float, x_in: float
     # baris yang dihasilkan, sebelum kartunya digambar - bukan tinggi tetap yang lalu
     # memotong isinya.
     _nm_pt, _nm_lines = _muat_nama_kartu(str(card.get("name") or ""), w_in)
+    # Item S: skor + badge harus MUAT di lebar kartu - lihat _ukur_skor_dan_badge.
+    _skor_pt, _badge_turun = _ukur_skor_dan_badge(
+        str(card.get("score") or ""), str(card.get("badge") or ""), w_in)
     _nm_h_in = _nm_lines * (_nm_pt * 1.15 / 72.0)
     header_h_in = max(min(_NESTED_CARD_HEADER_H_IN, h_in * 0.35),
                       min(_NESTED_CARD_HEADER_MIN_H_IN, h_in),
@@ -3461,8 +3501,11 @@ def _nested_category_card_html(card: dict, w_in: float, h_in: float, x_in: float
         f'background:{t["bg"]};border-radius:3px;overflow:hidden;box-sizing:border-box;">'
         f'<div style="height:{header_h_in}in;padding:8pt 10pt;box-sizing:border-box;">'
         f'<div style="font-size:{_nm_pt:.1f}pt;line-height:1.15;font-weight:700;color:{WHITE};">{_esc(card["name"])}</div>'
-        f'<div style="font-family:{TITLE_FONT};font-size:16pt;font-weight:700;color:{WHITE};margin-top:2pt;">{_esc(card["score"])}'
-        + (f'<span style="font-size:7.5pt;font-weight:700;background:{t["light"]};color:{t["bg"]};border-radius:8pt;padding:2pt 7pt;margin-left:8pt;">{_esc(card["badge"])}</span>'
+        f'<div style="font-family:{TITLE_FONT};font-size:{_skor_pt:.1f}pt;font-weight:700;color:{WHITE};margin-top:2pt;'
+        f'{"white-space:nowrap;" if not _badge_turun else ""}">{_esc(card["score"])}'
+        + ((('<br>' if _badge_turun else '')
+            + f'<span style="display:inline-block;font-size:7.5pt;font-weight:700;background:{t["light"]};color:{t["bg"]};border-radius:8pt;padding:2pt 7pt;'
+              f'{"margin-top:2pt;" if _badge_turun else "margin-left:8pt;"}">{_esc(card["badge"])}</span>')
            if card.get("badge") else "") + '</div>'
         f'</div>'
         f'<div style="padding:6pt 10pt;box-sizing:border-box;">{body_content}</div>'
