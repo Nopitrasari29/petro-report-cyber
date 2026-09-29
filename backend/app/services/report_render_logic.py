@@ -964,6 +964,14 @@ def _kelompok_nyata(df, kat: str):
     return df[~kolom.str.lower().isin(_NILAI_KOSONG)]
 
 
+# Nama kolom yang sudah menyatakan dirinya penomoran baris. Dibandingkan setelah tanda baca
+# & spasi dibuang, jadi "No.", "No_Urut", "no urut" sama-sama tertangkap.
+_NAMA_KOLOM_NOMOR = frozenset((
+    "no", "nomor", "nourut", "nomorurut", "urutan", "urut",
+    "index", "idx", "rownumber", "rowno", "rowid", "seq", "sequence", "id",
+))
+
+
 def _kolom_nomor_urut(seri) -> bool:
     """Kolom angka yang sebenarnya NOMOR URUT baris, bukan besaran yang bisa dijumlahkan.
 
@@ -974,20 +982,54 @@ def _kolom_nomor_urut(seri) -> bool:
     pun. Angkanya benar dihitung tapi tidak berarti apa-apa, dan kalimat seperti itu justru
     paling berbahaya: terdengar seperti temuan.
 
-    Penandanya: nilainya bilangan bulat, semuanya unik, dan membentuk deret berurutan penuh
-    mulai 0 atau 1 - ciri penomoran, bukan pengukuran."""
+    TIGA penanda, masing-masing berdiri sendiri - cukup salah satu terpenuhi.
+
+    BUG NYATA DIPERBAIKI (terukur di laporan 203): penanda lama menuntut SELURUH nilai unik
+    dan membentuk satu deret penuh. Di berkas yang berisi DUA TABEL DITUMPUK - masing-masing
+    bernomor ulang dari 1 - syarat itu tidak pernah terpenuhi (87 baris, cuma 45 nilai unik),
+    jadi kolom "No" lolos dianggap metrik biasa dan ikut dijumlahkan. Hasilnya kalimat
+    "Dibatalkan menyumbang 1,7x rata-rata Status lainnya pada No (381 vs 222,4)" - yang
+    dijumlahkan cuma nomor barisnya."""
     try:
         v = pd.to_numeric(seri, errors="coerce").dropna()
     except Exception:
         return False
     n = len(v)
-    if n < 3 or v.nunique() != n:
+    if n < 3:
         return False
     try:
         bulat = v.astype("int64")
     except Exception:
         return False
     if not (bulat == v).all():
+        return False
+
+    # --- penanda 1: NAMA kolom ---------------------------------------------------------
+    # Kolom yang memang bernama penomoran, berapa pun jumlah nilai uniknya. Dibandingkan
+    # setelah tanda baca & spasi dibuang supaya "No.", "No_Urut", "no urut" ikut tertangkap.
+    _nama = re.sub(r"[^a-z0-9]+", "", str(getattr(seri, "name", "") or "").lower())
+    if _nama in _NAMA_KOLOM_NOMOR and int(bulat.min()) >= 0:
+        return True
+
+    # --- penanda 2: NAIK LALU RESET (ciri beberapa tabel ditumpuk) ----------------------
+    # Nilainya membentuk satu/beberapa deret naik yang masing-masing mulai 0 atau 1 dan
+    # bertambah satu. Inilah bentuk yang dilewatkan penanda lama.
+    _urut = [int(x) for x in bulat.tolist()]
+    if _urut and _urut[0] in (0, 1):
+        _deret, _ok = 1, True
+        for _a, _b in zip(_urut, _urut[1:]):
+            if _b == _a + 1:
+                continue
+            if _b in (0, 1):
+                _deret += 1
+                continue
+            _ok = False
+            break
+        if _ok and _deret >= 1:
+            return True
+
+    # --- penanda 3: aturan lama, satu deret penuh & semua unik --------------------------
+    if v.nunique() != n:
         return False
     awal = int(bulat.min())
     return awal in (0, 1) and int(bulat.max()) == awal + n - 1
@@ -2686,7 +2728,7 @@ def kumpulkan_catatan_halaman(catatan_per_kolom: list) -> list:
     kolom urutan aslinya dipertahankan, krn catatan_agregat sudah menyusun dari yang paling
     informatif."""
     kolom = [list(k or []) for k in (catatan_per_kolom or [])]
-    hasil, terlihat, kalimat_terlihat = [], set(), set()
+    hasil, terlihat, kalimat_terlihat, fakta_terlihat = [], set(), set(), set()
     for i in range(max((len(k) for k in kolom), default=0)):
         for k in kolom:
             if i >= len(k):
@@ -2708,11 +2750,41 @@ def kumpulkan_catatan_halaman(catatan_per_kolom: list) -> list:
             # kalimat berulang - terukur di render, satu halaman memuat 3 kalimat korelasi
             # yang identik kata demi kata di belakang subjeknya masing-masing.
             def _inti(x):
-                return x.split(": ", 1)[1].lower().strip() if ": " in x[:60] else x.lower().strip()
-            _sisa = [x for x in _kal if _inti(x) not in kalimat_terlihat]
+                """Kunci dedup: prefiks panel dilepas, spasi dirapatkan, tanda baca ekor dibuang.
+
+                BUG NYATA DIPERBAIKI (terukur di laporan 203): pelepasan prefiks saja tidak
+                cukup. Butir yang punya klausa lanjutan memotong kalimatnya dgn ";" sementara
+                butir yang berdiri sendiri menutupnya dgn "." - jadi dua kunci yang isinya sama
+                huruf demi huruf lolos dedup hanya karena penutupnya berbeda, dan fakta yang
+                sama tercetak 3x di satu halaman."""
+                t = x.split(": ", 1)[1] if ": " in x[:60] else x
+                t = re.sub(r"\s+", " ", t.lower().strip())
+                return t.rstrip(".;,: ")
+
+            def _sidik_fakta(x):
+                """Entitas pembuka + seluruh angka di kalimat - sidik jari FAKTA, bukan kata.
+
+                Lapis kedua: dua kalimat yang menyebut entitas yang sama dgn angka-angka yang
+                sama persis adalah fakta yang sama walau dibungkus kata berbeda. Menuntut
+                minimal DUA angka supaya kecocokan kebetulan (satu persentase yang sama) tidak
+                ikut terbuang - salah buang lebih merugikan daripada satu pengulangan lolos."""
+                t = _inti(x)
+                _ang = tuple(sorted(_RE_ANGKA.findall(t)))
+                if len(_ang) < 2:
+                    return None
+                _kata = re.findall(r"[a-z]+", t)
+                return (tuple(_kata[:3]), _ang)
+
+            _sisa = []
+            for x in _kal:
+                _k, _f = _inti(x), _sidik_fakta(x)
+                if _k in kalimat_terlihat or (_f is not None and _f in fakta_terlihat):
+                    continue
+                _sisa.append(x)
             if not _sisa:
                 continue
             kalimat_terlihat.update(_inti(x) for x in _sisa)
+            fakta_terlihat.update(f for f in (_sidik_fakta(x) for x in _sisa) if f is not None)
             terlihat.add(kunci)
             hasil.append(" ".join(_sisa))
     # Dedup MAKNA dikerjakan terakhir, sesudah dedup teks: yang dicari di sini justru butir
@@ -5687,6 +5759,23 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
     def _ket(id_txt, en_txt):
         return en_txt if _ien else id_txt
 
+    def _puncak(labels, values):
+        """Label & nilai TERTINGGI - bukan elemen pertama daftar.
+
+        BUG NYATA DIPERBAIKI (terukur di laporan 203): ketiga pemanggil _ket_teratas
+        mengoper labels[0]/values[0], mengandaikan daftarnya sudah terurut menurun. Untuk
+        tile pembanding metrik (metric_mix/metric_share) urutannya mengikuti METRIK, bukan
+        nilai - jadi judul halaman berbunyi "Nilai Kontrak Rp tertinggi dengan 7.970.000.000
+        ... (34,4%)" sementara kartu TERATAS di panel yang sama berbunyi "Anggaran Rp
+        (65,6%)". Dua metrik, dua angka, dan yang disebut "tertinggi" justru yang lebih
+        kecil. Judul dan kartu kini membaca puncak yang SAMA.
+
+        Untuk daftar yang memang sudah terurut menurun, hasilnya tetap elemen pertama."""
+        if not labels or not values:
+            return "", 0
+        _i = max(range(len(values)), key=lambda i: float(values[i] or 0))
+        return labels[_i], values[_i]
+
     def _ket_teratas(lbl, val, tot, satuan=""):
         """Satu kalimat, angkanya dari agregasi yang SAMA dgn yang digambar - bukan prosa AI.
 
@@ -5730,7 +5819,7 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "bars": [{"label": l, "count": v, "pct": round(100 * v / (sum(values) or 1)),
                           "color": palet[i % len(palet)]}
                          for i, (l, v) in enumerate(zip(labels, values))],
-                "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
+                "caption": _ket_teratas(*_puncak(labels, values),
                                         sum(values))}
     if bentuk == "treemap":
         # Segmen treemap sempit scr FISIK (luas = besaran), jadi pemendekan tetap perlu -
@@ -5740,7 +5829,7 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "title": _judul(f"Pangsa {pasangan[-1]}", f"{pasangan[-1]} Share"),
                 "cat_col_name": pasangan[0] if pasangan else None,
                 "met_col_name": pasangan[-1] if pasangan else None,
-                "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
+                "caption": _ket_teratas(*_puncak(labels, values),
                                         sum(values))}
     if bentuk in ("donut", "stacked"):
         return {"tile_kind": "metric_mix" if bentuk == "stacked" else "custom_topic",
@@ -5750,7 +5839,7 @@ def bangun_tile(parsed_data: list, keputusan: dict, report=None) -> dict | None:
                 "title": _judul(f"Komposisi {pasangan[-1]}", f"{pasangan[-1]} Composition"),
                 "cat_col_name": pasangan[0] if pasangan else None,
                 "met_col_name": pasangan[-1] if pasangan else None,
-                "caption": _ket_teratas(labels[0] if labels else "", values[0] if values else 0,
+                "caption": _ket_teratas(*_puncak(labels, values),
                                         sum(values))}
     if bentuk == "ranked_bar_ternormalisasi":
         # `labels` di bentuk ini adalah nama METRIK (bukan nilai kategori), jadi ia tercetak
