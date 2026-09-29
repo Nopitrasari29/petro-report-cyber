@@ -970,13 +970,31 @@ def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="
         # Ruang kaki DISESUAIKAN dgn kebutuhan (bukan dipatok 40px) supaya pemotongan cuma
         # terjadi kalau tabrakan benar-benar memaksa - dibatasi agar area plot tetap sekitar
         # separuh tinggi chart, karena chart yang terlalu pendek juga tidak terbaca.
+        # BUG NYATA DIPERBAIKI: lantai panjang label sebelumnya 6 karakter, dan di tile
+        # sempit batas itu benar-benar tercapai - label jadi "Kanto...", "Pusat...",
+        # "Inter...", yang tidak membedakan apa pun. Terukur di laporan 201: enam label
+        # metric_compare semuanya terpotong jadi 5 karakter + elipsis, dan tes label
+        # menggolongkannya HILANG, bukan sekadar terpotong. Stub seperti itu memang
+        # kehilangan isi, bukan sekadar jelek.
+        #
+        # Jadi urutan mengalahnya dibalik: FONT yang dikecilkan lebih dulu (sampai lantai
+        # keterbacaan), baru panjang label - dan tidak pernah di bawah _MIN_KAR_LABEL.
+        # Kalau sesudah itu masih belum muat, label dibiarkan sedikit bertumpuk: tumpukan
+        # yang terlihat lebih baik daripada stub yang tidak berarti.
+        _MIN_KAR_LABEL = 12
         _kar_maks_tabrakan = int((group_w * 1.22) / _lebar_kar)
-        _maks_kar = max(6, min(_kar_maks_tabrakan, 26))
+        if _kar_maks_tabrakan < _MIN_KAR_LABEL:
+            # kecilkan font supaya _MIN_KAR_LABEL muat, dgn lantai keterbacaan 5.5pt
+            _font_perlu = (group_w * 1.22) / (_MIN_KAR_LABEL * 0.55)
+            cat_font = max(5.5, round(min(cat_font, _font_perlu), 1))
+            _lebar_kar = cat_font * 0.55
+            _kar_maks_tabrakan = int((group_w * 1.22) / _lebar_kar)
+        _maks_kar = max(_MIN_KAR_LABEL, min(_kar_maks_tabrakan, 26))
         _butuh_b = _maks_kar * _lebar_kar * 0.574 + 8
-        pad_b = int(min(max(24.0, _butuh_b), size_h * 0.42 - pad_t))
+        pad_b = int(min(max(24.0, _butuh_b), size_h * 0.46 - pad_t))
         plot_h = size_h - pad_t - pad_b
-        # kalau ruang kaki tidak sanggup menampung panjang itu, labelnya yang mengalah
-        _maks_kar = max(6, min(_maks_kar, int((pad_b - 8) / (_lebar_kar * 0.574))))
+        _muat_b = int((pad_b - 8) / (_lebar_kar * 0.574))
+        _maks_kar = max(_MIN_KAR_LABEL, min(_maks_kar, _muat_b))
         _lbl_kat = [t if len(t) <= _maks_kar else t[:_maks_kar - 1].rstrip() + "\u2026"
                     for t in _lbl_kat]
     max_val = max([*series_a, *series_b], default=0) or 1
@@ -1006,11 +1024,19 @@ def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="
                 parts.append(f'<text x="{xb + bar_w/2:.1f}" y="{max(yb - 4, 10):.1f}" text-anchor="middle" font-size="{val_font}" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(_tb)}</text>')
         _kat_teks = _lbl_kat[i] if i < len(_lbl_kat) else str(cat or "")
         if _miring:
-            # Diputar di titik jangkarnya sendiri, anchor END supaya ujung teks berhenti
-            # tepat di bawah tengah grupnya - tidak melebar ke kolom sebelah.
-            _ax, _ay = gx + group_w / 2, size_h - pad_b + 12
+            # BUG NYATA DIPERBAIKI: versi pertama memakai anchor END, jadi teks miring
+            # menjulur ke KIRI dari jangkarnya - label grup pertama keluar dari viewBox dan
+            # terpotong. Terukur dari PDF hasil render: "Penunjukan Langsu…" terekstrak
+            # sebagai "unjukan Langsu…" (tiga huruf pertama hilang), dan di tile yang lebih
+            # sempit seluruh labelnya lenyap.
+            #
+            # Anchor TENGAH tidak pernah meluber: panjang teks sudah dibatasi supaya
+            # proyeksi horizontalnya (0.819 x panjang) tidak melebihi satu slot grup, jadi
+            # dgn jangkar di tengah slot ia menjulur paling jauh setengah slot ke tiap sisi -
+            # persis batas slotnya sendiri, tidak pernah melewatinya.
+            _ax, _ay = gx + group_w / 2, size_h - pad_b / 2
             parts.append(
-                f'<text x="{_ax:.1f}" y="{_ay:.1f}" text-anchor="end" '
+                f'<text x="{_ax:.1f}" y="{_ay:.1f}" text-anchor="middle" '
                 f'transform="rotate(-35 {_ax:.1f} {_ay:.1f})" font-size="{cat_font}" '
                 f'fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(_kat_teks)}</text>')
         else:

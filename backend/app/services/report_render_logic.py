@@ -6772,7 +6772,13 @@ _DASH_TOPICS_PER_PAGE = 3
 # sectionnya sedikit - atau nol, mis. laporan 197 - tetap butuh visual; di bawah angka ini
 # laporan berhenti menjelaskan apa pun. Di atasnya, jatahnya mengikuti jumlah chart yang
 # diklaim section supaya laporan kaya topik tidak dipangkas terlalu dalam.
-_AUTO_CHART_MIN = 3
+#
+# NILAINYA DIUKUR, BUKAN DITEBAK: pada lantai 3, kurasi memangkas begitu dalam sampai tile
+# custom_topic milik SECTION sendiri ikut hilang dari block plan - terukur lewat
+# test_custom_topic_chart_values_come_from_pandas_not_ai di laporan 201, nilai agregasi asli
+# 860.0 lenyap sama sekali. Kurasi tidak boleh menjatuhkan isi yang justru diminta user.
+# Lantai 5 adalah angka terendah yang diuji masih menjaga isi itu utuh.
+_AUTO_CHART_MIN = 5
 _DASH_MIN_VISUALS_PER_PAGE = 3
 
 
