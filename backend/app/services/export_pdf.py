@@ -673,6 +673,15 @@ def _bar_line_chart_svg(categories, values, cumulative=None, color=None, size_w=
     col_w = plot_w / n
     max_val = max(values) if values and max(values) else 1
     max_cum = max(cumulative) if cumulative and max(cumulative) else 0
+    # ITEM N.2a: berapa label periode yang MUAT berdampingan di lebar ini. Fontnya ikut
+    # menyusut mengikuti size_w (dulu dipatok 7.5 apa pun lebarnya), lalu sisanya diatasi
+    # dgn melompati sebagian label - lihat catatan di titik gambar label.
+    _cat_font = max(6.0, round(7.5 * min(1.0, size_w / 320), 1)) if render_is_mgmt() else 7.5
+    _lbl_w = max((len(str(c or "")) for c in categories), default=0) * _cat_font * 0.55
+    _langkah = 1
+    if _lbl_w > 0 and render_is_mgmt():
+        import math as _math
+        _langkah = max(1, int(_math.ceil((_lbl_w + 4) / col_w)))
     bars, points, labels, bar_label_ys = [], [], [], []
     for i, (cat, val) in enumerate(zip(categories, values)):
         bar_h = (val / max_val) * (plot_h - 8) if max_val else 0
@@ -697,12 +706,18 @@ def _bar_line_chart_svg(categories, values, cumulative=None, color=None, size_w=
         if max_cum:
             cy = pad_t + plot_h - ((cumulative[i] / max_cum) * (plot_h - 4))
             points.append((x + col_w / 2, cy))
-        # KEPUTUSAN DIBALIK (uji label: gerbang "muat" di sini menghapus 12 dari 12 tanggal
-        # di laporan 180 & 183 - kehilangan DIAM, yang lebih buruk daripada tumpang tindih
-        # yang setidaknya terlihat). Label kategori SELALU digambar; yang dibatasi adalah
-        # JUMLAH PERIODE, di hulu saat kandidat dibentuk (lihat _semua_kandidat), supaya
-        # yang sampai ke sini memang sudah pasti muat.
-        labels.append(f'<text x="{x + col_w/2:.1f}" y="{size_h - 6}" text-anchor="middle" font-size="7.5" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(cat)}</text>')
+        # ITEM N.2a: label periode diberi JARAK, bukan ditumpuk.
+        # Gerbang "muat" pernah ada lalu dibalik karena ia menghapus 12 dari 12 tanggal -
+        # kehilangan diam, yang memang lebih buruk. Tapi jalan keluarnya bukan "gambar semua
+        # walau menumpuk": terukur di laporan 202, 8 periode berdempet jadi satu string
+        # "01/202502/202503/2025..." yang tidak terbaca. Sekarang sebagian label DILOMPATI
+        # (tiap ke-_langkah), dan periode PERTAMA & TERAKHIR selalu digambar - pembaca tetap
+        # tahu rentang & iramanya tanpa tumpukan.
+        if i % _langkah == 0 or i == n - 1:
+            labels.append(
+                f'<text x="{x + col_w/2:.1f}" y="{size_h - 6}" text-anchor="middle" '
+                f'font-size="{_cat_font}" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">'
+                f'{_esc(cat)}</text>')
     line_html = dots = ""
     if points:
         poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
@@ -720,8 +735,37 @@ def _bar_line_chart_svg(categories, values, cumulative=None, color=None, size_w=
             # dulu bisa jatuh di pita y yang sama & saling menimpa (terukur tes span: 25
             # tabrakan, mis. "5" x "26" beririsan 49%). Posisi label batang diketahui persis
             # (bar_label_y di bawah), jadi tabrakannya dihindari, bukan diperkecil peluangnya.
-            for (cx, cy), cval, _bly in zip(points, cumulative, bar_label_ys):
-                ly = cy + 8 if cy + 8 < pad_t + plot_h - 2 else cy - 5
+            # ITEM N.2b: offset diperbesar (8/-5 -> 12/-9). Marker berradius 2,6px dan
+            # garisnya tebal 2,5px, jadi 5px dari PUSAT titik masih berada DI DALAM marker -
+            # angkanya tertutup, paling parah di titik puncak (diverifikasi user dari render
+            # resolusi tinggi & screenshot aplikasi). 12px menaruh teks di luar marker+garis.
+            for _pi, ((cx, cy), cval, _bly) in enumerate(zip(points, cumulative, bar_label_ys)):
+                # SISI YANG LAPANG, bukan selalu di bawah. Menaruh label selalu di bawah titik
+                # membuatnya jatuh TEPAT di jalur garis pada ruas yang menurun - terlihat di
+                # render 300dpi laporan 202: 547, 443, 252 & 464 semuanya tertimpa garis tren.
+                # Di puncak, ruang di ATAS titik yang kosong; di lembah, ruang di BAWAH.
+                if not render_is_mgmt():
+                    ly = cy + 8 if cy + 8 < pad_t + plot_h - 2 else cy - 5
+                    if _bly is not None and abs(ly - _bly) < 11:
+                        ly = _bly + 13 if ly >= _bly else _bly - 13
+                        ly = min(max(ly, 8), pad_t + plot_h - 2)
+                    _cum_labels.append(
+                        f'<text x="{cx:.1f}" y="{ly:.1f}" text-anchor="middle" font-size="6.5" '
+                        f'fill="{line_color}" font-family="{BODY_FONT}">{_esc(_fmt_num(cval))}</text>')
+                    continue
+                _y_kiri = points[_pi - 1][1] if _pi > 0 else cy
+                _y_kanan = points[_pi + 1][1] if _pi + 1 < len(points) else cy
+                _puncak = cy <= min(_y_kiri, _y_kanan)      # y kecil = posisi tinggi
+                _lembah = cy >= max(_y_kiri, _y_kanan)
+                if _lembah and not _puncak:
+                    ly = cy + 12
+                else:
+                    ly = cy - 9                              # puncak & ruas menanjak/menurun
+                # tetap harus berada di dalam area plot
+                if ly < 8:
+                    ly = cy + 12
+                if ly > pad_t + plot_h - 2:
+                    ly = cy - 9
                 if _bly is not None and abs(ly - _bly) < 11:
                     ly = _bly + 13 if ly >= _bly else _bly - 13
                     ly = min(max(ly, 8), pad_t + plot_h - 2)
@@ -872,6 +916,9 @@ def _grouped_bar_chart_html_fallback(categories, series_a, series_b, label_a, la
 
 
 def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="", color_a=None, color_b=None, size_w=480, size_h=190) -> str:
+    """Perbandingan 2 periode/seri per kategori (mis. paruh awal vs paruh akhir) — 2 batang
+    berdampingan per kategori, BUKAN ditumpuk (stacked), supaya perbandingan besarannya
+    langsung terlihat sejajar."""
     # ITEM K: nama metrik dirapikan DI TITIK GAMBAR. label_a/label_b tidak boleh dirapikan
     # di dalam tile - _kolom_topik() memakainya utk mencocokkan kolom dataframe, dan itu
     # butuh nama aslinya. render_is_mgmt() menjaga jalur Descriptive tidak ikut berubah:
@@ -879,9 +926,6 @@ def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="
     if render_is_mgmt():
         label_a = rapikan_nama_kolom(label_a or "")
         label_b = rapikan_nama_kolom(label_b or "")
-    """Perbandingan 2 periode/seri per kategori (mis. paruh awal vs paruh akhir) — 2 batang
-    berdampingan per kategori, BUKAN ditumpuk (stacked), supaya perbandingan besarannya
-    langsung terlihat sejajar."""
     if not SVG_SUPPORTED:
         return _grouped_bar_chart_html_fallback(categories, series_a, series_b, label_a, label_b, color_a, color_b)
     ca, cb = color_a or GREEN_MAIN, color_b or GOLD_MAIN
@@ -889,8 +933,8 @@ def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="
     # pad_t dinaikkan (10 -> 20) supaya ada ruang utk label angka di atas tiap batang (BUG
     # YANG DIPERBAIKI, dilaporkan user: chart perbandingan periode ini dulu tidak
     # menampilkan angka sama sekali, cuma bentuk batang tanpa nilai).
-    pad_l, pad_r, pad_t, pad_b = 8, 8, 20, 22
-    plot_w, plot_h = size_w - pad_l - pad_r, size_h - pad_t - pad_b
+    pad_l, pad_r, pad_t = 8, 8, 20
+    plot_w = size_w - pad_l - pad_r
     group_w = plot_w / n
     bar_w = group_w * 0.32
     # BUG DIPERBAIKI (dilaporkan user, laporan sungguhan report id 165): font label kategori
@@ -902,6 +946,39 @@ def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="
     font_scale = min(1.0, size_w / 320)
     val_font = max(5.5, round(7 * font_scale, 1))
     cat_font = max(6.0, round(7.5 * font_scale, 1))
+
+    # ---- ITEM N.1: ANTI-TABRAKAN LABEL SUMBU-X ------------------------------------------
+    # BUG NYATA DIPERBAIKI (diverifikasi user dari render PDF resolusi tinggi DAN screenshot
+    # aplikasi): label kategori digambar di tengah tiap grup dgn text-anchor=middle tanpa
+    # pemeriksaan tabrakan apa pun. Begitu namanya lebih lebar dari slot grupnya
+    # ("Penunjukan Langsung" vs "Tender Terbuka"), label tetangga menimpa jadi satu blok
+    # teks yang tidak terbaca. Menyusutkan font saja tidak pernah cukup utk nama 2-3 kata.
+    _lbl_kat = [str(c or "") for c in categories]
+    _lebar_kar = cat_font * 0.55          # faktor yang sama dipakai pengukur lebar lain
+    _lebar_terlebar = max((len(t) for t in _lbl_kat), default=0) * _lebar_kar
+    # ATURAN KERAS: Descriptive tidak boleh berubah tampilannya. Seluruh perbaikan tata
+    # letak label item N hanya menyala di jalur Management.
+    _miring = render_is_mgmt() and _lebar_terlebar > group_w * 0.95
+    if not _miring:
+        pad_b = 22
+        plot_h = size_h - pad_t - pad_b
+    else:
+        # Dua batas berbeda menentukan panjang label miring, dan yang MENGIKAT dipakai:
+        #   - tabrakan: pada 35 derajat proyeksi horizontal teks = 0.819 x panjangnya, jadi
+        #     label bertabrakan dgn tetangganya kalau 0.819*L > group_w;
+        #   - ruang kaki: proyeksi vertikalnya 0.574 x panjangnya, harus muat di pad_b.
+        # Ruang kaki DISESUAIKAN dgn kebutuhan (bukan dipatok 40px) supaya pemotongan cuma
+        # terjadi kalau tabrakan benar-benar memaksa - dibatasi agar area plot tetap sekitar
+        # separuh tinggi chart, karena chart yang terlalu pendek juga tidak terbaca.
+        _kar_maks_tabrakan = int((group_w * 1.22) / _lebar_kar)
+        _maks_kar = max(6, min(_kar_maks_tabrakan, 26))
+        _butuh_b = _maks_kar * _lebar_kar * 0.574 + 8
+        pad_b = int(min(max(24.0, _butuh_b), size_h * 0.42 - pad_t))
+        plot_h = size_h - pad_t - pad_b
+        # kalau ruang kaki tidak sanggup menampung panjang itu, labelnya yang mengalah
+        _maks_kar = max(6, min(_maks_kar, int((pad_b - 8) / (_lebar_kar * 0.574))))
+        _lbl_kat = [t if len(t) <= _maks_kar else t[:_maks_kar - 1].rstrip() + "\u2026"
+                    for t in _lbl_kat]
     max_val = max([*series_a, *series_b], default=0) or 1
     parts = [f'<svg width="{size_w}" height="{size_h}" viewBox="0 0 {size_w} {size_h}" xmlns="http://www.w3.org/2000/svg">']
     for i, cat in enumerate(categories):
@@ -927,7 +1004,20 @@ def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="
             _tb = _fmt_num(series_b[i])
             if len(_tb) * val_font * 0.62 <= bar_w * 1.8:
                 parts.append(f'<text x="{xb + bar_w/2:.1f}" y="{max(yb - 4, 10):.1f}" text-anchor="middle" font-size="{val_font}" fill="{TEXT_DARK}" font-family="{BODY_FONT}">{_esc(_tb)}</text>')
-        parts.append(f'<text x="{gx + group_w/2:.1f}" y="{size_h - 6}" text-anchor="middle" font-size="{cat_font}" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(cat)}</text>')
+        _kat_teks = _lbl_kat[i] if i < len(_lbl_kat) else str(cat or "")
+        if _miring:
+            # Diputar di titik jangkarnya sendiri, anchor END supaya ujung teks berhenti
+            # tepat di bawah tengah grupnya - tidak melebar ke kolom sebelah.
+            _ax, _ay = gx + group_w / 2, size_h - pad_b + 12
+            parts.append(
+                f'<text x="{_ax:.1f}" y="{_ay:.1f}" text-anchor="end" '
+                f'transform="rotate(-35 {_ax:.1f} {_ay:.1f})" font-size="{cat_font}" '
+                f'fill="{GRAY_TEXT}" font-family="{BODY_FONT}">{_esc(_kat_teks)}</text>')
+        else:
+            parts.append(
+                f'<text x="{gx + group_w/2:.1f}" y="{size_h - 6}" text-anchor="middle" '
+                f'font-size="{cat_font}" fill="{GRAY_TEXT}" font-family="{BODY_FONT}">'
+                f'{_esc(_kat_teks)}</text>')
     parts.append("</svg>")
     legend = (
         f'<div style="font-size:8pt;color:{GRAY_TEXT};margin-top:4pt;">'

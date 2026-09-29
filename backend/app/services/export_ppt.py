@@ -2001,6 +2001,16 @@ def add_bar_line_chart(slide, x, y, cx, cy, categories, values, cumulative=None,
     col_w_in = w_in / n
     max_val = max(values) if values and max(values) else 1
     max_cum = max(cumulative) if cumulative and max(cumulative) else 0
+    # ITEM N.2a (kembaran export_pdf.py::_bar_line_chart_svg): label periode diberi JARAK
+    # dgn melompati sebagian, bukan digambar semua sampai berdempet. Terukur di laporan 202
+    # sisi PDF: 8 periode menyatu jadi "01/202502/202503/2025..." yang tidak terbaca. PPTX
+    # memakai textbox selebar kolom dgn perataan tengah, jadi teks yang lebih lebar dari
+    # kolomnya meluber ke KEDUA sisi & menimpa tetangganya - gejalanya sama.
+    _lbl_w_in = max((len(str(c or "")) for c in categories), default=0) * 7 * 0.55 / 72.0
+    _langkah = 1
+    if _lbl_w_in > 0 and col_w_in > 0 and render_is_mgmt():
+        import math as _math
+        _langkah = max(1, int(_math.ceil((_lbl_w_in + 0.04) / col_w_in)))
     points = []
     for i, val in enumerate(values):
         bar_h_in = (val / max_val) * (plot_h_in - 0.1) if max_val else 0
@@ -2027,11 +2037,13 @@ def add_bar_line_chart(slide, x, y, cx, cy, categories, values, cumulative=None,
             vp.text = _tval
             vp.alignment = PP_ALIGN.CENTER
             _set_font(vp, BODY_FONT, Pt(7), color=TEXT_DARK)
-        label_box = slide.shapes.add_textbox(Inches(x_in + i * col_w_in), Inches(y_in + value_h_in + plot_h_in + 0.02), Inches(col_w_in), Inches(label_h_in))
-        lp = label_box.text_frame.paragraphs[0]
-        lp.text = str(categories[i])
-        lp.alignment = PP_ALIGN.CENTER
-        _set_font(lp, BODY_FONT, Pt(7), color=GRAY_TEXT)
+        # Periode PERTAMA & TERAKHIR selalu digambar - pembaca tetap tahu rentangnya.
+        if i % _langkah == 0 or i == n - 1:
+            label_box = slide.shapes.add_textbox(Inches(x_in + i * col_w_in), Inches(y_in + value_h_in + plot_h_in + 0.02), Inches(col_w_in), Inches(label_h_in))
+            lp = label_box.text_frame.paragraphs[0]
+            lp.text = str(categories[i])
+            lp.alignment = PP_ALIGN.CENTER
+            _set_font(lp, BODY_FONT, Pt(7), color=GRAY_TEXT)
     for i in range(len(points) - 1):
         (x1, y1), (x2, y2) = points[i], points[i + 1]
         conn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x1), Inches(y1), Inches(x2), Inches(y2))
@@ -2050,7 +2062,13 @@ def add_bar_line_chart(slide, x, y, cx, cy, categories, values, cumulative=None,
     if points and len(points) <= 8:
         _plot_bottom = y_in + value_h_in + plot_h_in
         for (px, py), cval in zip(points, cumulative):
-            _ly = py + 0.05 if py + 0.21 < _plot_bottom else py - 0.19
+            # ITEM N.2b: 0.05in dari PUSAT titik masih di dalam markernya sendiri (radius
+            # 0.045in) dan menyentuh garis tren setebal 2,25pt, jadi angkanya tertutup -
+            # paling parah di titik puncak. Offsetnya dijauhkan ke luar marker+garis.
+            if render_is_mgmt():
+                _ly = py + 0.10 if py + 0.26 < _plot_bottom else py - 0.24
+            else:
+                _ly = py + 0.05 if py + 0.21 < _plot_bottom else py - 0.19
             cbox = slide.shapes.add_textbox(Inches(px - col_w_in / 2), Inches(_ly), Inches(col_w_in), Inches(0.16))
             cp = cbox.text_frame.paragraphs[0]
             cp.text = _fmt_num(cval)
