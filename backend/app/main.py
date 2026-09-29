@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
             ("threat_count_low", "INTEGER DEFAULT 0"),
             ("threat_count_info", "INTEGER DEFAULT 0"),
             ("total_records_parsed", "INTEGER DEFAULT 0"),
+            ("download_file_name", "VARCHAR"),
         ]
         from sqlalchemy import text
         with engine.connect() as conn:

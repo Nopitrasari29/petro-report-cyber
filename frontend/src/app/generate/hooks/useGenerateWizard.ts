@@ -139,10 +139,13 @@ export function useGenerateWizard() {
   // render. Ref ini yang membuat perbedaannya bisa dikenali.
   const sectionsLangRef = useRef<string | null>(null);
 
-  const [headerTitle, setHeaderTitle] = useState("PT PETROKIMIA GRESIK");
-  const [headerSubtitle, setHeaderSubtitle] = useState(
-    "Sistem Otomasi Laporan & Presentasi Berbasis AI",
-  );
+  // ITEM U: judul kop, subjudul kop, judul laporan, dan nama berkas TIDAK lagi
+  // diisi otomatis. Tebakan sistem adalah akar item F, L, dan T - teks yang
+  // terlihat benar tapi tidak pernah benar-benar dipilih siapa pun. Keempatnya
+  // kosong sampai pengguna mengisinya, dan tombol Generate menahan sampai terisi.
+  const [headerTitle, setHeaderTitle] = useState("");
+  const [headerSubtitle, setHeaderSubtitle] = useState("");
+  const [downloadFileName, setDownloadFileName] = useState("");
   const [themeColor, setThemeColor] = useState("green");
   const [stylePreset, setStylePreset] = useState("auto");
   const [domainType, setDomainType] = useState("general");
@@ -478,8 +481,8 @@ export function useGenerateWizard() {
         const data = await res.json();
         if (data.header_title && !headerTitleTouchedRef.current)
           setHeaderTitle(data.header_title);
-        if (data.header_subtitle && !headerSubtitleTouchedRef.current)
-          setHeaderSubtitle(data.header_subtitle);
+        // ITEM U: subtitle TIDAK lagi diisi dari usulan AI - pengguna yang memilih.
+        // Backend pun sudah berhenti mengirimkannya (section_suggester).
         if (data.domain_type) setDomainType(data.domain_type);
         if (
           data.suggested_sections &&
@@ -936,6 +939,7 @@ export function useGenerateWizard() {
       formData.append("language", language);
       formData.append("header_title", headerTitle);
       formData.append("header_subtitle", headerSubtitle);
+      formData.append("download_file_name", downloadFileName);
       formData.append("theme_color", themeColor);
       formData.append("style_preset", stylePreset);
       formData.append("domain_type", domainType);
@@ -1164,10 +1168,9 @@ export function useGenerateWizard() {
     headerTitleTouchedRef.current = false;
     headerSubtitleTouchedRef.current = false;
     dynamicSectionsTouchedRef.current = false;
-    setHeaderTitle("PT PETROKIMIA GRESIK");
-    setHeaderSubtitle(
-      "Sistem Otomasi Laporan & Presentasi Berbasis AI",
-    );
+    setHeaderTitle("");
+    setHeaderSubtitle("");
+    setDownloadFileName("");
     setThemeColor("green");
     setStylePreset("auto");
     setDomainType("general");
@@ -1209,6 +1212,9 @@ export function useGenerateWizard() {
     setSections,
     dynamicSections,
     setDynamicSections: setDynamicSectionsManual,
+    setTitle,
+    downloadFileName,
+    setDownloadFileName,
     sectionsLoading,
     headerTitle,
     setHeaderTitle: setHeaderTitleManual,

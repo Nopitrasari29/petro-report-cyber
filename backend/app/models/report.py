@@ -14,6 +14,8 @@ class Report(Base):
     data_type = Column(String, nullable=False, index=True)  # firewall, email_security, ids_ips, vapt, etc.
     status = Column(String, default="draft", index=True)  # draft, parsed, analyzed, completed, failed
     input_file_name = Column(String, nullable=True)
+    # Item U: nama berkas unduhan DIISI PENGGUNA, tidak lagi ditebak dari judul/isi.
+    download_file_name = Column(String, nullable=True)
     
     parsed_data = Column(JSON, nullable=True)
     parsed_data_path = Column(String, nullable=True)
@@ -52,8 +54,9 @@ class Report(Base):
     included_sections = Column(JSON, nullable=True)
 
     # Kustomisasi Template Kop & Tema Visual (Revisi Progress 2)
-    header_title = Column(String, nullable=True, default="PT PETROKIMIA GRESIK")
-    header_subtitle = Column(String, nullable=True, default="Sistem Otomasi Laporan & Presentasi Berbasis AI")
+    # Item U: TANPA default - pengguna yang mengisi, lihat validasi di endpoint upload.
+    header_title = Column(String, nullable=True)
+    header_subtitle = Column(String, nullable=True)
     # Default "green" (Petrokimia) — opsi "auto" (warna diacak & DIKUNCI sekali saat analisis
     # berhasil, lihat resolved_theme_color di pick_visual_style()/resolve_theme_color()) sudah
     # dihapus dari picker UI, tapi resolve_theme_color() tetap menanganinya sebagai fallback

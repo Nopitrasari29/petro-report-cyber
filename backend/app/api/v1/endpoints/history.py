@@ -37,6 +37,12 @@ def _nama_berkas(db_report, report_id: int) -> str:
     dominan section yang dicentang + periode - deterministik, tanpa panggilan AI. Kalau
     gagal karena alasan apa pun, jatuh ke perilaku lama supaya unduhan tidak pernah gagal
     cuma gara-gara penamaan."""
+    # ITEM U: nama berkas DIISI PENGGUNA. Penyusun otomatis (nama_berkas_laporan) tetap
+    # ada sebagai cadangan utk LAPORAN LAMA yang dibuat sebelum field ini wajib - tanpa itu
+    # laporan lama kehilangan nama berkasnya yang wajar. Laporan baru selalu punya nilainya.
+    _pilihan = str(getattr(db_report, "download_file_name", "") or "").strip()
+    if _pilihan:
+        return _sanitize_filename(_pilihan, f"soc_report_{report_id}")
     try:
         nama = nama_berkas_laporan(db_report, fallback="")
         if nama:

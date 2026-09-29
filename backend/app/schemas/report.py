@@ -12,8 +12,10 @@ class ReportBase(BaseModel):
     language: Optional[str] = "Indonesian"
     include_ai_insights: Optional[bool] = True
     include_raw_data_summary: Optional[bool] = True
-    header_title: Optional[str] = "PT PETROKIMIA GRESIK"
-    header_subtitle: Optional[str] = "Sistem Otomasi Laporan & Presentasi Berbasis AI"
+    # Item U: TANPA default - keempat field judul/subtitle/nama berkas diisi pengguna.
+    header_title: Optional[str] = None
+    header_subtitle: Optional[str] = None
+    download_file_name: Optional[str] = None
     theme_color: Optional[str] = "green"
     domain_type: Optional[str] = "general"
     tone: Optional[str] = "Professional"
@@ -52,6 +54,7 @@ class ReportUpdate(BaseModel):
     include_raw_data_summary: Optional[bool] = None
     header_title: Optional[str] = None
     header_subtitle: Optional[str] = None
+    download_file_name: Optional[str] = None
     theme_color: Optional[str] = None
     domain_type: Optional[str] = None
     tone: Optional[str] = None

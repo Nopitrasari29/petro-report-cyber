@@ -235,9 +235,11 @@ def upload_security_file(
     template_type: Optional[str] = Form("SOC Executive Summary"),
     output_format: Optional[str] = Form("PDF"),
     language: Optional[str] = Form("Indonesian"),
-    included_sections: Optional[str] = Form(None),  # JSON string [{"key": "...", "title": "..."}, ...]
-    header_title: Optional[str] = Form("PT PETROKIMIA GRESIK"),
-    header_subtitle: Optional[str] = Form("Sistem Otomasi Laporan & Presentasi Berbasis AI"),
+    included_sections: Optional[str] = Form(None),
+    # Item U: nama berkas unduhan diisi pengguna di wizard, tidak lagi ditebak.
+    download_file_name: Optional[str] = Form(None),  # JSON string [{"key": "...", "title": "..."}, ...]
+    header_title: Optional[str] = Form(None),
+    header_subtitle: Optional[str] = Form(None),
     theme_color: Optional[str] = Form("green"),
     domain_type: Optional[str] = Form("general"),
     tone: Optional[str] = Form("Professional"),  # Professional, Technical, Executive
@@ -256,11 +258,34 @@ def upload_security_file(
         from app.core.rate_limit import rate_limiter
         rate_limiter.check(key=f"upload:{current_user.id}", max_attempts=15, window_seconds=60)
 
-        # Judul belum tentu diisi pengguna di form upload — pakai nama template otomatis
-        # supaya tidak pernah tersimpan kosong (bisa diganti belakangan di Preview & Edit/History).
-        title = title.strip() if title else ""
-        if not title:
-            title = _default_report_title(template_type, domain_type, language)
+        # ---- ITEM U: JUDUL/SUBTITLE/NAMA BERKAS WAJIB DIISI PENGGUNA ----
+        # KEPUTUSAN USER: sistem berhenti menebak. Judul otomatis (_default_report_title),
+        # subtitle bawaan, dan nama berkas turunan adalah akar item F, L, dan T - masing2
+        # menghasilkan teks yang terlihat benar tapi tidak pernah benar-benar dipilih siapa
+        # pun. Daripada terus mengejar algoritma tebakan yang sempurna, keempatnya diisi
+        # pengguna secara sadar.
+        #
+        # Berlaku utk Descriptive MAUPUN Management: ini validasi INPUT, bukan perubahan cara
+        # isi dirender. Begitu terisi, kedua jalur render memperlakukannya persis seperti
+        # sebelumnya.
+        #
+        # Validasi HANYA di sini - jalur MEMBUAT laporan baru. Laporan lama yang field-nya
+        # kosong/berisi default tetap bisa dibuka, dirender ulang, dan diunduh: tidak ada
+        # validasi di jalur baca/render.
+        _wajib = (
+            ("title", title, "Judul laporan"),
+            ("header_title", header_title, "Judul kop"),
+            ("header_subtitle", header_subtitle, "Subjudul kop"),
+            ("download_file_name", download_file_name, "Nama berkas unduhan"),
+        )
+        _kosong = [label for _, nilai, label in _wajib if not str(nilai or "").strip()]
+        if _kosong:
+            raise HTTPException(
+                status_code=422,
+                detail=("Lengkapi dulu di Report Settings sebelum laporan dibuat: "
+                        + ", ".join(_kosong) + "."),
+            )
+        title = title.strip()
 
         # Konversi tanggal periode log dengan validasi string kosong (Next.js Form safe)
         p_start = None
@@ -377,6 +402,7 @@ def upload_security_file(
             total_records_parsed=total_records,
             total_file_size_bytes=total_size_bytes,
             included_sections=parsed_sections,
+            download_file_name=(download_file_name or '').strip(),
             header_title=header_title,
             header_subtitle=header_subtitle,
             theme_color=theme_color,

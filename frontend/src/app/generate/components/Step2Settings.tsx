@@ -97,6 +97,10 @@ interface Step2SettingsProps {
   setHeaderTitle?: (val: string) => void;
   headerSubtitle?: string;
   setHeaderSubtitle?: (val: string) => void;
+  reportTitle?: string;
+  setReportTitle?: (val: string) => void;
+  downloadFileName?: string;
+  setDownloadFileName?: (val: string) => void;
   themeColor?: string;
   setThemeColor?: (val: string) => void;
   stylePreset?: string;
@@ -131,7 +135,11 @@ export default function Step2Settings({
   sectionsLoading = false,
   headerTitle = "PT PETROKIMIA GRESIK",
   setHeaderTitle,
-  headerSubtitle = "Sistem Otomasi Laporan & Presentasi Berbasis AI",
+  headerSubtitle = "",
+  reportTitle = "",
+  setReportTitle,
+  downloadFileName = "",
+  setDownloadFileName,
   setHeaderSubtitle,
   themeColor = "green",
   setThemeColor,
@@ -393,6 +401,15 @@ export default function Step2Settings({
     return () => ro.disconnect();
   }, []);
 
+  // ITEM U: Generate ditahan sampai keempat field wajib terisi. Backend juga
+  // memvalidasi hal yang sama (endpoint upload) - ini lapis pertama, bukan
+  // satu-satunya.
+  const _adaYangKosong =
+    !String(reportTitle || "").trim() ||
+    !String(downloadFileName || "").trim() ||
+    !String(headerTitle || "").trim() ||
+    !String(headerSubtitle || "").trim();
+
   const handleAddCustomSection = () => {
     if (!customSectionInput.trim() || !setDynamicSections) return;
     const newKey = `custom_${Date.now()}`;
@@ -503,9 +520,41 @@ export default function Step2Settings({
               </select>
             </div>
 
+            {/* ITEM U: judul laporan & nama berkas kini DIISI PENGGUNA di sini.
+                Sebelumnya judul cuma bisa diedit SESUDAH laporan jadi (Step 4), dan
+                nama berkas tidak punya field sama sekali - keduanya ditebak sistem. */}
+            <div>
+              <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">
+                {tx("Report Title", "Judul Laporan")}
+                <span className="text-red-500 ml-1">*</span>
+              </label>
+              <input
+                type="text"
+                value={reportTitle}
+                onChange={(e) => setReportTitle && setReportTitle(e.target.value)}
+                placeholder={tx("e.g. Procurement Analysis Q1 2025", "mis. Analisis Pengadaan Q1 2025")}
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">
+                {tx("Download File Name", "Nama Berkas Unduhan")}
+                <span className="text-red-500 ml-1">*</span>
+              </label>
+              <input
+                type="text"
+                value={downloadFileName}
+                onChange={(e) => setDownloadFileName && setDownloadFileName(e.target.value)}
+                placeholder={tx("e.g. Procurement-Analysis-Q1-2025", "mis. Analisis-Pengadaan-Q1-2025")}
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700 font-medium focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
+              />
+            </div>
+
             <div>
               <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">
                 {tx("Kop Header Title", "Judul Kop")}
+                <span className="text-red-500 ml-1">*</span>
               </label>
               <input
                 type="text"
@@ -513,7 +562,7 @@ export default function Step2Settings({
                 onChange={(e) =>
                   setHeaderTitle && setHeaderTitle(e.target.value)
                 }
-                placeholder="PT PETROKIMIA GRESIK"
+                placeholder={tx("e.g. PT PETROKIMIA GRESIK", "mis. PT PETROKIMIA GRESIK")}
                 className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
               />
             </div>
@@ -521,6 +570,7 @@ export default function Step2Settings({
             <div>
               <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">
                 {tx("Kop Subtitle", "Subjudul Kop")}
+                <span className="text-red-500 ml-1">*</span>
               </label>
               <input
                 type="text"
@@ -528,7 +578,7 @@ export default function Step2Settings({
                 onChange={(e) =>
                   setHeaderSubtitle && setHeaderSubtitle(e.target.value)
                 }
-                placeholder="Sistem Otomasi Laporan & Presentasi Berbasis AI"
+                placeholder={tx("e.g. IT Department", "mis. Departemen Teknologi Informasi")}
                 className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700 font-medium focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
               />
             </div>
@@ -1399,9 +1449,12 @@ export default function Step2Settings({
 
         <button
           onClick={onNext}
-          disabled={sectionsLoading}
+          disabled={sectionsLoading || _adaYangKosong}
           title={
-            sectionsLoading
+            _adaYangKosong
+              ? tx("Fill in all required fields (*) first",
+                   "Lengkapi dulu semua field bertanda (*)")
+              : sectionsLoading
               ? tx(
                   "Please wait until AI finishes suggesting sections for this data",
                   "Mohon tunggu sampai AI selesai mengusulkan section untuk data ini",
@@ -1409,7 +1462,7 @@ export default function Step2Settings({
               : undefined
           }
           className={`inline-flex items-center gap-2 px-6 py-3 rounded-lg text-white font-bold text-sm shadow transition-all duration-200 group ${
-            sectionsLoading
+            sectionsLoading || _adaYangKosong
               ? "bg-stone-300 cursor-not-allowed shadow-none"
               : "bg-petro-green hover:bg-petro-green-hover cursor-pointer"
           }`}

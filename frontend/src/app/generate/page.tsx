@@ -177,6 +177,10 @@ export default function GenerateReportPage() {
               setHeaderTitle={w.setHeaderTitle}
               headerSubtitle={w.headerSubtitle}
               setHeaderSubtitle={w.setHeaderSubtitle}
+              reportTitle={w.title}
+              setReportTitle={w.setTitle}
+              downloadFileName={w.downloadFileName}
+              setDownloadFileName={w.setDownloadFileName}
               themeColor={w.themeColor}
               setThemeColor={w.setThemeColor}
               stylePreset={w.stylePreset}

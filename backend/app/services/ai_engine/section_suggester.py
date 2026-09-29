@@ -484,7 +484,10 @@ def suggest_sections_for_file(
             "domain_type": domain,
             "domain_label": preset["domain_label"],
             "header_title": preset["default_header_title"],
-            "header_subtitle": preset["default_header_subtitle"],
+            # ITEM U: subtitle TIDAK lagi diusulkan - kalau diisi di sini, ia akan
+            # mengisi ulang field yang sengaja dikosongkan supaya pengguna memilihnya
+            # sendiri. Preset-nya dibiarkan di kode, cuma tidak dipakai lagi.
+            "header_subtitle": "",
             "suggested_sections": ai_sections + fixed_sections,
             "source": "ai",
         }
@@ -517,7 +520,8 @@ def suggest_sections_for_file(
         "domain_type": domain,
         "domain_label": preset["domain_label"],
         "header_title": preset["default_header_title"],
-        "header_subtitle": preset["default_header_subtitle"],
+        # ITEM U: lihat catatan di atas - subtitle tidak lagi diusulkan.
+        "header_subtitle": "",
         "suggested_sections": custom_sections + fixed_sections,
         "source": "heuristic",
     }
