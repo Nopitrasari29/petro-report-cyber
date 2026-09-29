@@ -298,6 +298,25 @@ def _detect_fixed_sections(report_stats: Dict[str, Any], is_en: bool) -> List[Di
     has_status = bool(top_categories.get("status"))
     has_date = bool(source_cols.get("date"))
     has_severity = bool(source_cols.get("severity"))
+    # PERMINTAAN USER (P.3): section yang TIDAK PERNAH berpengaruh di laporan Management
+    # tidak lagi ditawarkan - menawarkan kotak centang yang tidak mengubah apa pun
+    # menyesatkan pembacanya.
+    #
+    # Keduanya BUKAN "belum diimplementasikan": percabangan render-nya ADA di
+    # build_management_report_blocks (lihat `is_included("time_heatmap")` dan
+    # `is_included("period_compare")` di sana), dan datanya pun tersedia - diuji di laporan
+    # 195, _compute_day_hour_pattern dan _compute_period_compare sama-sama mengembalikan
+    # data. Yang membuatnya tidak pernah tampil adalah keputusan arsitektur "PENGGANTIAN
+    # SUMBER TILE": katalog tile berbasis nama section dihitung lalu SELURUHNYA diganti
+    # keluaran pemilih chart berbasis tanda tangan. Terlihat di log render laporan 195:
+    #     SUMBER TILE | lama=7 [... 'period_compare', ... 'time_heatmap'] | baru=4 [...]
+    # Section yang keluarannya HANYA berupa tile karena itu tidak pernah sampai ke pembaca.
+    #
+    # Kodenya SENGAJA tidak dihapus - kalau suatu saat katalog lama dipakai lagi, cukup
+    # keluarkan kuncinya dari daftar ini. Section preset lain (category_distribution,
+    # status_distribution, asset_cards, key_findings, critical_table) TETAP ditawarkan:
+    # keluarannya bukan cuma tile, dan sudah dibuktikan berpengaruh.
+    _SECTION_DISEMBUNYIKAN = {"time_heatmap", "period_compare"}
     candidates = [
         ("category_distribution", has_category, ("Distribusi Kategori/Unit", "Category/Unit Distribution")),
         ("status_distribution", has_status, ("Distribusi Status", "Status Distribution")),
@@ -311,6 +330,8 @@ def _detect_fixed_sections(report_stats: Dict[str, Any], is_en: bool) -> List[Di
     out = []
     for key, available, title in candidates:
         if not available:
+            continue
+        if key in _SECTION_DISEMBUNYIKAN:
             continue
         out.append({
             "key": key,
