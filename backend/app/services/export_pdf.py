@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from app.models.report import Report
 from app.services.report_render_logic import (
+    render_is_mgmt,
     render_is_en, set_render_language,
     build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style,
     resolve_theme_color, best_grid_cols, _hard_truncate, _dedupe_truncated_labels, _layout_dashboard_column,
@@ -834,6 +835,13 @@ def _heatmap_grid_svg(day_labels, hour_labels, grid, color=None, cell=32) -> str
 
 
 def _grouped_bar_chart_html_fallback(categories, series_a, series_b, label_a, label_b, color_a, color_b) -> str:
+    # ITEM K: nama metrik dirapikan DI TITIK GAMBAR. label_a/label_b tidak boleh dirapikan
+    # di dalam tile - _kolom_topik() memakainya utk mencocokkan kolom dataframe, dan itu
+    # butuh nama aslinya. render_is_mgmt() menjaga jalur Descriptive tidak ikut berubah:
+    # label di sana sudah manusiawi dan perapian bisa menggesernya.
+    if render_is_mgmt():
+        label_a = rapikan_nama_kolom(label_a or "")
+        label_b = rapikan_nama_kolom(label_b or "")
     ca, cb = color_a or GREEN_MAIN, color_b or GOLD_MAIN
     max_val = max([*series_a, *series_b], default=0) or 1
     rows = []
@@ -864,6 +872,13 @@ def _grouped_bar_chart_html_fallback(categories, series_a, series_b, label_a, la
 
 
 def _grouped_bar_chart_svg(categories, series_a, series_b, label_a="", label_b="", color_a=None, color_b=None, size_w=480, size_h=190) -> str:
+    # ITEM K: nama metrik dirapikan DI TITIK GAMBAR. label_a/label_b tidak boleh dirapikan
+    # di dalam tile - _kolom_topik() memakainya utk mencocokkan kolom dataframe, dan itu
+    # butuh nama aslinya. render_is_mgmt() menjaga jalur Descriptive tidak ikut berubah:
+    # label di sana sudah manusiawi dan perapian bisa menggesernya.
+    if render_is_mgmt():
+        label_a = rapikan_nama_kolom(label_a or "")
+        label_b = rapikan_nama_kolom(label_b or "")
     """Perbandingan 2 periode/seri per kategori (mis. paruh awal vs paruh akhir) — 2 batang
     berdampingan per kategori, BUKAN ditumpuk (stacked), supaya perbandingan besarannya
     langsung terlihat sejajar."""

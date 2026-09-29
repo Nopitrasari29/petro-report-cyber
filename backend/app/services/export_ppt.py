@@ -39,6 +39,8 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_TICK_MARK, XL_TICK_LABEL_POSITION
 
 from app.models.report import Report
 from app.services.report_render_logic import (
+    render_is_mgmt,
+    rapikan_nama_kolom,
     render_is_en, set_render_language,
     build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style,
     resolve_theme_color, best_grid_cols, _hard_truncate, _dedupe_truncated_labels, _layout_dashboard_column,
@@ -1927,6 +1929,13 @@ def add_native_radar_chart(slide, x, y, cx, cy, axes, values, color=None):
 
 
 def add_grouped_bar_chart(slide, x, y, cx, cy, categories, series_a, series_b, label_a="", label_b="", color_a=None, color_b=None):
+    # ITEM K: nama metrik dirapikan DI TITIK GAMBAR. label_a/label_b tidak boleh dirapikan
+    # di dalam tile - _kolom_topik() memakainya utk mencocokkan kolom dataframe, dan itu
+    # butuh nama aslinya. render_is_mgmt() menjaga jalur Descriptive tidak ikut berubah:
+    # label di sana sudah manusiawi dan perapian bisa menggesernya.
+    if render_is_mgmt():
+        label_a = rapikan_nama_kolom(label_a or "")
+        label_b = rapikan_nama_kolom(label_b or "")
     """Perbandingan 2 periode/seri per kategori — python-pptx mendukung multi-series NATIVE
     lewat CategoryChartData.add_series() dipanggil 2x, dipakai langsung spt add_native_bar_chart
     (beda dari add_native_bar_chart yang cuma 1 series)."""

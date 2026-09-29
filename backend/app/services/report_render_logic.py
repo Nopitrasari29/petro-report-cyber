@@ -539,6 +539,117 @@ def rapikan_nama_kolom(teks: str) -> str:
     return " ".join(kata)
 
 
+# Field blok yang ISINYA TEKS TAMPILAN - boleh dirapikan. Sengaja daftar putih, bukan
+# "semua string": labels/categories/bars/raw_name isinya NILAI DATA (nama vendor, status,
+# bucket waktu) yang tidak boleh disentuh sama sekali.
+_FIELD_TEKS_TAMPILAN = ("title", "kicker", "caption", "cara_baca", "x_label",
+                        "judul_pendek", "label", "value", "name", "content",
+                        "judul_topik", "note", "detail")
+
+
+# Field yang isinya NILAI data, bukan teks tampilan. Di sini perapian hanya boleh
+# mengganti string yang SELURUHNYA sama dengan sebuah nama kolom - lihat
+# _rapikan_nilai_persis.
+_FIELD_NILAI_DATA = ("labels", "categories", "bars", "day_labels", "hour_labels",
+                     "series", "points", "axes")
+
+
+def _rapikan_nilai_persis(obj, peta) -> int:
+    """Ganti HANYA string yang seluruhnya sama dengan sebuah nama kolom.
+
+    Tile pembanding metrik (metric_mix/metric_share) menaruh NAMA METRIK di `labels`, jadi
+    melewati field itu seluruhnya meninggalkan "Nilai_Kontrak_Rp" tergambar apa adanya -
+    persis keluhan user. Sebaliknya tile lain menaruh NILAI data di sana. Pencocokan utuh
+    memisahkan keduanya tanpa perlu menebak dari tile_kind."""
+    n = 0
+    if isinstance(obj, list):
+        for i, v in enumerate(obj):
+            if isinstance(v, str) and v.strip() in peta:
+                obj[i] = peta[v.strip()]
+                n += 1
+            elif isinstance(v, (dict, list)):
+                n += _rapikan_nilai_persis(v, peta)
+    elif isinstance(obj, dict):
+        for k, v in list(obj.items()):
+            if k == "raw_name":
+                continue
+            if isinstance(v, str) and v.strip() in peta:
+                obj[k] = peta[v.strip()]
+                n += 1
+            elif isinstance(v, (dict, list)):
+                n += _rapikan_nilai_persis(v, peta)
+    return n
+
+
+def _rapikan_teks_tampilan(nilai, pola, peta):
+    if isinstance(nilai, str):
+        return pola.sub(lambda m: peta[m.group(0)], nilai)
+    return nilai
+
+
+def rapikan_nama_kolom_di_blok(blocks: list, kolom_data) -> int:
+    """Ganti nama kolom MENTAH dgn bentuk rapinya di seluruh teks tampilan blok.
+
+    BUG NYATA DIPERBAIKI (terukur di laporan 202): nama kolom mentah ber-underscore bocor
+    ke 70 titik di dalam blok dan 7 kemunculan di PDF - "Anggaran_Rp",
+    "Persentase_Realisasi", "Nilai_Kontrak_Rp", dst - sementara di kartu lain pada halaman
+    yang SAMA metrik yang sama sudah tampil rapi. rapikan_nama_kolom() sudah jadi satu
+    aturan perapian nama, tapi dipanggil di sebagian tempat saja.
+
+    Dijalankan sbg SATU lintasan akhir, bukan dgn menambal puluhan titik pemanggilan -
+    menambal satu per satu adalah cara cacat ini lahir, dan akan melahirkannya lagi.
+
+    Cuma token yang PERSIS nama kolom (daftar putih, batas kata) yang diganti. Nilai data
+    tidak tersentuh: `raw_name` dilewati, dan labels/categories/bars tidak ikut dirapikan.
+
+    Kembalikan jumlah penggantian."""
+    nama = sorted({str(k) for k in (kolom_data or []) if "_" in str(k)},
+                  key=len, reverse=True)
+    if not nama:
+        return 0
+    peta = {n: rapikan_nama_kolom(n) for n in nama}
+    peta = {k: v for k, v in peta.items() if v != k}
+    if not peta:
+        return 0
+    pola = re.compile(r"(?<![A-Za-z0-9_])(?:%s)(?![A-Za-z0-9_])"
+                      % "|".join(re.escape(n) for n in peta))
+    n_ganti = 0
+
+    def jalan(obj):
+        nonlocal n_ganti
+        if isinstance(obj, dict):
+            for k, v in list(obj.items()):
+                if k == "raw_name":
+                    continue          # kunci pencocokan kategori - BUKAN teks tampilan
+                if isinstance(v, str):
+                    if k in _FIELD_TEKS_TAMPILAN:
+                        baru = _rapikan_teks_tampilan(v, pola, peta)
+                        if baru != v:
+                            obj[k] = baru
+                            n_ganti += 1
+                elif isinstance(v, (dict, list)):
+                    if k in _FIELD_NILAI_DATA:
+                        # Isinya NILAI data - kecuali pada tile pembanding metrik, di mana
+                        # `labels` justru berisi NAMA METRIK ("Nilai_Kontrak_Rp"). Karena itu
+                        # di sini dipakai pencocokan SELURUH string saja: nama kolom yang cuma
+                        # jadi potongan di dalam sebuah nilai data tidak disentuh.
+                        n_ganti += _rapikan_nilai_persis(v, peta)
+                        continue
+                    jalan(v)
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                if isinstance(v, str):
+                    baru = _rapikan_teks_tampilan(v, pola, peta)
+                    if baru != v:
+                        obj[i] = baru
+                        n_ganti += 1
+                elif isinstance(v, (dict, list)):
+                    jalan(v)
+
+    jalan(blocks)
+    return n_ganti
+
+
 def judul_pendek_kolom(tile: dict, report) -> str:
     """Label topik PENDEK untuk pita kepala panel - BUKAN kalimat temuan.
 
@@ -10493,5 +10604,15 @@ def build_management_report_blocks(report) -> list[dict]:
         if sanitize_text(coerce_narrative_text(_s.get("title")))
     }
     pulihkan_seksi_yang_kolomnya_terbuang(blocks, report, _konten_seksi)
+
+    # ITEM K: nama kolom mentah ber-underscore dirapikan di SATU lintasan akhir, setelah
+    # seluruh teks tampilan terbentuk - lihat rapikan_nama_kolom_di_blok.
+    _kolom_data = set()
+    for _row in (parsed_data or []):
+        if isinstance(_row, dict):
+            _kolom_data |= {str(_k) for _k in _row}
+    _n_rapi = rapikan_nama_kolom_di_blok(blocks, _kolom_data)
+    if _n_rapi:
+        logger.info("nama kolom mentah dirapikan di %d teks tampilan", _n_rapi)
 
     return blocks
