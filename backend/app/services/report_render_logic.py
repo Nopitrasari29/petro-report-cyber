@@ -9519,6 +9519,205 @@ def build_report_blocks(report) -> list[dict]:
 # Dipakai ketika report.template_type == "Management Report"
 # ==============================================================================
 
+# ============================================================================
+# Q1: PEMULIHAN KOLOM HANTU (khusus jalur Management)
+#
+# Parser PDF memutuskan "baris ini header atau data" lewat _row_looks_like_data(), yang
+# menuntut MAYORITAS sel terlihat seperti angka. Baris data pertama di halaman lanjutan
+# sebuah tabel insiden berisi timestamp, IP, dan teks - nyaris tidak ada yang lolos sbg
+# angka - jadi ia dinyatakan HEADER BARU. Akibatnya (terukur di laporan 201 & 203):
+#   - baris itu sendiri lenyap jadi NAMA KOLOM (50 baris jadi 49),
+#   - seluruh baris sesudahnya ter-kunci ke kolom hantu itu, sementara kolom aslinya kosong.
+# Severity lalu terbaca 29 dari 49 baris (20 sisanya kosong) - persis angka yang dilaporkan.
+#
+# Dipulihkan DI HULU JALUR MANAGEMENT, bukan di parser: parsing terjadi saat upload, dan
+# satu-satunya penanda jalur yang tersedia di sana (`template_type`) tidak pernah diisi
+# wizard - jadi gerbang di parser tidak bisa diandalkan. Di sini jalurnya pasti, Descriptive
+# tidak tersentuh sama sekali, dan laporan yang SUDAH tersimpan ikut membaik tanpa unggah
+# ulang.
+# ============================================================================
+_RE_STEMPEL_WAKTU = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}")
+_RE_ALAMAT_IP = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$|^\d{1,3}\.[a-zA-Z]{2}\.")
+_KARDINALITAS_KATEGORI = 25      # di atas ini kolom dianggap bebas (nama/waktu/IP), bukan kategori
+_MIN_COCOK_DOMAIN = 0.6          # porsi nilai hantu yang harus ada di domain kolom aslinya
+
+
+def _bentuk_nilai(v) -> str:
+    """Golongkan SATU nilai menurut bentuknya - dipakai mencocokkan kolom berkardinalitas
+    tinggi (timestamp/IP/teks bebas), di mana kecocokan nilai persis mustahil."""
+    t = str(v or "").strip()
+    if not t:
+        return ""
+    if _RE_STEMPEL_WAKTU.match(t):
+        return "waktu"
+    if _RE_ALAMAT_IP.match(t):
+        return "ip"
+    if re.fullmatch(r"[-+]?[\d.,]+%?", t):
+        return "angka"
+    return "teks"
+
+
+def _bentuk_dominan(nilai) -> str:
+    b = [_bentuk_nilai(v) for v in nilai]
+    b = [x for x in b if x]
+    if not b:
+        return ""
+    return max(set(b), key=b.count)
+
+
+def _kolom_hantu(baris: list, kolom: list) -> list:
+    """Kolom yang NAMANYA sebenarnya sebuah nilai data, bukan judul kolom.
+
+    Dua penanda, cukup salah satu: namanya berbentuk stempel waktu / alamat IP, ATAU nama
+    itu muncul sebagai NILAI di kolom lain pada data yang sama. Penanda kedua yang paling
+    umum berlaku - judul kolom sejati tidak pernah jadi isi sel."""
+    nilai_lain = set()
+    for r in baris:
+        for k, v in r.items():
+            if isinstance(v, str) and v.strip():
+                nilai_lain.add(v.strip())
+    hantu = []
+    for k in kolom:
+        nama = str(k).strip()
+        if not nama:
+            continue
+        if _RE_STEMPEL_WAKTU.match(nama) or _RE_ALAMAT_IP.match(nama) or nama in nilai_lain:
+            hantu.append(k)
+    return hantu
+
+
+def _cocokkan_hantu(baris_hantu: list, baris_asli: list, hantu: list, asli: list):
+    """Petakan tiap kolom hantu ke kolom ASLI-nya. Kembalikan (peta, alasan_gagal).
+
+    Hipotesisnya POSISI - kolom hantu lahir dari satu baris data, jadi urutannya sama dgn
+    urutan kolom tabel aslinya. Tapi posisi saja tidak cukup dipercaya, jadi tiap pasangan
+    DIVALIDASI:
+      - kolom asli berkardinalitas rendah (kategori): mayoritas nilai hantu harus memang
+        ada di domain kolom itu;
+      - kolom asli berkardinalitas tinggi (waktu/IP/nama): BENTUK nilainya harus sama.
+    Kalau SATU pasangan pun gagal, seluruh pemulihan untuk kelompok ini DIBATALKAN - lebih
+    baik data hilang yang kelihatan daripada data salah yang kelihatan benar."""
+    if len(hantu) != len(asli):
+        return None, ("jumlah kolom tidak sama: %d hantu vs %d asli" % (len(hantu), len(asli)))
+    peta = {}
+    for h, a in zip(hantu, asli):
+        nilai_h = [r.get(h) for r in baris_hantu if str(r.get(h) or "").strip()]
+        domain_a = {str(r.get(a)).strip() for r in baris_asli if str(r.get(a) or "").strip()}
+        if not nilai_h:
+            peta[h] = a
+            continue
+        # BENTUK nilai diperiksa LEBIH DULU, dan untuk kolom berentropi tinggi ia SATU-
+        # SATUNYA bukti yang masuk akal: stempel waktu, alamat IP, dan nama aset memang
+        # hampir selalu unik, jadi menuntut nilainya "sudah pernah muncul" di kolom aslinya
+        # pasti gagal. Terukur: Source_IP cuma 3 dari 20 nilai yang beririsan, padahal
+        # pemetaannya benar - keduanya sama-sama alamat IP.
+        b_h = _bentuk_dominan(nilai_h)
+        b_a = _bentuk_dominan([r.get(a) for r in baris_asli])
+        if b_h and b_a and b_h != b_a:
+            return None, ("bentuk nilai beda utk %r -> %r (%s vs %s)"
+                          % (str(h)[:24], str(a)[:24], b_h, b_a))
+        # Irisan domain hanya dituntut untuk TEKS berdomain kecil - di situlah nilainya
+        # memang berulang (Severity, Status, Kategori), jadi irisan bermakna sbg bukti.
+        if b_h == "teks" and 0 < len(domain_a) <= _KARDINALITAS_KATEGORI:
+            cocok = sum(1 for v in nilai_h if str(v).strip() in domain_a)
+            if cocok / len(nilai_h) < _MIN_COCOK_DOMAIN:
+                return None, ("nilai %r tidak cocok domain kolom %r (%d/%d)"
+                              % (str(h)[:24], str(a)[:24], cocok, len(nilai_h)))
+        peta[h] = a
+    return peta, None
+
+
+def pulihkan_kolom_hantu(rows: list) -> list:
+    """Kembalikan baris yang nilainya ter-kunci ke kolom hantu ke kolom aslinya.
+
+    Termasuk baris yang HILANG seluruhnya karena terserap jadi header - nama-nama kolom
+    hantu itu sendiri adalah nilainya, jadi barisnya bisa dirakit ulang utuh.
+
+    No-op untuk data yang parsingnya sudah benar: tanpa kolom hantu, `rows` dikembalikan
+    apa adanya (objek yang sama)."""
+    if not rows:
+        return rows
+    # dikelompokkan menurut himpunan kolomnya - tiap tabel sumber punya himpunan sendiri
+    kelompok = {}
+    for r in rows:
+        if isinstance(r, dict):
+            kelompok.setdefault(tuple(r.keys()), []).append(r)
+    if not kelompok:
+        return rows
+
+    ganti = {}
+    tambah = []
+    for kunci, anggota in kelompok.items():
+        kolom = list(kunci)
+        benih = _kolom_hantu(anggota, kolom)
+        if not benih:
+            continue
+        # baris dibagi dua: yang mengisi kolom hantu, dan yang mengisi kolom asli
+        b_hantu = [r for r in anggota if any(str(r.get(h) or "").strip() for h in benih)]
+        b_asli = [r for r in anggota if r not in b_hantu]
+        # PERLUASAN: kolom hantu yang nilainya UNIK tidak tertangkap penanda nama (nilainya
+        # tidak pernah muncul di baris lain - mis. "Buffer Overflow" yang cuma terjadi sekali).
+        # Yang menandainya adalah POLA POPULASI: kolom itu hanya terisi di baris hantu, tidak
+        # pernah di baris asli. Tanpa fase ini jumlah kolom tidak akan pernah cocok dan
+        # pemulihan selalu dibatalkan.
+        hantu = set(benih)
+        for k in kolom:
+            if k in hantu:
+                continue
+            if (any(str(r.get(k) or "").strip() for r in b_hantu)
+                    and not any(str(r.get(k) or "").strip() for r in b_asli)):
+                hantu.add(k)
+        hantu = [k for k in kolom if k in hantu]      # urutan mengikuti urutan kolom asli
+        if not b_hantu or not b_asli:
+            logger.warning("pemulihan kolom hantu dilewati: tidak ada dua kelompok baris "
+                           "yang bisa dibandingkan (%d hantu, %d asli)",
+                           len(b_hantu), len(b_asli))
+            continue
+        # kolom asli yang BENAR-BENAR terpakai oleh baris asli (kolom yang selalu kosong -
+        # mis. "No" yang header-nya kosong - dilewati supaya pemetaan posisinya tidak geser)
+        asli = [k for k in kolom
+                if k not in hantu and any(str(r.get(k) or "").strip() for r in b_asli)]
+        # kolom yang terisi di KEDUA kelompok (mis. "Section") bukan bagian yang hilang
+        bersama = [k for k in asli if any(str(r.get(k) or "").strip() for r in b_hantu)]
+        asli = [k for k in asli if k not in bersama]
+
+        peta, gagal = _cocokkan_hantu(b_hantu, b_asli, hantu, asli)
+        if peta is None:
+            logger.warning("pemulihan kolom hantu DIBATALKAN utk kelompok %d kolom - %s. "
+                           "Baris terkait dibiarkan apa adanya (tidak ditebak).",
+                           len(kolom), gagal)
+            continue
+
+        for r in b_hantu:
+            baru = {k: v for k, v in r.items() if k not in hantu}
+            for h, a in peta.items():
+                v = r.get(h)
+                if str(v or "").strip():
+                    baru[a] = v
+            ganti[id(r)] = baru
+        # baris yang terserap jadi header: nama kolom hantu ITU SENDIRI nilainya
+        hilang = {k: v for k, v in b_asli[0].items() if k in bersama}
+        for h, a in peta.items():
+            hilang[a] = str(h)
+        tambah.append(hilang)
+        logger.info("pemulihan kolom hantu: %d baris dipetakan ulang + 1 baris yang terserap "
+                    "header dirakit kembali (%d kolom hantu: %s)",
+                    len(b_hantu), len(hantu), [str(h)[:18] for h in hantu[:4]])
+
+    if not ganti and not tambah:
+        return rows
+    hasil = [ganti.get(id(r), r) for r in rows]
+    # kolom hantu dibuang juga dari baris yang tidak memakainya
+    _buang = set()
+    for kunci, anggota in kelompok.items():
+        for h in _kolom_hantu(anggota, list(kunci)):
+            _buang.add(h)
+    if _buang:
+        hasil = [{k: v for k, v in r.items() if k not in _buang} if isinstance(r, dict) else r
+                 for r in hasil]
+    return hasil + tambah
+
+
 def build_management_report_blocks(report) -> list[dict]:
     """
     Blok laporan untuk template Management Report — "Visual tinggi, KPI ringkas, peta risiko
@@ -9549,6 +9748,9 @@ def build_management_report_blocks(report) -> list[dict]:
     set_render_language(report)
     set_render_management(True)
     parsed_data = get_parsed_data(report)
+    # Q1: baris yang nilainya ter-kunci ke kolom hantu dikembalikan ke kolom aslinya, dan
+    # baris yang terserap jadi header dirakit ulang - lihat pulihkan_kolom_hantu.
+    parsed_data = pulihkan_kolom_hantu(parsed_data)
     # Label kategori generik ("Gudang"/"Warehouse") diseragamkan ke bahasa laporan DI HULU,
     # sekali, supaya chart, kartu KPI, tabel, dan catatan menyebut kategori yang sama dgn
     # kata yang sama. Cuma cocok SELURUH string - "Gudang Bahan Baku" dan "Gedung Ahmad
