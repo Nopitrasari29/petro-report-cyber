@@ -1,5 +1,6 @@
 # app/api/v1/endpoints/upload.py
 import logging
+import re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -22,14 +23,23 @@ from app.utils.sanitizer import sanitize_for_json
 
 router = APIRouter()
 
+# PERMINTAAN USER (item L): kata "Eksekutif"/"Executive" DIBUANG. Kata itu dulu ada di
+# hampir semua entri, jadi ia tidak pernah membedakan satu laporan dari lainnya - dan
+# hasilnya janggal dibaca ("Laporan Analisis Eksekutif Pengadaan"). Polanya kini
+# "Laporan Analisis {Domain}" / "{Domain} Analysis Report".
+#
+# kpi_hr memang tidak pernah memakai kata itu, jadi tidak berubah. soc_security dulu
+# berbunyi "SOC Executive Summary" di KEDUA bahasa - versi Indonesianya sekarang
+# diterjemahkan sekalian, karena seluruh entri lain sudah punya dua varian dan laporan
+# berbahasa Indonesia tidak semestinya berjudul Inggris.
 _DOMAIN_TITLE_LABELS = {
-    "financial": ("Laporan Analisis Eksekutif Keuangan", "Financial Executive Analysis Report"),
-    "keuangan": ("Laporan Analisis Eksekutif Keuangan", "Financial Executive Analysis Report"),
+    "financial": ("Laporan Analisis Keuangan", "Financial Analysis Report"),
+    "keuangan": ("Laporan Analisis Keuangan", "Financial Analysis Report"),
     "kpi_hr": ("Laporan Evaluasi Kinerja & KPI", "KPI & Performance Evaluation Report"),
-    "soc_security": ("SOC Executive Summary", "SOC Executive Summary"),
-    "operasional": ("Laporan Analisis Eksekutif Operasional", "Operational Executive Analysis Report"),
-    "general": ("Laporan Analisis Eksekutif", "Executive Analysis Report"),
-    "procurement": ("Laporan Analisis Eksekutif Pengadaan", "Procurement Executive Analysis Report"),
+    "soc_security": ("Laporan Analisis Keamanan Siber", "Cyber Security Analysis Report"),
+    "operasional": ("Laporan Analisis Operasional", "Operational Analysis Report"),
+    "general": ("Laporan Analisis Data", "Data Analysis Report"),
+    "procurement": ("Laporan Analisis Pengadaan", "Procurement Analysis Report"),
 }
 
 
@@ -37,8 +47,8 @@ def _default_report_title(template_type: Optional[str], domain_type: Optional[st
     """
     Judul dipakai saat pengguna belum mengisi nama laporan sendiri — supaya laporan tidak
     pernah tersimpan dengan judul kosong. Judulnya MURNI nama dasar topik data ("Laporan
-    Analisis Eksekutif Pengadaan"), bisa diganti pengguna kapan saja lewat halaman Preview &
-    Edit atau History.
+    Analisis Pengadaan"), bisa diganti pengguna kapan saja lewat halaman Preview & Edit
+    atau History.
 
     PERMINTAAN USER: akhiran " - {Bulan} {Tahun}" DIBUANG. Dua alasan konkret: (1) bulan yang
     ditempel diambil dari datetime.now() — WAKTU UNGGAH, bukan periode datanya, jadi file
@@ -64,7 +74,14 @@ def _default_report_title(template_type: Optional[str], domain_type: Optional[st
     if labels:
         base = labels[1] if is_en else labels[0]
     else:
-        base = (template_type or ("Executive Analysis Report" if is_en else "Laporan Analisis Eksekutif")).split(" (")[0].strip()
+        base = (template_type or ("Data Analysis Report" if is_en else "Laporan Analisis Data")).split(" (")[0].strip()
+        # Cadangan `template_type` default-nya masih "SOC Executive Summary" (Form di endpoint
+        # upload), jadi domain yang tidak dikenali bisa menyelundupkan kembali kata yang baru
+        # saja dibuang dari tabel judul. Dibersihkan di sini supaya aturannya berlaku di SEMUA
+        # jalur, bukan cuma jalur tabel.
+        base = re.sub(r"\s*\b(Eksekutif|Executive)\b\s*", " ", base)
+        base = re.sub(r"\s{2,}", " ", base).strip() or (
+            "Data Analysis Report" if is_en else "Laporan Analisis Data")
     return base
 
 
