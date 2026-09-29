@@ -21,7 +21,7 @@ from app.services.ai_engine.ollama_client import (
     ollama_client,
     _REQUIRED_KEY_DEFAULTS,
 )
-from app.services.report_render_logic import pick_visual_style
+from app.services.report_render_logic import jalur_management, pulihkan_kolom_hantu, pick_visual_style
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +162,25 @@ def run_analysis_job(report_id: int) -> None:
                     except Exception as fs_read_err:
                         logger.warning(f"Gagal baca parsed_data dari file ({db_report.parsed_data_path}): {fs_read_err}")
                         parsed_data_to_use = db_report.parsed_data
+
+                # Q1: kolom hantu dipulihkan SEBELUM angka dihitung & dikirim ke AI.
+                # Tanpa ini jalur render sudah membaca 50 baris sementara AI masih membaca
+                # 49 baris dgn 20 di antaranya kosong - prosa kesimpulan lalu menyebut
+                # proporsi dari basis 29, sementara chart di halaman yang sama memakai
+                # basis 50. Dua angka berbeda utk data yang sama, di laporan yang sama.
+                #
+                # Gerbangnya memakai jalur_management() - DEFINISI YANG SAMA PERSIS yang
+                # dipakai export_pdf/export_ppt/history utk memilih jalur render, bukan
+                # perbandingan template_type yang ditulis ulang di sini. Dengan begitu jalur
+                # analisis dan jalur render secara struktural tidak bisa berbeda pendapat
+                # tentang laporan mana yang Management.
+                if jalur_management(db_report):
+                    _sebelum = len(parsed_data_to_use or [])
+                    parsed_data_to_use = pulihkan_kolom_hantu(parsed_data_to_use)
+                    _sesudah = len(parsed_data_to_use or [])
+                    if _sesudah != _sebelum:
+                        logger.info("pemulihan kolom hantu (jalur analisis): %d -> %d baris "
+                                    "sebelum angka dikirim ke AI", _sebelum, _sesudah)
 
                 # BUG DIPERBAIKI (permintaan user): `selected_sections` TIDAK LAGI dioper ke
                 # panggilan 6-field-wajib ini — dulu section custom ditulis SEKALIGUS di sini,

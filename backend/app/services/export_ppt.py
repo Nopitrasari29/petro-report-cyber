@@ -39,6 +39,7 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_TICK_MARK, XL_TICK_LABEL_POSITION
 
 from app.models.report import Report
 from app.services.report_render_logic import (
+    jalur_management,
     render_is_mgmt,
     rapikan_nama_kolom,
     render_is_en, set_render_language,
@@ -5278,8 +5279,8 @@ class PPTXExporter:
         prs.slide_height = SLIDE_H
 
         logo_path = _resolve_logo_path()
-        _template = (report.template_type or "").strip().lower()
-        if "management" in _template:
+        _mgmt = jalur_management(report)
+        if _mgmt:
             blocks = build_management_report_blocks(report)
         else:
             blocks = build_report_blocks(report)
@@ -5358,7 +5359,7 @@ class PPTXExporter:
         # SENGAJA di sini, bukan di THEME_PALETTES: palet itu dipakai BERSAMA oleh jalur
         # Descriptive yang tidak boleh berubah sedikit pun. Dengan menyalin dict-nya lebih
         # dulu, Descriptive tetap mendapat palet aslinya (emas) apa adanya.
-        if "management" in _template:
+        if _mgmt:
             palette = dict(palette)
             palette["light"] = _blend_with_white(palette["main"], 0.30)
             palette["soft"] = _blend_with_white(palette["main"], 0.12)

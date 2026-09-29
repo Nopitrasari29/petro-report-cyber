@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from app.models.report import Report
 from app.services.report_render_logic import (
+    jalur_management,
     render_is_mgmt,
     render_is_en, set_render_language,
     build_report_blocks, build_management_report_blocks, is_english, find_logo_path, get_visual_style,
@@ -4623,8 +4624,8 @@ class PDFExporter:
             )
 
         logo_b64 = _resolve_logo_b64()
-        _template = (report.template_type or "").strip().lower()
-        if "management" in _template:
+        _mgmt = jalur_management(report)
+        if _mgmt:
             blocks = build_management_report_blocks(report)
         else:
             blocks = build_report_blocks(report)
@@ -4716,7 +4717,7 @@ class PDFExporter:
         # SENGAJA di sini, bukan di THEME_PALETTES: palet itu dipakai BERSAMA oleh jalur
         # Descriptive yang tidak boleh berubah sedikit pun. Dengan menyalin dict-nya lebih
         # dulu, Descriptive tetap mendapat palet aslinya (emas) apa adanya.
-        if "management" in _template:
+        if _mgmt:
             palette = dict(palette)
             palette["light"] = _blend_with_white(palette["main"], 0.30)
             palette["soft"] = _blend_with_white(palette["main"], 0.12)

@@ -8459,6 +8459,22 @@ def _group_candidates_into_pages(candidates: list, report, sec_domain: bool) -> 
 #   isinya. Cover/Pendahuluan/Penutup TETAP di luar sistem ini (selalu halaman
 #   sendiri, isinya juga selalu berukuran tetap terlepas dari data).
 # ============================================================================
+def jalur_management(report) -> bool:
+    """SATU-SATUNYA definisi "laporan ini dirender lewat jalur Management/Visual".
+
+    Sebelumnya ekspresi ini disalin di 5 tempat (history.py, export_pdf.py x2,
+    export_ppt.py x2). Begitu jalur ANALISIS juga perlu tahu jalurnya - supaya pemulihan
+    kolom hantu ikut berlaku saat AI menghitung angka, bukan cuma saat render - menyalin
+    ekspresinya sekali lagi akan melahirkan dua definisi yang bisa menyimpang diam-diam.
+    Dengan satu definisi, jalur analisis dan jalur render secara STRUKTURAL tidak bisa
+    berbeda pendapat tentang laporan mana yang Management.
+
+    Sengaja memakai SUBSTRING, bukan kesamaan persis: itu perilaku yang sudah berlaku di
+    kelima tempat tadi, dan mengubahnya jadi kesamaan persis akan mengalihkan laporan
+    ber-template "Management Report (Monthly)" dsb ke jalur Descriptive."""
+    return "management" in str(getattr(report, "template_type", "") or "").strip().lower()
+
+
 def build_report_blocks(report) -> list[dict]:
     # Penanda Management DIMATIKAN di sini. ContextVar bertahan di thread/task yang sama,
     # jadi tanpa baris ini satu render Management akan menyalakan penerjemahan label kamus

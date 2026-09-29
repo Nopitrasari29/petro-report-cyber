@@ -17,7 +17,7 @@ from app.schemas.report import ReportResponse
 from app.models.report import Report
 from app.services.export_pdf import PDFExporter
 from app.services.export_ppt import PPTXExporter
-from app.services.report_render_logic import build_report_blocks, build_management_report_blocks, get_visual_style, resolve_theme_color
+from app.services.report_render_logic import jalur_management, build_report_blocks, build_management_report_blocks, get_visual_style, resolve_theme_color
 
 from datetime import datetime, date
 
@@ -156,8 +156,7 @@ def get_report_preview_blocks(
             detail="Laporan belum dianalisis oleh AI. Silakan jalankan analisis terlebih dahulu sebelum melihat preview."
         )
 
-    _template = (db_report.template_type or "").strip().lower()
-    if "management" in _template:
+    if jalur_management(db_report):
         blocks = build_management_report_blocks(db_report)
     else:
         blocks = build_report_blocks(db_report)
