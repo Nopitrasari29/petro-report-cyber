@@ -4510,11 +4510,34 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
                             "semua pasangan subjeknya sudah diklaim seksi lain"))
 
     # ---- FASE 2: pasangan bagus yang tidak diklaim seksi mana pun -------------------
+    # ITEM O - KURASI, BUKAN SEMUA KOMBINASI. Fase ini dulu menambahkan SELURUH pasangan
+    # yang lolos tanda tangan tanpa batas, jadi chart otomatis mendominasi laporan:
+    # laporan 202 punya 4 chart yang diklaim seksi dan 9 chart otomatis, laporan 201 punya
+    # 2 vs 9. Yang benar-benar diminta user adalah section yang ia centang.
+    #
+    # Laporan DIJANGKARKAN pada topik yang dicentang: jatah chart otomatis = sebanyak chart
+    # yang diklaim seksi, dengan lantai _AUTO_CHART_MIN supaya laporan yang seksinya sedikit
+    # (atau nol) tidak kehilangan visual sama sekali.
+    #
+    # Yang dipertahankan adalah yang TERKUAT - _ambil() sudah mengurutkan menurut skor, jadi
+    # berhenti di tengah daftar berarti membuang yang paling lemah, bukan memotong acak.
+    # Ukuran chart TIDAK diperkecil (itu penyebab label bertabrakan, lihat item N) dan topik
+    # tak berhubungan TIDAK digabungkan - yang dikurangi JUMLAHNYA.
+    _n_diklaim = len(terpilih)
+    _jatah_auto = max(_AUTO_CHART_MIN, _n_diklaim)
     sisa = [k for k in kand if frozenset(k["pasangan"]) not in terpakai_pasangan]
-    while sisa:
+    _n_auto = 0
+    while sisa and _n_auto < _jatah_auto:
         if not _ambil(sisa, None):
             break
+        _n_auto += 1
         sisa = [k for k in sisa if frozenset(k["pasangan"]) not in terpakai_pasangan]
+    if sisa:
+        laporan.append(("(kurasi chart)", "dibuang",
+                        "%d pasangan lain tidak digambar - jatah chart otomatis %d "
+                        "(chart diklaim seksi: %d)" % (len(sisa), _jatah_auto, _n_diklaim)))
+        logger.info("kurasi chart: %d pasangan dibuang, jatah otomatis %d, diklaim seksi %d",
+                    len(sisa), _jatah_auto, _n_diklaim)
 
     for k in terpilih:
         logger.info("pemilih chart: %s -> %s [%s] skor %.2f%s",
@@ -6744,6 +6767,12 @@ def _compute_merged_page_extra_notes(category_details: list, report) -> list:
 
 
 _DASH_TOPICS_PER_PAGE = 3
+
+# ITEM O: lantai jumlah chart otomatis (yang tidak diklaim section mana pun). Laporan yang
+# sectionnya sedikit - atau nol, mis. laporan 197 - tetap butuh visual; di bawah angka ini
+# laporan berhenti menjelaskan apa pun. Di atasnya, jatahnya mengikuti jumlah chart yang
+# diklaim section supaya laporan kaya topik tidak dipangkas terlalu dalam.
+_AUTO_CHART_MIN = 3
 _DASH_MIN_VISUALS_PER_PAGE = 3
 
 
