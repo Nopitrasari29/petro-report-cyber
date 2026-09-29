@@ -4561,7 +4561,7 @@ def rencana_chart_terarah(parsed_data: list, seksi: list, kolom_w_in: float | No
             # tetap dipakai di fase berikutnya dgn judul yang dibangun dari datanya sendiri -
             # judul jujur lebih baik drpd judul yang salah, dan seksi yang kehabisan chart
             # cocok lebih baik tidak menamai apa pun drpd menamai chart yang salah.
-            if _subj and not _semua_kolom_disebut(k):
+            if _subj and _relevansi(k)[0] == 0:   # C ditahan sementara (uji isolasi)
                 continue
             terpilih.append(dict(k, seksi=judul))
             terpakai_pasangan.add(frozenset(k["pasangan"]))
@@ -7177,8 +7177,13 @@ def _kelompok_topik_nyambung(blok_urut: list, df) -> list:
             # DUA syarat, bukan satu: barisnya bertindih DAN subjeknya sama. Lihat
             # _subjek_nyambung - tanpa syarat subjek, data dari satu tabel lebar membuat
             # semua topik dianggap nyambung dan halaman jadi campur aduk.
-            if all(_topik_nyambung(jejak, j) and _subjek_nyambung(subjek, sj)
-                   for _, j, sj in k):
+            # ITEM B & C DITAHAN - keduanya TERBUKTI memicu kehilangan isi secara
+            # INDEPENDEN (diuji terisolasi: B saja gagal, C saja gagal, keduanya mati lulus).
+            # Sebabnya bukan di B/C sendiri melainkan di hilir: kartu kategori yang tidak muat
+            # dibuang DIAM-DIAM ("5 dari 6 kartu tidak digambar"), jadi setiap perubahan
+            # susunan halaman memindahkan kategori mana yang lenyap. Dinyalakan lagi setelah
+            # P.4 membuat isi yang terbuang tetap disebut di Catatan.
+            if all(_topik_nyambung(jejak, j) for _, j, sj in k):
                 k.append((b, jejak, subjek))
                 break
         else:
