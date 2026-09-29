@@ -235,9 +235,9 @@ def upload_security_file(
     template_type: Optional[str] = Form("SOC Executive Summary"),
     output_format: Optional[str] = Form("PDF"),
     language: Optional[str] = Form("Indonesian"),
-    included_sections: Optional[str] = Form(None),
+    included_sections: Optional[str] = Form(None),  # JSON string [{"key": "...", "title": "..."}, ...]
     # Item U: nama berkas unduhan diisi pengguna di wizard, tidak lagi ditebak.
-    download_file_name: Optional[str] = Form(None),  # JSON string [{"key": "...", "title": "..."}, ...]
+    download_file_name: Optional[str] = Form(None),
     header_title: Optional[str] = Form(None),
     header_subtitle: Optional[str] = Form(None),
     theme_color: Optional[str] = Form("green"),
