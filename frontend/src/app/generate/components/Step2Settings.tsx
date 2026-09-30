@@ -525,14 +525,19 @@ export default function Step2Settings({
                 nama berkas tidak punya field sama sekali - keduanya ditebak sistem. */}
             <div>
               <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">
-                {tx("Report Title", "Judul Laporan")}
+                {tx("Cover Title", "Judul Cover")}
                 <span className="text-red-500 ml-1">*</span>
               </label>
               <input
                 type="text"
                 value={reportTitle}
-                onChange={(e) => setReportTitle && setReportTitle(e.target.value)}
-                placeholder={tx("e.g. Procurement Analysis Q1 2025", "mis. Analisis Pengadaan Q1 2025")}
+                onChange={(e) =>
+                  setReportTitle && setReportTitle(e.target.value)
+                }
+                placeholder={tx(
+                  "e.g. Procurement Analysis Q1 2025",
+                  "mis. Analisis Pengadaan Q1 2025",
+                )}
                 className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
               />
             </div>
@@ -545,15 +550,20 @@ export default function Step2Settings({
               <input
                 type="text"
                 value={downloadFileName}
-                onChange={(e) => setDownloadFileName && setDownloadFileName(e.target.value)}
-                placeholder={tx("e.g. Procurement-Analysis-Q1-2025", "mis. Analisis-Pengadaan-Q1-2025")}
+                onChange={(e) =>
+                  setDownloadFileName && setDownloadFileName(e.target.value)
+                }
+                placeholder={tx(
+                  "e.g. Procurement-Analysis-Q1-2025",
+                  "mis. Analisis-Pengadaan-Q1-2025",
+                )}
                 className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700 font-medium focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
               />
             </div>
 
             <div>
               <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">
-                {tx("Kop Header Title", "Judul Kop")}
+                {tx("Kop Title", "Judul Kop")}
                 <span className="text-red-500 ml-1">*</span>
               </label>
               <input
@@ -562,7 +572,10 @@ export default function Step2Settings({
                 onChange={(e) =>
                   setHeaderTitle && setHeaderTitle(e.target.value)
                 }
-                placeholder={tx("e.g. PT PETROKIMIA GRESIK", "mis. PT PETROKIMIA GRESIK")}
+                placeholder={tx(
+                  "e.g. PT PETROKIMIA GRESIK",
+                  "mis. PT PETROKIMIA GRESIK",
+                )}
                 className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
               />
             </div>
@@ -578,7 +591,10 @@ export default function Step2Settings({
                 onChange={(e) =>
                   setHeaderSubtitle && setHeaderSubtitle(e.target.value)
                 }
-                placeholder={tx("e.g. IT Department", "mis. Departemen Teknologi Informasi")}
+                placeholder={tx(
+                  "e.g. IT Department",
+                  "mis. Departemen Teknologi Informasi",
+                )}
                 className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700 font-medium focus:outline-none focus:ring-2 focus:ring-petro-green/20 focus:border-petro-green transition-all"
               />
             </div>
@@ -1452,14 +1468,16 @@ export default function Step2Settings({
           disabled={sectionsLoading || _adaYangKosong}
           title={
             _adaYangKosong
-              ? tx("Fill in all required fields (*) first",
-                   "Lengkapi dulu semua field bertanda (*)")
-              : sectionsLoading
               ? tx(
-                  "Please wait until AI finishes suggesting sections for this data",
-                  "Mohon tunggu sampai AI selesai mengusulkan section untuk data ini",
+                  "Fill in all required fields (*) first",
+                  "Lengkapi dulu semua field bertanda (*)",
                 )
-              : undefined
+              : sectionsLoading
+                ? tx(
+                    "Please wait until AI finishes suggesting sections for this data",
+                    "Mohon tunggu sampai AI selesai mengusulkan section untuk data ini",
+                  )
+                : undefined
           }
           className={`inline-flex items-center gap-2 px-6 py-3 rounded-lg text-white font-bold text-sm shadow transition-all duration-200 group ${
             sectionsLoading || _adaYangKosong
