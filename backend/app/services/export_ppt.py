@@ -52,6 +52,7 @@ from app.services.report_render_logic import (
     gelapkan_untuk_latar_terang, warna_teks_label, label_menempel_pada_bentuk,
     warna_pita_panel,
     fakta_strip_kolom, _DASH_COLS_FACT_H_IN, kumpulkan_catatan_halaman,
+    teks_isi_tak_tergambar, _BARIS_UNGKAP_H_IN,
     alokasi_kolom_bertumpuk, _kepala_seksi_h_in,
     radar_label_layout,
     tinggi_kotak_catatan_halaman, tinggi_maks_kotak_catatan, _DASH_COLS_KEPALA_H_IN,
@@ -4648,8 +4649,9 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     # kembarannya di export_pdf.py.
     _maks_note_in = tinggi_maks_kotak_catatan(
         cols, col_w_isi, avail_h_in, is_english(ctx.report), bentuk=_bentuk)
+    # P.4b: kembaran export_pdf.py - satu baris ekstra dipesan di pita catatan.
     _NOTE_HAL_H_IN, _butir_note, _note_tak_muat = tinggi_kotak_catatan_halaman(
-        total_w_in, _catatan_per_kolom, _maks_note_in)
+        total_w_in, _catatan_per_kolom, _maks_note_in, render_is_mgmt())
     logger.info("kotak catatan halaman: %d butir muat (kotak %.2fin, batas %.2fin), "
                 "%d tidak muat, dari %d kolom bercatatan",
                 len(_butir_note), _NOTE_HAL_H_IN, _maks_note_in, _note_tak_muat,
@@ -4672,6 +4674,8 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
             _alokasi[id(_c)] = _h
             _yy += _footprint + _DASH_TILE_GAP_IN
 
+    # P.4b: kembaran export_pdf.py.
+    _kartu_tak_digambar = 0
     for idx, (_kol_i, col, _y_awal, _bawah_rel) in enumerate(_slot):
         x = _DASH_MARGIN_X_IN + _kol_i * (col_w + _DASH_COLS_GAP_IN)
         x_isi = x + _DASH_COLS_PAD_IN
@@ -4784,7 +4788,6 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
         # menembus dan menimpa isinya. Lantai 0,25in cuma penjaga nilai nol/negatif.
         body_h = max(0.25, _bawah_seksi - y - 0.10)
         notes = [str(v) for v in (col.get("notes") or []) if str(v).strip()]
-        notes_consumed = False
         # Kembar dari _build_management_dashboard_columns_block di export_pdf.py: chart di ATAS
         # + kartu ringkas di BAWAH dalam satu kolom, porsinya dipesan lebih dulu. Diubah
         # BERSAMAAN dgn sisi PDF - jangan salah satu duluan.
@@ -4798,6 +4801,7 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
             body_h, col_w_isi, bool(_tile), col.get("category_details"), False, _tile,
             is_english(ctx.report),
         )
+        _kartu_tak_digambar += int(_column_layout.get("kartu_tak_digambar") or 0)
         _chart_h = _column_layout["chart_h"]
         # tile yang SUDAH disesuaikan perencana: barisnya dikurangi kalau ruang kurang, ekor
         # segmennya digabung ke "Lainnya", atau None kalau tile-nya DILEWATI (segmen yang
@@ -4819,7 +4823,9 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 _tile = None
                 _chart_h = 0.0
         if _tile:
-            notes_consumed = _insight_main_chart(
+            # B5: nilai balik TIDAK dipakai (notes=None di sini) - dulu disimpan ke
+            # notes_consumed yang tak pernah dibaca sejak kotak per-kolom dimatikan.
+            _insight_main_chart(
                 slide, _tile, x_isi, y, col_w_isi, _chart_h,
                 theme=ctx.theme, notes=None, is_en=is_en,
             )
@@ -4843,11 +4849,12 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                 # kali ini di kode yang baru saja saya tulis. Tinggi catatan dihitung DULU;
                 # kalau tidak muat, butir paling belakang dilepas satu per satu sampai muat -
                 # bukan digambar menembus batas slide di mana pembaca tidak bisa melihatnya.
-                _bawah = _bawah_seksi
-                if notes:
-                    _sisa = _bawah - (y + cards_h + 0.08)
-                    while notes and _note_box_height_in(col_w_isi, notes) > _sisa:
-                        notes = notes[:-1]
+                if False:  # B4: ikut dimatikan - pemangkasan ini HANYA utk kotak per-kolom
+                    _bawah = _bawah_seksi
+                    if notes:
+                        _sisa = _bawah - (y + cards_h + 0.08)
+                        while notes and _note_box_height_in(col_w_isi, notes) > _sisa:
+                            notes = notes[:-1]
                 # Muat atau tidak, DIPUTUSKAN sebelum digambar - aturan yang sama dgn kotak
                 # catatan kolom di atas. Tanpa ini strip kartu seksi kedua tergambar menembus
                 # kotak Catatan halaman (terukur: laporan 195 slide 4, 5 shape menembus).
@@ -4863,15 +4870,28 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
                         logger.info("kartu kolom dilewati: sisa ruang %.2fin", _ruang_kartu)
                         cards = []
                 if cards:
-                    notes_consumed = _insight_detail_row(
+                    # nilai baliknya (notes_consumed) TIDAK dipakai di fungsi ini: notes=None,
+                    # jadi helper ini tidak mungkin mengonsumsi catatan. Lihat B4 di bawah.
+                    _insight_detail_row(
                         slide, cards, x_isi, col_w_isi, cards_h, y, theme=ctx.theme, notes=None, is_en=is_en,
                     )
-                if notes:
+                # ---- B4: KOTAK CATATAN PER-KOLOM DIMATIKAN (kembaran export_pdf.py:4319) ----
+                # KEPUTUSAN USER. Sisi PDF sudah pindah TOTAL ke desain A5 - satu kotak catatan
+                # selebar area konten di dasar halaman - dan mematikan kotak per-kolomnya. PPTX
+                # tidak pernah ikut migrasi itu, jadi exporter ini menjalankan DUA sistem catatan
+                # sekaligus: kotak per-kolom lama DI SINI, plus kotak halaman A5 di bawah. Komentar
+                # 'kembar' di kedua file karena itu salah - keduanya sudah lama tidak kembar.
+                #
+                # Lebih dari sekadar duplikasi: perencana di atas sengaja dipanggil dgn
+                # has_notes=False ('Catatan TIDAK lagi dipesan per kolom'), jadi kotak ini
+                # digambar ke ruang yang TIDAK PERNAH DIPESAN - ia bisa menimpa apa pun di
+                # bawahnya. Butirnya sendiri tidak hilang: kumpulkan_catatan_halaman() menyapu
+                # catatan SELURUH kolom ke kotak halaman A5, jadi isinya tetap sampai ke pembaca.
+                if False:
                     add_note_box(
                         slide, Inches(x_isi), Inches(y + cards_h + 0.08), Inches(col_w_isi),
                         notes, theme=ctx.theme, title=note_title,
                     )
-                    notes_consumed = True
         # Kembar dari export_pdf.py: menggambar catatan di `y` padahal kolom ini punya
         # chart/kartu berarti menumpuk TEPAT di atasnya - inilah bug yang menutup sel heatmap
         # Senin-Rabu. Kalau visualnya ada tapi catatan tetap tidak terpakai, catatan dilewati.
@@ -4899,9 +4919,14 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
     # ---- A5 (kembaran export_pdf.py): SATU kotak catatan selebar area konten ----------
     # Acuan memakai satu kotak 8.97 x 1.18in terisi penuh; sebelumnya kotak per kolom
     # 6.28 x 0.88in berisi satu butir, dan di slide lain tidak ada sama sekali.
-    if _butir_note and _NOTE_HAL_H_IN:
+    # ---- P.4b: kembaran export_pdf.py, kalimat dari penyusun yang SAMA ---------------
+    _teks_ungkap = (teks_isi_tak_tergambar(_kartu_tak_digambar, _note_tak_muat)
+                    if render_is_mgmt() else None)
+    _ungkap_h = _BARIS_UNGKAP_H_IN if render_is_mgmt() else 0.0
+    _kotak_digambar = False
+    if (_butir_note or _teks_ungkap) and _NOTE_HAL_H_IN:
         _note_y = title_bottom_in + avail_h_in + 0.06
-        _note_h = _NOTE_HAL_H_IN - 0.06
+        _note_h = _NOTE_HAL_H_IN - 0.06 - _ungkap_h
         # Nomor halaman hidup di y=7,08-7,38in, DI DALAM batas kanvas isi - jadi kotak catatan
         # tidak boleh sampai ke sana. Butir paling belakang dilepas sampai muat, sama seperti
         # yang sudah dilakukan kotak catatan per-kolom. Lihat scratchpad/patch_note_bawah.
@@ -4923,6 +4948,18 @@ def _build_management_dashboard_columns_slide(block: dict, ctx: _PptBlockContext
             if _cat:
                 add_note_box(slide, Inches(_DASH_MARGIN_X_IN), Inches(_note_y),
                              Inches(total_w_in), _cat, theme=ctx.theme, title=note_title)
+                _kotak_digambar = True
+    if _teks_ungkap:
+        # Kembaran PDF: baris naik ke awal pita kalau kotak catatan tidak jadi digambar.
+        _y_ungkap = (title_bottom_in + avail_h_in + 0.06
+                     + ((_NOTE_HAL_H_IN - 0.06 - _ungkap_h + 0.02) if _kotak_digambar else 0.0))
+        logger.info("pengungkapan isi tak tergambar (PPT): %r", _teks_ungkap)
+        _tb = slide.shapes.add_textbox(Inches(_DASH_MARGIN_X_IN), Inches(_y_ungkap),
+                                       Inches(total_w_in), Inches(_BARIS_UNGKAP_H_IN))
+        _tb.text_frame.word_wrap = False
+        _p = _tb.text_frame.paragraphs[0]
+        _p.text = _teks_ungkap
+        _set_font(_p, BODY_FONT, Pt(6.5), italic=True, color=GRAY_TEXT)
     return slide
 
 

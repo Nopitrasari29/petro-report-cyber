@@ -2799,8 +2799,44 @@ def kumpulkan_catatan_halaman(catatan_per_kolom: list) -> list:
 _NOTE_HAL_MIN_H_IN = 1.02   # dasar lama; kotak TIDAK pernah lebih pendek dari ini
 
 
+# P.4b: tinggi baris pengungkap. DIPESAN TETAP, bukan dihitung dari jumlah yang terbuang -
+# dan itu disengaja. Jumlah kartu terbuang baru diketahui SESUDAH kolom dialokasikan,
+# sementara tinggi kotak catatan harus sudah final SEBELUMNYA (exporter mengurangi
+# avail_h_in dgn angka itu). Memesan tinggi yang bergantung hasil akan melingkar: pesanan
+# mengubah ruang -> mengubah jumlah yang terbuang -> mengubah pesanan. Konstan memutus
+# lingkaran itu; ongkosnya 0,18in yang menganggur saat tidak ada yang terbuang.
+_BARIS_UNGKAP_H_IN = 0.18
+
+
+def teks_isi_tak_tergambar(n_kartu: int, n_catatan: int) -> str | None:
+    """Satu kalimat yang MENGAKUI isi tak tergambar di halaman ini. None kalau nihil.
+
+    SATU rumus, DUA pemakai (export_pdf & export_ppt) - pola yang sama dipakai di seluruh
+    proyek ini supaya kalimat kedua format tidak bisa menyimpang diam-diam.
+
+    Selama ini jumlah ini HANYA masuk logger.info: pembaca laporan melihat halaman yang
+    tampak utuh padahal kartu/catatannya dipangkas. Angkanya datang dari perencana tata
+    letak yang sama yang membuang isinya - bukan ditaksir ulang di sini."""
+    n_kartu = max(0, int(n_kartu or 0))
+    n_catatan = max(0, int(n_catatan or 0))
+    if not (n_kartu or n_catatan):
+        return None
+    is_en = render_is_en()
+    bagian = []
+    if n_kartu:
+        bagian.append(("%d detail%s" % (n_kartu, "s" if n_kartu > 1 else ""))
+                      if is_en else ("%d rincian" % n_kartu))
+    if n_catatan:
+        bagian.append(("%d note%s" % (n_catatan, "s" if n_catatan > 1 else ""))
+                      if is_en else ("%d catatan" % n_catatan))
+    gabung = (" and " if is_en else " dan ").join(bagian)
+    return ("%s not shown here - no room left on this page." % gabung) if is_en else (
+        "%s tidak ditampilkan di halaman ini karena ruang tidak mencukupi." % gabung)
+
+
 def tinggi_kotak_catatan_halaman(w_in: float, catatan_per_kolom: list,
-                                 tinggi_maks_in: float) -> tuple:
+                                 tinggi_maks_in: float,
+                                 sisakan_baris_ungkap: bool = False) -> tuple:
     """Tinggi kotak catatan halaman DIHITUNG dari butir yang lolos + pembungkusannya.
 
     KEPUTUSAN USER: catatan berisi agregat yang TIDAK BISA dibaca dari chart mana pun
@@ -2813,10 +2849,17 @@ def tinggi_kotak_catatan_halaman(w_in: float, catatan_per_kolom: list,
     itu yang mengalah; chart tidak boleh jatuh di bawah ambang keterbacaan.
 
     Kembalikan (tinggi_in, butir_dipakai, n_tidak_muat)."""
+    # P.4b: `sisakan_baris_ungkap` memesan satu baris DI DALAM pita catatan ini, bukan
+    # dari jatah kolom - jadi geometri kolom tidak berubah sama sekali dibanding
+    # sebelumnya. Yang mungkin berubah: satu butir catatan bisa kalah lebih dulu.
+    _ungkap = _BARIS_UNGKAP_H_IN if sisakan_baris_ungkap else 0.0
     butir = kumpulkan_catatan_halaman(catatan_per_kolom)
     if not butir:
-        return 0.0, [], 0
-    batas = max(_NOTE_HAL_MIN_H_IN, float(tinggi_maks_in or 0.0))
+        # Tanpa butir pun pita tetap dipesan kalau barisnya diminta - kalau tidak,
+        # halaman yang membuang kartu TAPI tidak punya catatan tidak akan pernah bisa
+        # mengakuinya.
+        return _ungkap, [], 0
+    batas = max(_NOTE_HAL_MIN_H_IN, float(tinggi_maks_in or 0.0)) - _ungkap
     dipakai = []
     tinggi = 0.0
     for b in butir:
@@ -2831,7 +2874,7 @@ def tinggi_kotak_catatan_halaman(w_in: float, catatan_per_kolom: list,
             break
         dipakai.append(b)
         tinggi = _coba
-    return max(_NOTE_HAL_MIN_H_IN, tinggi), dipakai, len(butir) - len(dipakai)
+    return max(_NOTE_HAL_MIN_H_IN, tinggi) + _ungkap, dipakai, len(butir) - len(dipakai)
 
 
 def tinggi_maks_kotak_catatan(cols: list, col_w_in: float, avail_isi_in: float,
@@ -2952,6 +2995,9 @@ def _layout_dashboard_column_content(
     renderers capable of drawing into the same vertical band.  This planner reserves
     the card rows and notes first, then gives the chart only the remaining rectangle.
     """
+    # P.4b: jumlah kartu ASLI direkam SEBELUM potongan [:6], supaya batas 6 itu sendiri
+    # ikut terhitung sbg isi yang tidak tergambar - dulu ia pun tidak pernah dilaporkan.
+    _n_kartu_asli = len(list(cards or []))
     cards = list(cards or [])[:6]
     note_h = _DASH_COLUMN_NOTE_RESERVE_H_IN if has_notes else 0.0
     gap = 0.10 if (has_chart and cards) else 0.0
@@ -3128,6 +3174,8 @@ def _layout_dashboard_column_content(
             return {"chart_h": chart_h, "cards_h": 0.0, "cards_y": cards_y,
                     "note_y": chart_h, "note_h": max(0.0, body_h_in - chart_h),
                     "cards": [], "rows": [], "tile": tile_dipakai,
+                    # P.4b: SELURUH kartu dilepas di cabang ini.
+                    "kartu_tak_digambar": _n_kartu_asli,
                     "chart_dilewati": has_chart is False and tile is not None}
             kurang = row_need + _NESTED_CARD_ROW_GAP_IN - sisa_kartu
             chart_h = max(_DASH_COLUMN_CHART_MIN_H_IN * 0.6, chart_h - kurang)
@@ -3192,6 +3240,8 @@ def _layout_dashboard_column_content(
     note_h = max(0.0, body_h_in - note_y)
     return {"chart_h": chart_h, "cards_h": cards_h, "cards_y": cards_y, "note_y": note_y,
             "note_h": note_h, "cards": cards, "tile": tile_dipakai, "n_gabung": n_gabung,
+            # P.4b: selisih kartu yang MASUK vs yang benar2 digambar.
+            "kartu_tak_digambar": max(0, _n_kartu_asli - len(cards)),
             "chart_dilewati": has_chart is False and tile is not None}
 
 
@@ -3425,10 +3475,16 @@ def alokasi_kolom_bertumpuk(seksi_list: list, col_w_in: float, tinggi_kolom_in: 
     keluar = []
     for h in hasil:
         r = h["r"]
+        # P.4b: TAHAP 2 merakit r["cards"] LANGSUNG (tidak lewat
+        # _layout_dashboard_column_content), jadi "kartu_tak_digambar" dari tahap 1 sudah
+        # basi di sini. Dihitung ulang dari sumber yang benar: kartu milik seksi ini
+        # vs kartu yang benar-benar tersisa.
+        _n_asli = len((h["col"].get("category_details") or []))
         keluar.append({
             "tile": r.get("tile"), "chart_h": r["chart_h"], "cards": r.get("cards") or [],
             "cards_h": r["cards_h"], "n_gabung": r.get("n_gabung", 0),
             "chart_dilewati": r.get("chart_dilewati", False),
+            "kartu_tak_digambar": max(0, _n_asli - len(r.get("cards") or [])),
             "note_y": r["note_y"], "note_h": r["note_h"],
         })
     return keluar
