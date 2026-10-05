@@ -138,6 +138,12 @@ export function useGenerateWizard() {
   // mengganti bahasa, judul section custom tetap berbahasa lama & terbawa sampai ke
   // render. Ref ini yang membuat perbedaannya bisa dikenali.
   const sectionsLangRef = useRef<string | null>(null);
+  // B6: penampung versi TERBARU handleCancelGeneration. Callback yang didaftarkan ke
+  // nav-guard di bawah dibuat SEKALI dan membaca ref ini saat dipanggil, jadi ia tidak
+  // pernah memakai closure render lama - termasuk closure yang terbentuk SEBELUM
+  // setReportId() mengisi reportId (handleCancelGeneration pulang lebih awal tanpa
+  // memanggil endpoint /cancel kalau reportId masih null).
+  const cancelGenerationRef = useRef<(() => Promise<void>) | null>(null);
 
   // ITEM U: judul kop, subjudul kop, judul laporan, dan nama berkas TIDAK lagi
   // diisi otomatis. Tebakan sistem adalah akar item F, L, dan T - teks yang
@@ -205,7 +211,8 @@ export function useGenerateWizard() {
         : null,
       aiStatus === "processing"
         ? () => {
-            void handleCancelGeneration();
+            // B6: lewat ref - lihat catatan di deklarasinya.
+            void cancelGenerationRef.current?.();
           }
         : null,
     );
@@ -852,6 +859,13 @@ export function useGenerateWizard() {
     setProcessingStep("idle");
     setErrorMsg(tx("Proses dibatalkan.", "Process cancelled."));
   };
+
+  // B6: disegarkan SESUDAH tiap render (bukan saat render - menulis ref di badan
+  // render adalah impuritas yang sama yang kita laporkan di Step3AIProcessing).
+  // Tanpa dependency array: setiap render menaruh versi terbarunya.
+  useEffect(() => {
+    cancelGenerationRef.current = handleCancelGeneration;
+  });
 
   // Submit Settings and Start Upload to Backend
   const handleStartGeneration = async () => {
