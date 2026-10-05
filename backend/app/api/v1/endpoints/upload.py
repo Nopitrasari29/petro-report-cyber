@@ -1,6 +1,5 @@
 # app/api/v1/endpoints/upload.py
 import logging
-import re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -32,6 +31,10 @@ router = APIRouter()
 # berbunyi "SOC Executive Summary" di KEDUA bahasa - versi Indonesianya sekarang
 # diterjemahkan sekalian, karena seluruh entri lain sudah punya dua varian dan laporan
 # berbahasa Indonesia tidak semestinya berjudul Inggris.
+# CATATAN: _default_report_title() DIHAPUS (item U). Sejak judul WAJIB diisi pengguna,
+# tidak ada lagi jalur yang menebak judul, jadi fungsinya nol pemanggil. Tabel di bawah
+# DIPERTAHANKAN: ia masih dirujuk sbg daftar kosakata domain oleh komentar di
+# report_render_logic.py (_NON_SECURITY_DATA_TYPES).
 _DOMAIN_TITLE_LABELS = {
     "financial": ("Laporan Analisis Keuangan", "Financial Analysis Report"),
     "keuangan": ("Laporan Analisis Keuangan", "Financial Analysis Report"),
@@ -41,48 +44,6 @@ _DOMAIN_TITLE_LABELS = {
     "general": ("Laporan Analisis Data", "Data Analysis Report"),
     "procurement": ("Laporan Analisis Pengadaan", "Procurement Analysis Report"),
 }
-
-
-def _default_report_title(template_type: Optional[str], domain_type: Optional[str] = None, language: Optional[str] = None) -> str:
-    """
-    Judul dipakai saat pengguna belum mengisi nama laporan sendiri — supaya laporan tidak
-    pernah tersimpan dengan judul kosong. Judulnya MURNI nama dasar topik data ("Laporan
-    Analisis Pengadaan"), bisa diganti pengguna kapan saja lewat halaman Preview & Edit
-    atau History.
-
-    PERMINTAAN USER: akhiran " - {Bulan} {Tahun}" DIBUANG. Dua alasan konkret: (1) bulan yang
-    ditempel diambil dari datetime.now() — WAKTU UNGGAH, bukan periode datanya, jadi file
-    berisi data Januari-September yang diunggah hari ini berjudul "... - September 2026" dan
-    menyesatkan; (2) periode data sudah tampil sebagai baris tersendiri di cover ("Periode
-    data. 1 Januari 2026 sampai 30 September 2026", dirakit dari period_start/period_end),
-    jadi akhiran ini duplikat yang lebih buruk dari sumber yang benar.
-
-    `domain_type` (dideteksi AI dari isi file: financial/kpi_hr/soc_security/general/operasional)
-    dipakai sebagai sumber utama nama dasar judul — BUKAN `template_type` lagi, karena tidak
-    ada UI mana pun di wizard yang benar-benar mengisi `template_type` (selalu string kosong),
-    sehingga judul default sebelumnya SELALU jatuh ke istilah SOC/generik apa pun domain
-    datanya (mis. laporan KPI/keuangan tetap berjudul "SOC Executive Summary").
-
-    `language` (dari pilihan Report Settings, "English"/"Indonesian") — BUG YANG DIPERBAIKI
-    (dilaporkan user): dulu nama dasar judul HARDCODE Bahasa Indonesia terlepas dari bahasa
-    yang diminta, jadi laporan berbahasa Inggris tetap berjudul "Laporan Evaluasi Kinerja &
-    KPI" dkk. Sekarang tiap domain punya 2 varian (id, en), dipilih sesuai `language`.
-    """
-    is_en = (language or "").strip().lower() == "english"
-    normalized_domain = (domain_type or "").strip().lower()
-    labels = _DOMAIN_TITLE_LABELS.get(normalized_domain)
-    if labels:
-        base = labels[1] if is_en else labels[0]
-    else:
-        base = (template_type or ("Data Analysis Report" if is_en else "Laporan Analisis Data")).split(" (")[0].strip()
-        # Cadangan `template_type` default-nya masih "SOC Executive Summary" (Form di endpoint
-        # upload), jadi domain yang tidak dikenali bisa menyelundupkan kembali kata yang baru
-        # saja dibuang dari tabel judul. Dibersihkan di sini supaya aturannya berlaku di SEMUA
-        # jalur, bukan cuma jalur tabel.
-        base = re.sub(r"\s*\b(Eksekutif|Executive)\b\s*", " ", base)
-        base = re.sub(r"\s{2,}", " ", base).strip() or (
-            "Data Analysis Report" if is_en else "Laporan Analisis Data")
-    return base
 
 
 def count_threats(parsed_data: list) -> dict:

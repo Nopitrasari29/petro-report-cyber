@@ -22,3 +22,6 @@ temp/
 
 # Runtime data (parsed log JSON, PDF/PPTX export cache) - dibuat otomatis oleh app saat runtime
 storage/
+
+# Skrip coba-coba sekali pakai (mis. tmp_export_validate.py) - jangan ikut ter-commit
+tmp_*.py
