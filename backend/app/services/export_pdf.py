@@ -4061,8 +4061,8 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
     # isi PENUH - bukan lagi dikurangi satu _DASH_COLS_KEPALA_H_IN tetap di sini.
     _maks_note_in = tinggi_maks_kotak_catatan(
         cols, col_w_isi, avail_h_in, is_english(ctx.report), bentuk=_bentuk)
-    # P.4b: pita catatan memesan satu baris ekstra utk pengungkapan isi tak tergambar.
-    # Jalur Management saja - Descriptive memanggil fungsi ini tanpa argumen itu.
+    # Jalur Management memesan satu baris ekstra di pita catatan untuk pengungkapan isi
+    # tak tergambar; Descriptive memanggil tanpa argumen itu.
     _NOTE_HAL_H_IN, _butir_note, _note_tak_muat = tinggi_kotak_catatan_halaman(
         total_w_in, _catatan_per_kolom, _maks_note_in, render_is_mgmt())
     logger.info("kotak catatan halaman: %d butir muat (kotak %.2fin, batas %.2fin), "
@@ -4108,7 +4108,7 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
             _slot.append((_ki, _c, _y, _y + _footprint))
             _alokasi[id(_c)] = _h
             _y += _footprint + _DASH_TILE_GAP_IN
-    # P.4b: kartu yang dibuang perencana dikumpulkan dari SELURUH kolom halaman ini.
+    # Kartu yang dibuang perencana, dikumpulkan dari seluruh kolom halaman ini.
     _kartu_tak_digambar = 0
     for idx, (_kol_i, col, _y_awal, _bawah_seksi) in enumerate(_slot):
         # BATAS KERAS ke garis kotak Catatan - kembaran penjaga yang sama di export_ppt.py.
@@ -4381,10 +4381,8 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
     # 6.28 x 0.88in berisi SATU butir, dan di halaman lain tidak ada sama sekali. Catatan
     # dari SELURUH kolom dikumpulkan ke sini (tanpa duplikat) lalu dibuang dari belakang
     # sampai muat - jadi kotaknya terisi, bukan hampir kosong.
-    # ---- P.4b: ISI YANG TIDAK TERGAMBAR DIAKUI KE PEMBACA ---------------------------
-    # Sampai sekarang kartu & butir catatan yang dibuang karena tidak muat HANYA masuk
-    # logger.info - halaman terlihat utuh padahal isinya dipangkas. Angkanya datang dari
-    # perencana yang SAMA yang membuangnya, bukan ditaksir ulang di sini.
+    # Kartu & butir catatan yang tidak muat diakui ke pembaca di sini; angkanya datang
+    # dari perencana yang membuangnya, bukan ditaksir ulang.
     _teks_ungkap = (teks_isi_tak_tergambar(_kartu_tak_digambar, _note_tak_muat)
                     if render_is_mgmt() else None)
     _ungkap_h = _BARIS_UNGKAP_H_IN if render_is_mgmt() else 0.0
@@ -4408,13 +4406,16 @@ def _build_management_dashboard_columns_block(block: dict, ctx: _PdfBlockContext
                     f'{_note_box_html(_cat, theme=ctx.theme)}</div>'
                 )
         if _teks_ungkap:
-            # Ditaruh di pita yang sudah dipesan; kalau kotak catatan tidak jadi digambar,
-            # baris ini naik ke awal pita - bukan melayang di ruang kosong.
+            # Di pita yang sudah dipesan; naik ke awal pita kalau kotak catatan tidak
+            # jadi digambar.
             _y_ungkap = _note_y + ((_note_h + 0.02) if _kotak_digambar else 0.0)
+            # Selebar yang dibutuhkan saja, tidak menjangkau sisi kanan tempat nomor
+            # halaman tergambar.
+            _UNGKAP_W_IN = min(total_w_in, 7.0)
             logger.info("pengungkapan isi tak tergambar (PDF): %r", _teks_ungkap)
             parts.append(
                 f'<div style="position:absolute;left:0in;top:{_y_ungkap}in;'
-                f'width:{total_w_in}in;height:{_BARIS_UNGKAP_H_IN}in;'
+                f'width:{_UNGKAP_W_IN}in;height:{_BARIS_UNGKAP_H_IN}in;'
                 f'font-size:6.5pt;color:{GRAY_TEXT};font-style:italic;">'
                 f'{_esc(_teks_ungkap)}</div>'
             )
