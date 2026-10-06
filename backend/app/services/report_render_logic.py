@@ -709,10 +709,13 @@ def _pola_kolom_waktu(df):
         if df[kol].dtype.kind in "if":
             continue
         try:
-            ser = pd.to_datetime(df[kol], errors="coerce", format="mixed")
+            # Urutan HARI-DULU: data di proyek ini umumnya DD/MM/YYYY, dan tanpa ini
+            # "11/03/2026" terbaca 3 November. Sejajar dgn _semua_kandidat. Format yang
+            # tidak ambigu (ISO, nama bulan) tidak terpengaruh.
+            ser = pd.to_datetime(df[kol], errors="coerce", format="mixed", dayfirst=True)
         except Exception:
             try:
-                ser = pd.to_datetime(df[kol], errors="coerce")
+                ser = pd.to_datetime(df[kol], errors="coerce", dayfirst=True)
             except Exception:
                 continue
         if ser.notna().mean() >= 0.8:
