@@ -700,7 +700,11 @@ def _pola_kolom_waktu(df):
     Dicoba PARSE, bukan ditebak dari nama: nama kolom di data nyata tidak bisa diandalkan
     ("tanggal", "date", "waktu_input", atau nama lain sama sekali). Kolom diterima hanya
     kalau >=80% barisnya berhasil jadi datetime - di bawah itu yang terjadi biasanya angka
-    atau teks yang kebetulan mirip tanggal."""
+    atau teks yang kebetulan mirip tanggal.
+
+    Mengembalikan (kolom, seri, jam_saja). `jam_saja` True kalau isinya hanya JAM
+    ("00:00"): pandas mengisi komponen tanggalnya dgn hari ini, jadi pemanggil tidak
+    boleh menyebut bulan/tahun dari seri itu."""
     for kol in df.columns:
         if df[kol].dtype.kind in "if":
             continue
@@ -712,8 +716,11 @@ def _pola_kolom_waktu(df):
             except Exception:
                 continue
         if ser.notna().mean() >= 0.8:
-            return kol, ser
-    return None, None
+            _mentah = df[kol].dropna().astype(str)
+            _jam_saja = bool(len(_mentah)) and (
+                _mentah.str.match(r"^\s*\d{1,2}:\d{2}(?::\d{2})?\s*$").mean() >= 0.8)
+            return kol, ser, _jam_saja
+    return None, None, False
 
 
 _VALID_TOLERANSI = 0.01       # 1% - supaya "21%" vs "21,2%" tidak dianggap berbeda
@@ -801,6 +808,8 @@ def _angka_terverifikasi(nilai: float, kata_klaim: set, indeks: list) -> bool:
 # angkanya - kalau hanya angkanya yang dicoret, tersisa "memangkas durasi proses hingga."
 _RX_KUANTITAS = re.compile(
     r"\s*(?:\b(?:hingga|sampai|sebesar|mencapai|melebihi|lebih dari|kurang dari|sekitar|hampir|"
+    # "menjadi 2 jam" -> tanpa ini tersisa "menjadi untuk".
+    r"menjadi|jadi|"
     r"di atas|di bawah|minimal|maksimal|up to|by|over|under|around|about|more than|less than|"
     r"at least|at most)\s+)?"
     # Kata penunjuk waktu yang MENDAHULUI angka ikut dibuang - kalau tidak, tersisa
@@ -809,7 +818,9 @@ _RX_KUANTITAS = re.compile(
     r"(?:(?:\b(?:pada|at|around)\s+)?\b(?:jam|pukul|hours?)\s+)?"
     # Jam "07:00" dicopot UTUH; tanpa ini ia terbaca sbg dua angka & titik duanya
     # tertinggal ("pada jam: dan.").
-    r"(?:Rp\.?\s*)?(?:\d{1,2}:\d{2}|\d[\d.,]*)\s*"
+    # Angka yang MENEMPEL pada huruf/angka lain bukan klaim kuantitatif melainkan
+    # bagian nama ("Q3", "VLAN10", "SRV2") - mencopotnya merusak nama asetnya.
+    r"(?<![A-Za-z0-9])(?:Rp\.?\s*)?(?:\d{1,2}:\d{2}|\d[\d.,]*)\s*"
     r"(?:%|persen|percent|ribu|juta|miliar|milyar|triliun|hari|jam|menit|minggu|bulan|tahun|"
     r"kali|x|paket|item|kasus|days?|hours?|weeks?|months?|years?)?"
     # "2,5x lipat" -> satuannya dua kata; tanpa ini tersisa "Naik lipat dibanding ..."
@@ -817,7 +828,7 @@ _RX_KUANTITAS = re.compile(
     # Deret angka ("07:00 dan 09:00") ikut terbawa; tanpa ini konjungsinya
     # menggantung di TENGAH kalimat, di luar jangkauan _RX_SAMBUNG_GANTUNG.
     r"(?:\s*(?:,|\bdan\b|\batau\b|\band\b|\bor\b)\s*"
-    r"(?:\d{1,2}:\d{2}|\d[\d.,]*)"
+    r"(?<![A-Za-z0-9])(?:\d{1,2}:\d{2}|\d[\d.,]*)"
     r"(?:\s*(?:%|persen|percent|ribu|juta|miliar|milyar|triliun|hari|jam|menit|minggu|"
     r"bulan|tahun|kali|x|paket|item|kasus|days?|hours?|weeks?|months?|years?))?)*",
     re.IGNORECASE)
@@ -1380,7 +1391,7 @@ def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> li
         # Paling generik (tidak bergantung tile), jadi ditaruh terakhir - dedup per-kalimat di
         # kumpulkan_catatan_halaman memastikan ia cuma tercetak sekali per halaman.
         if (_met or num):
-            _kol_w, _ser_w = _pola_kolom_waktu(df)
+            _kol_w, _ser_w, _jam_saja = _pola_kolom_waktu(df)
             if _kol_w is not None:
                 _m = _met or num[0]
                 _d = pd.DataFrame({"w": _ser_w, "v": df[_m]}).dropna().sort_values("w")
@@ -1404,14 +1415,19 @@ def catatan_pola(parsed_data: list, tile: dict, report, ekor_hindari=None) -> li
                                 ("drops below half by the end" if _lipat
                                  else "eases toward the end"))
                             _p1, _p2 = _d.iloc[0]["w"], _d.iloc[-1]["w"]
+                            # Kolom jam-saja tidak punya tanggal asli - menyebut bulan/tahun
+                            # dari seri itu berarti menyebut tanggal render. Rentangnya
+                            # ditulis sebagai jam, yang memang ada di data.
+                            _rentang = (f"{_p1:%H:%M}-{_p2:%H:%M}" if _jam_saja
+                                        else f"{_p1:%b %Y}-{_p2:%b %Y}")
                             return (_L(
                                 report,
-                                f"Sepanjang {_p1:%b %Y}-{_p2:%b %Y}, {rapikan_nama_kolom(_m)} paruh "
+                                f"Sepanjang {_rentang}, {rapikan_nama_kolom(_m)} paruh "
                                 f"kedua {'naik' if _naik else 'turun'} {fmt_desimal(_kali, 1, _ien)}x "
                                 f"dibanding paruh pertama ({_fmt_count(_awal, _ien)} -> "
                                 f"{_fmt_count(_akhir, _ien)}); beban "
                                 f"{_ekor4}.",
-                                f"Across {_p1:%b %Y}-{_p2:%b %Y}, {rapikan_nama_kolom(_m)} in the second "
+                                f"Across {_rentang}, {rapikan_nama_kolom(_m)} in the second "
                                 f"half {'rose' if _naik else 'fell'} {fmt_desimal(_kali, 1, _ien)}x versus "
                                 f"the first half ({_fmt_count(_awal, _ien)} -> {_fmt_count(_akhir, _ien)}); "
                                 f"the load {_ekor4}.",
