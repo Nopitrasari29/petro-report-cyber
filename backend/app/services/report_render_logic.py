@@ -803,16 +803,28 @@ _RX_KUANTITAS = re.compile(
     r"\s*(?:\b(?:hingga|sampai|sebesar|mencapai|melebihi|lebih dari|kurang dari|sekitar|hampir|"
     r"di atas|di bawah|minimal|maksimal|up to|by|over|under|around|about|more than|less than|"
     r"at least|at most)\s+)?"
-    r"(?:Rp\.?\s*)?\d[\d.,]*\s*"
+    # Kata penunjuk waktu yang MENDAHULUI angka ikut dibuang - kalau tidak, tersisa
+    # "pada pukul." / "pada jam.". "pada" hanya ikut kalau kata waktunya ada, supaya
+    # "pada 3 kategori" tidak kehilangan "pada"; "ke jam-jam lain" tidak tersentuh.
+    r"(?:(?:\b(?:pada|at|around)\s+)?\b(?:jam|pukul|hours?)\s+)?"
+    # Jam "07:00" dicopot UTUH; tanpa ini ia terbaca sbg dua angka & titik duanya
+    # tertinggal ("pada jam: dan.").
+    r"(?:Rp\.?\s*)?(?:\d{1,2}:\d{2}|\d[\d.,]*)\s*"
     r"(?:%|persen|percent|ribu|juta|miliar|milyar|triliun|hari|jam|menit|minggu|bulan|tahun|"
     r"kali|x|paket|item|kasus|days?|hours?|weeks?|months?|years?)?"
     # "2,5x lipat" -> satuannya dua kata; tanpa ini tersisa "Naik lipat dibanding ..."
-    r"(?:\s+(?:lipat|fold))?",
+    r"(?:\s+(?:lipat|fold))?"
+    # Deret angka ("07:00 dan 09:00") ikut terbawa; tanpa ini konjungsinya
+    # menggantung di TENGAH kalimat, di luar jangkauan _RX_SAMBUNG_GANTUNG.
+    r"(?:\s*(?:,|\bdan\b|\batau\b|\band\b|\bor\b)\s*"
+    r"(?:\d{1,2}:\d{2}|\d[\d.,]*)"
+    r"(?:\s*(?:%|persen|percent|ribu|juta|miliar|milyar|triliun|hari|jam|menit|minggu|"
+    r"bulan|tahun|kali|x|paket|item|kasus|days?|hours?|weeks?|months?|years?))?)*",
     re.IGNORECASE)
 # Sisa sambungan yang menggantung setelah kuantitasnya dilepas.
 _RX_SAMBUNG_GANTUNG = re.compile(
-    r"[\s,;]*\b(?:dan|atau|serta|dengan|dari|ke|pada|yang|menjadi|sebesar|hingga|sampai|"
-    r"and|or|with|from|to|of|by)\b[\s,;]*$", re.IGNORECASE)
+    r"[\s,;:]*\b(?:dan|atau|serta|dengan|dari|ke|pada|yang|menjadi|sebesar|hingga|sampai|"
+    r"and|or|with|from|to|of|by)\b[\s,;:]*$", re.IGNORECASE)
 _SALVAGE_MAKS_TERBUANG = 0.40   # >40% kalimat hilang = bukan lagi kalimat yang sama, buang saja
 _SALVAGE_MIN_KATA = 4
 
@@ -11016,11 +11028,12 @@ def build_management_report_blocks(report) -> list[dict]:
         # kicker/info_line di cover; penggambarnya melewatkan yang kosong.
         "title": "",
         "thank_you": L("Terima Kasih", "Thank You"),
-        # Baris italic di bawah "Terima Kasih" TETAP ADA sbg elemen, isinya diganti nama
-        # departemen. Sengaja TIDAK diterjemahkan: ini nama unit organisasi (nama diri),
-        # aturannya sama dgn nilai data - yang ikut bahasa laporan cuma teks yang DITULIS
-        # sistem, bukan nama yang sudah punya bentuk resmi sendiri.
-        "note": "Departemen Teknologi Informasi PKG",
+        # Baris italic di bawah "Terima Kasih": nama unit organisasi, diambil dari field
+        # Subjudul Kop yang diisi pengguna - sumber yang sama dengan cover. Tidak
+        # diterjemahkan karena ini nama diri. String lama jadi cadangan utk laporan
+        # lama yang field-nya belum terisi.
+        "note": (sanitize_text(report.header_subtitle) or
+                 "Departemen Teknologi Informasi PKG"),
         "hero_stat": (str(total_records), L("Total Data", "Total Records")),
         "header_title": (report.header_title or "PT PETROKIMIA GRESIK").upper(),
         # Dipakai exporter utk memutuskan bingkai logo (lihat 1e) - penutup jalur Visual

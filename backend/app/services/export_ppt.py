@@ -1492,6 +1492,35 @@ def _emu(v):
         return v
 
 
+# Perkiraan lebar rata-rata satu karakter Calibri sbg pecahan ukuran fontnya.
+_LEBAR_KAR_CALIBRI = 0.48
+# Pecahan lebar chart yang PowerPoint sisakan untuk label sumbu kategori.
+_PORSI_SUMBU_KATEGORI = 0.33
+# Di bawah ini label tidak lagi terbaca saat dicetak - sama dgn lantai _pt_label_bar.
+_PT_LABEL_MIN = 6.0
+
+
+def _pt_label_kategori(pt_awal: float, categories, lebar_in: float) -> float:
+    """Ukuran font label sumbu kategori yang muat scr LEBAR, bukan cuma tinggi.
+
+    Dikembalikan apa adanya kalau sudah muat; kalau tidak, diperkecil sampai muat atau
+    sampai lantai keterbacaan. Nilai di bawah lantai berarti label memang tidak bisa
+    ditampilkan utuh oleh chart native - dicatat ke log, bukan dipaksakan."""
+    kar = max((len(str(c)) for c in (categories or [])), default=0)
+    if not kar or not lebar_in:
+        return pt_awal
+    tersedia_pt = float(lebar_in) * 72.0 * _PORSI_SUMBU_KATEGORI
+    muat_pt = tersedia_pt / (kar * _LEBAR_KAR_CALIBRI)
+    if muat_pt >= pt_awal:
+        return pt_awal
+    if muat_pt < _PT_LABEL_MIN:
+        logger.info("label sumbu kategori: %d karakter butuh %.1fpt pada lebar %.2fin - "
+                    "di bawah lantai %.1fpt, PowerPoint akan memotongnya",
+                    kar, muat_pt, lebar_in, _PT_LABEL_MIN)
+        return _PT_LABEL_MIN
+    return round(muat_pt, 1)
+
+
 def add_native_bar_chart(slide, x, y, cx, cy, categories, values, colors=None, horizontal=False,
                          label_pt: float | None = None, jangan_lewati_label: bool = False):
     chart_data = CategoryChartData()
@@ -1542,7 +1571,11 @@ def add_native_bar_chart(slide, x, y, cx, cy, categories, values, colors=None, h
         chart.category_axis.has_minor_gridlines = False
         chart.category_axis.major_tick_mark = XL_TICK_MARK.NONE
         chart.category_axis.minor_tick_mark = XL_TICK_MARK.NONE
-        chart.category_axis.tick_labels.font.size = Pt(label_pt or 11)
+        # Label panjang dipotong PowerPoint kalau fontnya tidak ikut mengecil.
+        _pt_kat = label_pt or 11
+        if render_is_mgmt() and horizontal:
+            _pt_kat = _pt_label_kategori(_pt_kat, categories, _emu(cx) / 914400.0)
+        chart.category_axis.tick_labels.font.size = Pt(_pt_kat)
         chart.category_axis.tick_labels.font.name = BODY_FONT
         if jangan_lewati_label:
             _paksa_semua_label_sumbu(chart.category_axis)
@@ -1793,7 +1826,10 @@ def add_stacked_proportion_bar(slide, x, y, w, values, colors=None, height=Inche
         if Emu(height).inches > _sisa_bar_in:
             height = Inches(max(0.08, _sisa_bar_in))
     cur_x_in = Emu(x).inches
-    dd_labels = _dedupe_truncated_labels(labels, 14) if labels else None
+    # Batas yang sama dgn kembarannya di export_pdf.py (_stacked_proportion_bar_html).
+    # Descriptive tetap 14 supaya keluarannya tidak berubah.
+    _maks_label = 16 if render_is_mgmt() else 14
+    dd_labels = _dedupe_truncated_labels(labels, _maks_label) if labels else None
     for i, val in enumerate(values):
         frac = (val / total) if total else 0
         seg_w_in = w_in * frac
